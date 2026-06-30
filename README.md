@@ -74,7 +74,7 @@ All benchmarks are fully reproducible and include the full LLM transcripts and p
 </div>
 
 > [!WARNING]
-> Works only for macOS and Linus for now.
+> Works only for macOS and Linux for now.
 
 ```bash
 curl -fsSL https://getvix.dev/install.sh | bash
