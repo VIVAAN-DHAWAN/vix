@@ -101,6 +101,21 @@ vix
 
 <div align="center">
 
+## Providers & Configuration
+
+</div>
+
+Vix ships with built-in support for **Anthropic, OpenAI, OpenRouter, AWS Bedrock, Ollama, llama.cpp** and more.
+
+You can add your own provider — or override any setting on a built-in one — by dropping a
+`providers.json` file into `~/.vix/` or `./.vix/` (project-level). The file is merged on top
+of the embedded defaults: new providers are appended, existing ones are field-patched.
+
+See **[PROVIDERS.md](PROVIDERS.md)** for the full field reference, common recipes, model
+discovery, and OAuth configuration.
+
+<div align="center">
+
 ## Why is vix faster and cheaper in plan mode?
 
 </div>
