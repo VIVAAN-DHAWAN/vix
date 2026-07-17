@@ -538,6 +538,25 @@
       ]
     },
     {
+      "id": "deepseek",
+      "display_name": "DeepSeek",
+      "model_prefix": "deepseek",
+      "wire_format": "chat_completions",
+      "effort_policy": "openai_reasoning",
+      "inference": {
+        "base_url": "https://api.deepseek.com/v1",
+        "auth_scheme": "bearer",
+        "effort_style": "reasoning_effort"
+      },
+      "credential_methods": [
+        { "kind": "api_key", "env_var": "DEEPSEEK_API_KEY", "keyring": "deepseek-api-key" }
+      ],
+      "models": [
+        { "spec": "deepseek/deepseek-v4-flash", "display_name": "DeepSeek V4 Flash", "context_window": 1000000 },
+        { "spec": "deepseek/deepseek-v4-pro", "display_name": "DeepSeek V4 Pro", "context_window": 1000000 }
+      ]
+    },
+    {
       "id": "bedrock",
       "display_name": "AWS Bedrock",
       "model_prefix": "bedrock",
