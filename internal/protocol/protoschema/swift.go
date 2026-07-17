@@ -77,7 +77,7 @@ func emitStruct(b *bytes.Buffer, name string, node map[string]any) {
 		})
 	}
 
-	fmt.Fprintf(b, "\npublic struct %s: Codable, Sendable {\n", name)
+	fmt.Fprintf(b, "\npublic struct %s: Codable, Sendable, Equatable {\n", name)
 
 	// Stored properties.
 	for _, f := range fields {

@@ -122,6 +122,11 @@ public final class VixSessionClient: @unchecked Sendable {
         try send(type: "session.user_answer", payload: SessionUserAnswerData(answer: answer, text: text))
     }
 
+    /// Answer a batch question (one answer per question id).
+    public func sendUserAnswerBatch(_ answers: [String: String]) throws {
+        try send(type: "session.user_answer", payload: SessionUserAnswerData(answer: "", answers: answers))
+    }
+
     public func sendPlanAction(_ action: String, text: String = "") throws {
         try send(type: "session.plan_action", payload: SessionPlanActionData(action: action, text: text))
     }

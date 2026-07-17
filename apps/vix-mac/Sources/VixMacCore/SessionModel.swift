@@ -74,6 +74,36 @@ public final class SessionModel {
         try? client.cancel()
     }
 
+    // MARK: Interactive round-trips
+
+    /// Answer a pending permission prompt (event.confirm_request).
+    public func answerConfirm(approved: Bool, persistDirs: Bool = false) {
+        guard case .confirm = state.pending else { return }
+        state.pending = nil
+        try? client.sendConfirm(approved: approved, persistDirs: persistDirs)
+    }
+
+    /// Answer a pending single question (event.user_question).
+    public func answerQuestion(_ answer: String, text: String = "") {
+        guard case .question = state.pending else { return }
+        state.pending = nil
+        try? client.sendUserAnswer(answer, text: text)
+    }
+
+    /// Answer a pending batch question (id → answer).
+    public func answerQuestionBatch(_ answers: [String: String]) {
+        guard case .question = state.pending else { return }
+        state.pending = nil
+        try? client.sendUserAnswerBatch(answers)
+    }
+
+    /// Answer a pending plan review (approve | reject | modify).
+    public func answerPlan(_ action: String, text: String = "") {
+        guard case .plan = state.pending else { return }
+        state.pending = nil
+        try? client.sendPlanAction(action, text: text)
+    }
+
     public func disconnect() {
         streamTask?.cancel()
         streamTask = nil

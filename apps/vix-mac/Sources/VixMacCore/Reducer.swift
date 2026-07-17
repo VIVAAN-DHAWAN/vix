@@ -46,6 +46,14 @@ public struct TokenStats: Equatable, Sendable {
     public var cacheRead: Int64
 }
 
+/// An event that blocks the turn until the client answers. This is what makes
+/// the client interactive rather than a one-shot runner.
+public enum PendingInteraction: Equatable, Sendable {
+    case confirm(EventConfirmRequest)
+    case question(EventUserQuestion)
+    case plan(Plan?)
+}
+
 /// The full, UI-independent transcript state. Mutated only by `reduce`.
 public struct TranscriptState: Equatable, Sendable {
     public var items: [TranscriptItem] = []
@@ -53,6 +61,10 @@ public struct TranscriptState: Equatable, Sendable {
     public var sessionID = ""
     public var title = ""
     public var lastTokens: TokenStats?
+
+    /// A blocking round-trip awaiting the user's answer (permission, question,
+    /// or plan review), or nil when the turn is free-running.
+    public var pending: PendingInteraction?
 
     // Cursors into `items` for the row currently being streamed into.
     var streamingAssistantID: UUID?
@@ -111,9 +123,25 @@ public func reduce(_ s: inout TranscriptState, _ event: SessionEvent) {
             applyToolResult(&s, d)
         }
 
+    case "event.confirm_request":
+        if let d = try? event.data.decode(EventConfirmRequest.self) {
+            s.pending = .confirm(d)
+        }
+
+    case "event.user_question":
+        if let d = try? event.data.decode(EventUserQuestion.self) {
+            s.pending = .question(d)
+        }
+
+    case "event.plan_proposed":
+        if let d = try? event.data.decode(EventPlanProposed.self) {
+            s.pending = .plan(d.plan)
+        }
+
     case "event.error":
         let msg = (try? event.data.decode(EventError.self))?.message ?? "unknown error"
         s.items.append(.notice(id: UUID(), text: "Error: \(msg)"))
+        s.pending = nil
         endStreaming(&s)
 
     case "event.title_updated":

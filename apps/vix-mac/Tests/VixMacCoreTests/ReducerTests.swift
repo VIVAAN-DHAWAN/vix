@@ -110,3 +110,59 @@ private func event(_ type: String, _ data: JSONValue) -> SessionEvent {
     reduce(&s, event("event.agent_done", .null))
     #expect(s.isStreaming == false)
 }
+
+// MARK: Interactive round-trips (pending state)
+
+@Test func confirmRequestSetsPending() {
+    var s = TranscriptState()
+    reduce(&s, event("event.confirm_request", .object([
+        "tool_name": .string("write_file"),
+        "params": .object(["path": .string("/x/y.txt")]),
+    ])))
+    if case .confirm(let req)? = s.pending {
+        #expect(req.toolName == "write_file")
+        #expect(req.params["path"]?.stringValue == "/x/y.txt")
+    } else {
+        Issue.record("expected pending .confirm")
+    }
+}
+
+@Test func userQuestionSetsPending() {
+    var s = TranscriptState()
+    reduce(&s, event("event.user_question", .object([
+        "question": .string("Pick one"),
+        "options": .array([.string("a"), .string("b")]),
+    ])))
+    if case .question(let q)? = s.pending {
+        #expect(q.options == ["a", "b"])
+    } else {
+        Issue.record("expected pending .question")
+    }
+}
+
+@Test func planProposedSetsPending() {
+    var s = TranscriptState()
+    reduce(&s, event("event.plan_proposed", .object([
+        "plan": .object([
+            "name": .string("My plan"),
+            "context": .string("ctx"),
+            "tasks": .array([]),
+            "current_idx": .int(0),
+        ]),
+    ])))
+    if case .plan(let p)? = s.pending {
+        #expect(p?.name == "My plan")
+    } else {
+        Issue.record("expected pending .plan")
+    }
+}
+
+@Test func errorClearsPending() {
+    var s = TranscriptState()
+    reduce(&s, event("event.confirm_request", .object([
+        "tool_name": .string("bash"), "params": .object([:]),
+    ])))
+    #expect(s.pending != nil)
+    reduce(&s, event("event.error", .object(["message": .string("boom")])))
+    #expect(s.pending == nil)
+}

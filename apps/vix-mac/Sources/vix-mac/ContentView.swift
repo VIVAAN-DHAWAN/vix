@@ -12,6 +12,15 @@ struct ContentView: View {
             Divider()
             inputBar
         }
+        .sheet(isPresented: pendingBinding) {
+            InteractionSheet(model: model).interactiveDismissDisabled()
+        }
+    }
+
+    // Presented whenever a blocking round-trip is awaiting the user. The setter
+    // is a no-op: the sheet dismisses by answering, which clears model.pending.
+    private var pendingBinding: Binding<Bool> {
+        Binding(get: { model.state.pending != nil }, set: { _ in })
     }
 
     // MARK: Header

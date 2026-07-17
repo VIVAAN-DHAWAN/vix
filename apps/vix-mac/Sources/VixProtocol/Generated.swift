@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct Attachment: Codable, Sendable {
+public struct Attachment: Codable, Sendable, Equatable {
     public var data: String
     public var mediaType: String
     public var path: String?
@@ -28,7 +28,7 @@ public struct Attachment: Codable, Sendable {
     }
 }
 
-public struct EventCompacted: Codable, Sendable {
+public struct EventCompacted: Codable, Sendable, Equatable {
     public var auto: Bool
     public var fromTokens: Int64
     public var summarizedTurns: Int64
@@ -49,7 +49,7 @@ public struct EventCompacted: Codable, Sendable {
     }
 }
 
-public struct EventConfirmRequest: Codable, Sendable {
+public struct EventConfirmRequest: Codable, Sendable, Equatable {
     public var detail: String?
     public var params: [String: JSONValue]
     public var requestedDirs: [String]?
@@ -70,7 +70,7 @@ public struct EventConfirmRequest: Codable, Sendable {
     }
 }
 
-public struct EventError: Codable, Sendable {
+public struct EventError: Codable, Sendable, Equatable {
     public var code: String?
     public var message: String
 
@@ -85,7 +85,7 @@ public struct EventError: Codable, Sendable {
     }
 }
 
-public struct EventInitState: Codable, Sendable {
+public struct EventInitState: Codable, Sendable, Equatable {
     public var model: String?
     public var state: Int64
 
@@ -100,7 +100,7 @@ public struct EventInitState: Codable, Sendable {
     }
 }
 
-public struct EventJobDone: Codable, Sendable {
+public struct EventJobDone: Codable, Sendable, Equatable {
     public var error: String?
     public var jobId: String
     public var name: String?
@@ -124,7 +124,7 @@ public struct EventJobDone: Codable, Sendable {
     }
 }
 
-public struct EventJobRun: Codable, Sendable {
+public struct EventJobRun: Codable, Sendable, Equatable {
     public var error: String?
     public var jobId: String
     public var name: String?
@@ -145,13 +145,13 @@ public struct EventJobRun: Codable, Sendable {
     }
 }
 
-public struct EventJobsChanged: Codable, Sendable {
+public struct EventJobsChanged: Codable, Sendable, Equatable {
 
     public init() {
     }
 }
 
-public struct EventPlanComplete: Codable, Sendable {
+public struct EventPlanComplete: Codable, Sendable, Equatable {
     public var plan: Plan
 
     public init(plan: Plan) {
@@ -163,7 +163,7 @@ public struct EventPlanComplete: Codable, Sendable {
     }
 }
 
-public struct EventPlanProposed: Codable, Sendable {
+public struct EventPlanProposed: Codable, Sendable, Equatable {
     public var plan: Plan
 
     public init(plan: Plan) {
@@ -175,7 +175,7 @@ public struct EventPlanProposed: Codable, Sendable {
     }
 }
 
-public struct EventPlanTaskDone: Codable, Sendable {
+public struct EventPlanTaskDone: Codable, Sendable, Equatable {
     public var success: Bool
     public var summary: String
     public var taskIdx: Int64
@@ -196,7 +196,7 @@ public struct EventPlanTaskDone: Codable, Sendable {
     }
 }
 
-public struct EventPlanTaskStart: Codable, Sendable {
+public struct EventPlanTaskStart: Codable, Sendable, Equatable {
     public var taskIdx: Int64
     public var title: String
     public var total: Int64
@@ -214,7 +214,7 @@ public struct EventPlanTaskStart: Codable, Sendable {
     }
 }
 
-public struct EventQuestionOption: Codable, Sendable {
+public struct EventQuestionOption: Codable, Sendable, Equatable {
     public var description: String
     public var hasUserInput: Bool?
     public var title: String
@@ -232,7 +232,7 @@ public struct EventQuestionOption: Codable, Sendable {
     }
 }
 
-public struct EventReplay: Codable, Sendable {
+public struct EventReplay: Codable, Sendable, Equatable {
     public var activePlan: Plan?
     public var activeWorkflow: String?
     public var messages: [ReplayMessage]
@@ -265,7 +265,7 @@ public struct EventReplay: Codable, Sendable {
     }
 }
 
-public struct EventRetry: Codable, Sendable {
+public struct EventRetry: Codable, Sendable, Equatable {
     public var attempt: Int64
     public var maxRetries: Int64
     public var reason: String
@@ -286,7 +286,7 @@ public struct EventRetry: Codable, Sendable {
     }
 }
 
-public struct EventSessionStarted: Codable, Sendable {
+public struct EventSessionStarted: Codable, Sendable, Equatable {
     public var forkTurnIdx: Int64?
     public var parentId: String?
     public var sessionId: String
@@ -307,13 +307,13 @@ public struct EventSessionStarted: Codable, Sendable {
     }
 }
 
-public struct EventSessionsChanged: Codable, Sendable {
+public struct EventSessionsChanged: Codable, Sendable, Equatable {
 
     public init() {
     }
 }
 
-public struct EventSkillsAvailable: Codable, Sendable {
+public struct EventSkillsAvailable: Codable, Sendable, Equatable {
     public var skills: [SkillInfo]
 
     public init(skills: [SkillInfo]) {
@@ -325,7 +325,7 @@ public struct EventSkillsAvailable: Codable, Sendable {
     }
 }
 
-public struct EventStreamChunk: Codable, Sendable {
+public struct EventStreamChunk: Codable, Sendable, Equatable {
     public var text: String
 
     public init(text: String) {
@@ -337,7 +337,7 @@ public struct EventStreamChunk: Codable, Sendable {
     }
 }
 
-public struct EventStreamDone: Codable, Sendable {
+public struct EventStreamDone: Codable, Sendable, Equatable {
     public var cacheCreationTokens: Int64
     public var cacheReadTokens: Int64
     public var elapsedMs: Int64
@@ -361,7 +361,7 @@ public struct EventStreamDone: Codable, Sendable {
     }
 }
 
-public struct EventThinkingChunk: Codable, Sendable {
+public struct EventThinkingChunk: Codable, Sendable, Equatable {
     public var text: String
 
     public init(text: String) {
@@ -373,7 +373,7 @@ public struct EventThinkingChunk: Codable, Sendable {
     }
 }
 
-public struct EventThinkingStall: Codable, Sendable {
+public struct EventThinkingStall: Codable, Sendable, Equatable {
     public var elapsedMs: Int64
     public var summaryChars: Int64
 
@@ -388,7 +388,7 @@ public struct EventThinkingStall: Codable, Sendable {
     }
 }
 
-public struct EventTitleUpdated: Codable, Sendable {
+public struct EventTitleUpdated: Codable, Sendable, Equatable {
     public var title: String
 
     public init(title: String) {
@@ -400,7 +400,7 @@ public struct EventTitleUpdated: Codable, Sendable {
     }
 }
 
-public struct EventTodoListUpdated: Codable, Sendable {
+public struct EventTodoListUpdated: Codable, Sendable, Equatable {
     public var todos: [TodoItem]
 
     public init(todos: [TodoItem]) {
@@ -412,7 +412,7 @@ public struct EventTodoListUpdated: Codable, Sendable {
     }
 }
 
-public struct EventToolCall: Codable, Sendable {
+public struct EventToolCall: Codable, Sendable, Equatable {
     public var arguments: [String: JSONValue]?
     public var name: String
     public var reason: String?
@@ -451,7 +451,7 @@ public struct EventToolCall: Codable, Sendable {
     }
 }
 
-public struct EventToolResult: Codable, Sendable {
+public struct EventToolResult: Codable, Sendable, Equatable {
     public var detail: String?
     public var isError: Bool
     public var name: String
@@ -475,7 +475,7 @@ public struct EventToolResult: Codable, Sendable {
     }
 }
 
-public struct EventUpdateAvailable: Codable, Sendable {
+public struct EventUpdateAvailable: Codable, Sendable, Equatable {
     public var current: String
     public var latest: String?
     public var method: String?
@@ -496,7 +496,7 @@ public struct EventUpdateAvailable: Codable, Sendable {
     }
 }
 
-public struct EventUserQuestion: Codable, Sendable {
+public struct EventUserQuestion: Codable, Sendable, Equatable {
     public var category: String?
     public var options: [String]
     public var placeholder: String?
@@ -523,7 +523,7 @@ public struct EventUserQuestion: Codable, Sendable {
     }
 }
 
-public struct EventWorkflowComplete: Codable, Sendable {
+public struct EventWorkflowComplete: Codable, Sendable, Equatable {
     public var durationMs: Int64?
     public var stepCosts: [StepCost]?
     public var success: Bool
@@ -547,7 +547,7 @@ public struct EventWorkflowComplete: Codable, Sendable {
     }
 }
 
-public struct EventWorkflowStart: Codable, Sendable {
+public struct EventWorkflowStart: Codable, Sendable, Equatable {
     public var steps: [WorkflowStepInfo]?
     public var totalSteps: Int64
     public var workflowName: String
@@ -565,7 +565,7 @@ public struct EventWorkflowStart: Codable, Sendable {
     }
 }
 
-public struct EventWorkflowStatus: Codable, Sendable {
+public struct EventWorkflowStatus: Codable, Sendable, Equatable {
     public var elapsedSeconds: Int64?
     public var iteration: Int64?
     public var note: String?
@@ -598,7 +598,7 @@ public struct EventWorkflowStatus: Codable, Sendable {
     }
 }
 
-public struct EventWorkflowStepDone: Codable, Sendable {
+public struct EventWorkflowStepDone: Codable, Sendable, Equatable {
     public var bashOutput: String?
     public var cacheCreationTokens: Int64?
     public var cacheReadTokens: Int64?
@@ -652,7 +652,7 @@ public struct EventWorkflowStepDone: Codable, Sendable {
     }
 }
 
-public struct EventWorkflowStepStart: Codable, Sendable {
+public struct EventWorkflowStepStart: Codable, Sendable, Equatable {
     public var agent: String
     public var explanation: String?
     public var stepId: String
@@ -676,7 +676,7 @@ public struct EventWorkflowStepStart: Codable, Sendable {
     }
 }
 
-public struct EventWorkflowsAvailable: Codable, Sendable {
+public struct EventWorkflowsAvailable: Codable, Sendable, Equatable {
     public var workflows: [WorkflowInfo]
 
     public init(workflows: [WorkflowInfo]) {
@@ -688,7 +688,7 @@ public struct EventWorkflowsAvailable: Codable, Sendable {
     }
 }
 
-public struct InstanceRegisterData: Codable, Sendable {
+public struct InstanceRegisterData: Codable, Sendable, Equatable {
     public var instanceId: String?
     public var mode: String?
 
@@ -703,7 +703,7 @@ public struct InstanceRegisterData: Codable, Sendable {
     }
 }
 
-public struct Plan: Codable, Sendable {
+public struct Plan: Codable, Sendable, Equatable {
     public var architecture: String?
     public var context: String
     public var currentIdx: Int64
@@ -733,7 +733,7 @@ public struct Plan: Codable, Sendable {
     }
 }
 
-public struct PlanTask: Codable, Sendable {
+public struct PlanTask: Codable, Sendable, Equatable {
     public var description: String
     public var id: Int64
     public var result: String?
@@ -760,7 +760,7 @@ public struct PlanTask: Codable, Sendable {
     }
 }
 
-public struct QuestionDef: Codable, Sendable {
+public struct QuestionDef: Codable, Sendable, Equatable {
     public var category: String
     public var id: String
     public var options: [String]?
@@ -781,7 +781,7 @@ public struct QuestionDef: Codable, Sendable {
     }
 }
 
-public struct ReplayBlock: Codable, Sendable {
+public struct ReplayBlock: Codable, Sendable, Equatable {
     public var attempt: Int64?
     public var input: [String: JSONValue]?
     public var isError: Bool?
@@ -820,7 +820,7 @@ public struct ReplayBlock: Codable, Sendable {
     }
 }
 
-public struct ReplayMessage: Codable, Sendable {
+public struct ReplayMessage: Codable, Sendable, Equatable {
     public var blocks: [ReplayBlock]
     public var role: String
     public var timestamp: String?
@@ -838,7 +838,7 @@ public struct ReplayMessage: Codable, Sendable {
     }
 }
 
-public struct SessionCommand: Codable, Sendable {
+public struct SessionCommand: Codable, Sendable, Equatable {
     public var authToken: String?
     public var data: JSONValue
     public var type: String
@@ -856,7 +856,7 @@ public struct SessionCommand: Codable, Sendable {
     }
 }
 
-public struct SessionConfirmData: Codable, Sendable {
+public struct SessionConfirmData: Codable, Sendable, Equatable {
     public var approved: Bool
     public var persistDirs: Bool?
 
@@ -871,7 +871,7 @@ public struct SessionConfirmData: Codable, Sendable {
     }
 }
 
-public struct SessionEvent: Codable, Sendable {
+public struct SessionEvent: Codable, Sendable, Equatable {
     public var data: JSONValue
     public var type: String
 
@@ -886,7 +886,7 @@ public struct SessionEvent: Codable, Sendable {
     }
 }
 
-public struct SessionInputData: Codable, Sendable {
+public struct SessionInputData: Codable, Sendable, Equatable {
     public var attachments: [Attachment]?
     public var text: String
 
@@ -901,7 +901,7 @@ public struct SessionInputData: Codable, Sendable {
     }
 }
 
-public struct SessionPlanActionData: Codable, Sendable {
+public struct SessionPlanActionData: Codable, Sendable, Equatable {
     public var action: String
     public var text: String?
 
@@ -916,7 +916,7 @@ public struct SessionPlanActionData: Codable, Sendable {
     }
 }
 
-public struct SessionSetModelData: Codable, Sendable {
+public struct SessionSetModelData: Codable, Sendable, Equatable {
     public var model: String
 
     public init(model: String) {
@@ -928,7 +928,7 @@ public struct SessionSetModelData: Codable, Sendable {
     }
 }
 
-public struct SessionStartData: Codable, Sendable {
+public struct SessionStartData: Codable, Sendable, Equatable {
     public var attachSessionId: String?
     public var clientVersion: String?
     public var configDir: String?
@@ -970,7 +970,7 @@ public struct SessionStartData: Codable, Sendable {
     }
 }
 
-public struct SessionTrimData: Codable, Sendable {
+public struct SessionTrimData: Codable, Sendable, Equatable {
     public var turnIdx: Int64
 
     public init(turnIdx: Int64) {
@@ -982,7 +982,7 @@ public struct SessionTrimData: Codable, Sendable {
     }
 }
 
-public struct SessionUserAnswerData: Codable, Sendable {
+public struct SessionUserAnswerData: Codable, Sendable, Equatable {
     public var answer: String
     public var answers: [String: String]?
     public var text: String?
@@ -1000,7 +1000,7 @@ public struct SessionUserAnswerData: Codable, Sendable {
     }
 }
 
-public struct SessionWorkflowData: Codable, Sendable {
+public struct SessionWorkflowData: Codable, Sendable, Equatable {
     public var name: String
     public var text: String
     public var workflow: JSONValue?
@@ -1018,7 +1018,7 @@ public struct SessionWorkflowData: Codable, Sendable {
     }
 }
 
-public struct SessionWorkflowMessageData: Codable, Sendable {
+public struct SessionWorkflowMessageData: Codable, Sendable, Equatable {
     public var text: String
 
     public init(text: String) {
@@ -1030,7 +1030,7 @@ public struct SessionWorkflowMessageData: Codable, Sendable {
     }
 }
 
-public struct SkillInfo: Codable, Sendable {
+public struct SkillInfo: Codable, Sendable, Equatable {
     public var description: String
     public var name: String
 
@@ -1045,7 +1045,7 @@ public struct SkillInfo: Codable, Sendable {
     }
 }
 
-public struct StepCost: Codable, Sendable {
+public struct StepCost: Codable, Sendable, Equatable {
     public var cacheCreationTokens: Int64
     public var cacheReadTokens: Int64
     public var cost: Double
@@ -1081,7 +1081,7 @@ public struct StepCost: Codable, Sendable {
     }
 }
 
-public struct TodoItem: Codable, Sendable {
+public struct TodoItem: Codable, Sendable, Equatable {
     public var content: String
     public var dependsOn: [String]?
     public var id: String
@@ -1102,7 +1102,7 @@ public struct TodoItem: Codable, Sendable {
     }
 }
 
-public struct ToolStat: Codable, Sendable {
+public struct ToolStat: Codable, Sendable, Equatable {
     public var calls: Int64
     public var name: String
     public var summary: String
@@ -1120,7 +1120,7 @@ public struct ToolStat: Codable, Sendable {
     }
 }
 
-public struct WorkflowInfo: Codable, Sendable {
+public struct WorkflowInfo: Codable, Sendable, Equatable {
     public var name: String
 
     public init(name: String) {
@@ -1132,7 +1132,7 @@ public struct WorkflowInfo: Codable, Sendable {
     }
 }
 
-public struct WorkflowStepInfo: Codable, Sendable {
+public struct WorkflowStepInfo: Codable, Sendable, Equatable {
     public var explanation: String?
     public var id: String
 
