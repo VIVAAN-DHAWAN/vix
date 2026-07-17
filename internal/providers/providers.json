@@ -253,6 +253,7 @@
         { "spec": "openrouter/meta-llama/llama-4-maverick", "display_name": "Meta Llama Llama 4 Maverick", "context_window": 1048576 },
         { "spec": "openrouter/meta-llama/llama-4-scout", "display_name": "Meta Llama Llama 4 Scout", "context_window": 10000000 },
         { "spec": "openrouter/meta-llama/llama-guard-4-12b", "display_name": "Meta Llama Llama Guard 4 12b", "context_window": 163840 },
+        { "spec": "openrouter/meta/muse-spark-1.1", "display_name": "Meta Muse Spark 1.1", "context_window": 1048576 },
         { "spec": "openrouter/microsoft/phi-4", "display_name": "Microsoft Phi 4", "context_window": 16384 },
         { "spec": "openrouter/microsoft/wizardlm-2-8x22b", "display_name": "Microsoft Wizardlm 2 8x22b", "context_window": 65536 },
         { "spec": "openrouter/minimax/minimax-01", "display_name": "Minimax Minimax 01", "context_window": 1000192 },
@@ -288,6 +289,7 @@
         { "spec": "openrouter/moonshotai/kimi-k2.5", "display_name": "Moonshotai Kimi K2.5", "context_window": 262144 },
         { "spec": "openrouter/moonshotai/kimi-k2.6", "display_name": "Moonshotai Kimi K2.6", "context_window": 262144 },
         { "spec": "openrouter/moonshotai/kimi-k2.7-code", "display_name": "Moonshotai Kimi K2.7 Code", "context_window": 262144 },
+        { "spec": "openrouter/moonshotai/kimi-k3", "display_name": "Moonshotai Kimi K3", "context_window": 1048576 },
         { "spec": "openrouter/morph/morph-v3-fast", "display_name": "Morph Morph v3 Fast", "context_window": 81920 },
         { "spec": "openrouter/morph/morph-v3-large", "display_name": "Morph Morph v3 Large", "context_window": 262144 },
         { "spec": "openrouter/nex-agi/nex-n2-mini", "display_name": "Nex Agi Nex N2 Mini", "context_window": 262144 },
@@ -485,7 +487,7 @@
         { "spec": "openrouter/~anthropic/claude-sonnet-latest", "display_name": "~anthropic Claude Sonnet Latest", "context_window": 1000000 },
         { "spec": "openrouter/~google/gemini-flash-latest", "display_name": "~google Gemini Flash Latest", "context_window": 1048576 },
         { "spec": "openrouter/~google/gemini-pro-latest", "display_name": "~google Gemini Pro Latest", "context_window": 1048576 },
-        { "spec": "openrouter/~moonshotai/kimi-latest", "display_name": "~moonshotai Kimi Latest", "context_window": 262144 },
+        { "spec": "openrouter/~moonshotai/kimi-latest", "display_name": "~moonshotai Kimi Latest", "context_window": 1048576 },
         { "spec": "openrouter/~openai/gpt-latest", "display_name": "~openai GPT Latest", "context_window": 1050000 },
         { "spec": "openrouter/~openai/gpt-mini-latest", "display_name": "~openai GPT Mini Latest", "context_window": 400000 },
         { "spec": "openrouter/~x-ai/grok-latest", "display_name": "~x AI Grok Latest", "context_window": 500000 }
@@ -551,10 +553,7 @@
       "credential_methods": [
         { "kind": "api_key", "env_var": "DEEPSEEK_API_KEY", "keyring": "deepseek-api-key" }
       ],
-      "models": [
-        { "spec": "deepseek/deepseek-v4-flash", "display_name": "DeepSeek V4 Flash", "context_window": 1000000 },
-        { "spec": "deepseek/deepseek-v4-pro", "display_name": "DeepSeek V4 Pro", "context_window": 1000000 }
-      ]
+      "models": []
     },
     {
       "id": "bedrock",
