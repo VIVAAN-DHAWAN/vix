@@ -1,4 +1,4 @@
-.PHONY: build build-web build-all pull push test test-e2e test-e2e-sharded release run-server run-ui patch-deps vendor-cgo-sources update-deps web-source
+.PHONY: build build-web build-all pull push test test-e2e test-e2e-sharded release run-server run-ui patch-deps vendor-cgo-sources update-deps web-source proto-schema mac-models mac-probe
 
 # The web UI source lives in a private submodule (internal/daemon/web/source).
 # It is only needed to *rebuild* the UI; the built output (internal/daemon/web/dist/)
@@ -65,6 +65,30 @@ run-x: build-x
 
 # Local dev build — current platform only, fast
 build: build-d build-x
+
+# Regenerate the machine-readable daemon<->client protocol schema from the Go
+# structs in internal/protocol. Commit the result. CI runs this and fails if the
+# committed internal/protocol/schema/vix-protocol.schema.json is out of date
+# (see internal/protocol/protoschema TestSchemaNotStale).
+proto-schema:
+	go run ./cmd/protoschema
+
+# Regenerate the Swift Codable models (apps/vix-mac) from the same protocol walk
+# as the JSON schema. Runs the Go generator, so it works on any platform. Commit
+# the result — internal/protocol/protoschema TestSwiftNotStale fails when the
+# committed Generated.swift is out of date.
+mac-models:
+	go run ./cmd/protoschema -lang swift
+
+# Build and run the headless Swift probe against the running vixd (macOS only;
+# needs the Swift toolchain). Regenerates models first. Honors VIXD_SOCK.
+mac-probe: mac-models
+ifeq ($(shell uname),Darwin)
+	cd apps/vix-mac && swift run vix-mac-probe
+else
+	@echo "mac-probe: macOS + Swift toolchain required"; exit 1
+endif
+
 
 # Apply local patches to vendored dependencies.
 # Run this after `go mod vendor` whenever dependencies are updated.
