@@ -227,6 +227,16 @@ func JobsEnabled() bool {
 	return feature("jobs", true)
 }
 
+// PDFEnabled reads the pdf feature flag (read_file's PDF-to-Markdown
+// conversion). Defaults to true; the VIX_DISABLE_PDF environment variable
+// overrides everything as an emergency kill switch.
+func PDFEnabled() bool {
+	if v := os.Getenv("VIX_DISABLE_PDF"); v == "1" || v == "true" {
+		return false
+	}
+	return feature("pdf", true)
+}
+
 // HooksEnabled reads the hooks feature flag (the lifecycle-hooks engine in
 // vixd). Defaults to true; the VIX_DISABLE_HOOKS environment variable overrides
 // everything as an emergency kill switch.

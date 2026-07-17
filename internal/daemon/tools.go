@@ -361,6 +361,16 @@ func readFileImpl(cwd string, allowedDirs []string, path string, offset, limit *
 		return "", err
 	}
 
+	// PDFs are binary: convert to Markdown instead of emitting raw bytes with
+	// line numbers. offset/limit still slice the resulting Markdown by line.
+	if pdfEnabled() && looksLikePDF(raw) {
+		md, perr := pdfToMarkdown(path, raw)
+		if perr != nil {
+			return "", perr
+		}
+		return sliceLines(md, offset, limit), nil
+	}
+
 	text := string(raw)
 	lines := strings.Split(text, "\n")
 
@@ -385,6 +395,31 @@ func readFileImpl(cwd string, allowedDirs []string, path string, offset, limit *
 	}
 
 	return strings.Join(numbered, "\n"), nil
+}
+
+// sliceLines applies 1-based offset and limit to a block of text, returning the
+// selected lines joined without line-number prefixes. Used for converted PDF
+// Markdown, which is not editable source and so is shown unnumbered.
+func sliceLines(text string, offset, limit *int) string {
+	if offset == nil && limit == nil {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	start := 0
+	if offset != nil && *offset >= 1 {
+		start = *offset - 1
+	}
+	end := len(lines)
+	if limit != nil {
+		end = start + *limit
+	}
+	if start > len(lines) {
+		start = len(lines)
+	}
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return strings.Join(lines[start:end], "\n")
 }
 
 // capFileReadOutput truncates a read_file / read_minified_file response that

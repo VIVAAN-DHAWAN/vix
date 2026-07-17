@@ -616,7 +616,7 @@ Tool calls within a single response are executed in parallel.
 
 | Tool | What it does |
 | --- | --- |
-| read\_file | Read a file from disk, optionally a line range. |
+| read\_file | Read a file from disk, optionally a line range. PDFs are auto-converted to Markdown. |
 | read\_minified\_file | Read a file through the VFS, Tree-sitter–minified for fewer tokens. |
 | write\_file | Write a full file to disk. Creates directories as needed. |
 | write\_minified\_file | Write a file via the VFS from minified content; a formatter restores it. |
@@ -2768,7 +2768,8 @@ json
     "read_agents_md": true,
     "show_thinking": false,
     "telemetry": true,
-    "jobs": true
+    "jobs": true,
+    "pdf": true
   },
   "jobs": { "max_concurrent_runs": 2 },
   "logs": { "retention_days": 10 },
@@ -3590,7 +3591,7 @@ All 19 tools available to agents. Read-only tools are available during plan expl
 
 ## read\_file
 
-Read a file from disk.
+Read a file from disk. PDFs are converted to Markdown automatically.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -3599,7 +3600,7 @@ Read a file from disk.
 | offset | integer | — | Start line (1-based). |
 | limit | integer | — | Max lines to return. |
 
-Output cap: 20,000 chars. Re-reading an unchanged file in the same session is rejected.
+Output cap: 20,000 chars. Re-reading an unchanged file in the same session is rejected. When the target is a PDF, vix extracts its text layer and returns Markdown (headings, paragraphs, best-effort tables) instead of raw bytes — no external tools required. Scanned/image-only PDFs (no text layer) and encrypted PDFs are reported as such; OCR is not performed. Disable with features.pdf=false or VIX\_DISABLE\_PDF=1.
 
 ## read\_minified\_file
 
