@@ -1,4 +1,4 @@
-.PHONY: build build-web build-all pull push test test-e2e test-e2e-sharded release run-server run-ui patch-deps vendor-cgo-sources update-deps web-source proto-schema mac-models mac-probe
+.PHONY: build build-web build-all pull push test test-e2e test-e2e-sharded release run-server run-ui patch-deps vendor-cgo-sources update-deps web-source proto-schema mac-models mac-probe mac-build bundle-mac run-mac
 
 # The web UI source lives in a private submodule (internal/daemon/web/source).
 # It is only needed to *rebuild* the UI; the built output (internal/daemon/web/dist/)
@@ -87,6 +87,38 @@ ifeq ($(shell uname),Darwin)
 	cd apps/vix-mac && swift run vix-mac-probe
 else
 	@echo "mac-probe: macOS + Swift toolchain required"; exit 1
+endif
+
+# --- macOS SwiftUI app (Darwin only; needs the Swift toolchain) ---
+MAC_APP := apps/vix-mac/.build/VixMac.app
+
+# Compile the SwiftUI app executable (regenerates models first).
+mac-build: mac-models
+ifeq ($(shell uname),Darwin)
+	cd apps/vix-mac && swift build --product vix-mac
+else
+	@echo "mac-build: macOS + Swift toolchain required"; exit 1
+endif
+
+# Assemble a runnable .app bundle around the built executable. No Xcode, no
+# signing — a plain unsandboxed dev bundle that can reach /tmp/vixd.sock.
+bundle-mac: mac-build
+ifeq ($(shell uname),Darwin)
+	@rm -rf "$(MAC_APP)"
+	@mkdir -p "$(MAC_APP)/Contents/MacOS"
+	@cp apps/vix-mac/App/Info.plist "$(MAC_APP)/Contents/Info.plist"
+	@cp "$$(cd apps/vix-mac && swift build --product vix-mac --show-bin-path)/vix-mac" "$(MAC_APP)/Contents/MacOS/VixMac"
+	@echo "==> $(MAC_APP)"
+else
+	@echo "bundle-mac: macOS + Swift toolchain required"; exit 1
+endif
+
+# Build, bundle, and launch the app against the running vixd. Honors VIXD_SOCK.
+run-mac: bundle-mac
+ifeq ($(shell uname),Darwin)
+	open "$(MAC_APP)"
+else
+	@echo "run-mac: macOS + Swift toolchain required"; exit 1
 endif
 
 

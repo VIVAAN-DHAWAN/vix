@@ -3,11 +3,9 @@ package protoschema
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/get-vix/vix/internal/protocol"
@@ -102,78 +100,4 @@ func TestRoundTrip(t *testing.T) {
 	}
 	check("event", protocol.EventTypes)
 	check("command", protocol.CommandTypes)
-}
-
-// validate is a minimal JSON-Schema checker covering exactly the constructs this
-// package emits: $ref, object (properties/required/additionalProperties), array
-// (items), and the scalar types. null satisfies any schema (fields are treated
-// as nullable), which is sufficient for the round-trip smoke check — strictness
-// comes from TestSchemaNotStale.
-func validate(inst any, sch, defs map[string]any, path string) error {
-	if ref, ok := sch["$ref"].(string); ok {
-		name := strings.TrimPrefix(ref, "#/$defs/")
-		d, ok := defs[name].(map[string]any)
-		if !ok {
-			return fmt.Errorf("%s: dangling $ref %q", path, ref)
-		}
-		return validate(inst, d, defs, path)
-	}
-	if inst == nil {
-		return nil
-	}
-	switch typ, _ := sch["type"].(string); typ {
-	case "object":
-		m, ok := inst.(map[string]any)
-		if !ok {
-			return fmt.Errorf("%s: expected object, got %T", path, inst)
-		}
-		if req, ok := sch["required"].([]any); ok {
-			for _, r := range req {
-				key, _ := r.(string)
-				if _, present := m[key]; !present {
-					return fmt.Errorf("%s: missing required property %q", path, key)
-				}
-			}
-		}
-		props, _ := sch["properties"].(map[string]any)
-		ap, _ := sch["additionalProperties"].(map[string]any)
-		for k, v := range m {
-			if ps, ok := props[k].(map[string]any); ok {
-				if err := validate(v, ps, defs, path+"."+k); err != nil {
-					return err
-				}
-			} else if ap != nil {
-				if err := validate(v, ap, defs, path+"."+k); err != nil {
-					return err
-				}
-			}
-		}
-	case "array":
-		arr, ok := inst.([]any)
-		if !ok {
-			return fmt.Errorf("%s: expected array, got %T", path, inst)
-		}
-		if items, ok := sch["items"].(map[string]any); ok {
-			for i, el := range arr {
-				if err := validate(el, items, defs, fmt.Sprintf("%s[%d]", path, i)); err != nil {
-					return err
-				}
-			}
-		}
-	case "string":
-		if _, ok := inst.(string); !ok {
-			return fmt.Errorf("%s: expected string, got %T", path, inst)
-		}
-	case "integer", "number":
-		if _, ok := inst.(float64); !ok {
-			return fmt.Errorf("%s: expected number, got %T", path, inst)
-		}
-	case "boolean":
-		if _, ok := inst.(bool); !ok {
-			return fmt.Errorf("%s: expected boolean, got %T", path, inst)
-		}
-	case "":
-		// No type constraint (any / json.RawMessage / free-form object values).
-	}
-	return nil
 }

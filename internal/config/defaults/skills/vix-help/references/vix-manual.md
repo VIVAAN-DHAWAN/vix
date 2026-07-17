@@ -4101,3 +4101,46 @@ Vix ships a bundled `vix-help` skill that uses these files to answer questions a
 
 ---
 
+# The daemon protocol (custom clients)
+
+> Section: Reference · vix docs · https://getvix.dev/docs#daemon-protocol
+
+# The daemon protocol (custom clients)
+
+The TUI is just one client of `vixd`. The daemon speaks a small, stable protocol over its Unix socket, so you can build your own client — a native app, an editor plugin, a script — that reuses everything the daemon does (LLM streaming, tool execution, the brain, sessions, jobs). The repo ships a native macOS example under `apps/vix-mac`.
+
+## Transport & framing
+
+Connect to the `AF_UNIX` stream socket (`/tmp/vixd.sock` by default). Messages are newline-delimited JSON (NDJSON): one JSON object per line, in each direction. There are two envelopes:
+
+json
+
+```
+// client -> daemon
+{ "type": "session.input", "auth_token": "<optional>", "data": { "text": "hi" } }
+
+// daemon -> client
+{ "type": "event.stream_chunk", "data": { "text": "Hello" } }
+```
+
+## Handshake & version
+
+Open a session by sending `session.start` with a `client_version`. The daemon refuses any client whose version does not exactly match its own build. To connect to whatever daemon is running, first call the one-shot `ping` RPC — it returns the daemon's version — then stamp that into `session.start`. The daemon replies with `event.session_started` (or `event.error` with code `version_mismatch`).
+
+## The event stream
+
+After starting, the client consumes a stream of events: assistant text deltas (`event.stream_chunk`), extended-thinking deltas, tool calls and results, token accounting (`event.stream_done`), todo updates, and end-of-turn (`event.agent_done`).
+
+## Interactive round-trips
+
+Three events block the turn until the client answers — this is what makes a client interactive rather than a one-shot runner:
+
+-   `event.confirm_request` → reply `session.confirm` (tool permission)
+-   `event.user_question` → reply `session.user_answer`
+-   `event.plan_proposed` → reply `session.plan_action`
+
+## Schema & codegen
+
+The full message surface is generated from the Go structs into a committed JSON Schema (`internal/protocol/schema/vix-protocol.schema.json`, via `make proto-schema`). The same generator emits Swift models for the macOS app (`make mac-models`). Drift tests fail the build if either committed artifact falls out of sync with the structs, so a client generated from the schema stays in lockstep with the daemon.
+
+---
