@@ -14,7 +14,7 @@ func TestEmbeddedLoadsAndValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadEmbedded: %v", err)
 	}
-	wantIDs := []string{"anthropic", "openai", "openrouter", "minimax", "mimo", "deepseek", "bedrock", "ollama", "llamacpp"}
+	wantIDs := []string{"anthropic", "openai", "openrouter", "minimax", "mimo", "deepseek", "bedrock", "ollama", "llamacpp", "lemonade"}
 	if got := reg.IDs(); len(got) != len(wantIDs) {
 		t.Fatalf("IDs = %v, want %v", got, wantIDs)
 	}
@@ -49,6 +49,7 @@ func TestGoldenProviderData(t *testing.T) {
 		{"bedrock", "bedrock", WireMessages, EffortAdaptive, AuthSchemeBearer, "https://bedrock-runtime.us-east-1.amazonaws.com/", EffortStyleNone},
 		{"ollama", "ollama", WireChatCompletions, "", AuthSchemeBearer, "http://localhost:11434/v1", EffortStyleNone},
 		{"llamacpp", "llamacpp", WireChatCompletions, "", AuthSchemeBearer, "http://localhost:8080/v1", EffortStyleNone},
+		{"lemonade", "lemonade", WireChatCompletions, "", AuthSchemeBearer, "http://localhost:13305/v1", EffortStyleNone},
 	}
 	for _, c := range cases {
 		p, ok := reg.Lookup(c.id)

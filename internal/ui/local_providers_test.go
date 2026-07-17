@@ -7,7 +7,7 @@ import (
 )
 
 func TestIsLocalProvider(t *testing.T) {
-	for _, name := range []string{"ollama", "llamacpp"} {
+	for _, name := range []string{"ollama", "llamacpp", "lemonade"} {
 		if !IsLocalProvider(name) {
 			t.Errorf("IsLocalProvider(%q) = false, want true", name)
 		}
@@ -66,21 +66,21 @@ func TestRefreshModelsProviders_LocalGroup(t *testing.T) {
 	m := &Model{socketPath: "/nonexistent/vixd.sock"} // cred RPC fails gracefully
 	m.refreshModelsProviders()
 
-	if len(m.modelsLocal) != 2 || m.modelsLocal[0] != "ollama" || m.modelsLocal[1] != "llamacpp" {
-		t.Errorf("modelsLocal = %v, want [ollama llamacpp]", m.modelsLocal)
+	if len(m.modelsLocal) != 3 || m.modelsLocal[0] != "ollama" || m.modelsLocal[1] != "llamacpp" || m.modelsLocal[2] != "lemonade" {
+		t.Errorf("modelsLocal = %v, want [ollama llamacpp lemonade]", m.modelsLocal)
 	}
 	for _, name := range append(append([]string{}, m.modelsLoggedIn...), m.modelsAvailable...) {
-		if name == "ollama" || name == "llamacpp" {
+		if name == "ollama" || name == "llamacpp" || name == "lemonade" {
 			t.Errorf("local provider %q leaked into logged-in/available", name)
 		}
 	}
 	flat := m.modelsFlat()
-	if len(flat) != len(m.modelsLoggedIn)+2+len(m.modelsAvailable) {
+	if len(flat) != len(m.modelsLoggedIn)+3+len(m.modelsAvailable) {
 		t.Errorf("flat = %v, missing groups", flat)
 	}
 	// Local sits last, after logged-in and available.
 	base := len(m.modelsLoggedIn) + len(m.modelsAvailable)
-	if flat[base] != "ollama" || flat[base+1] != "llamacpp" {
+	if flat[base] != "ollama" || flat[base+1] != "llamacpp" || flat[base+2] != "lemonade" {
 		t.Errorf("flat order = %v, want local group last", flat)
 	}
 

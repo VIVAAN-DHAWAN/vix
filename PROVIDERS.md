@@ -1,6 +1,7 @@
 # Custom Providers Guide
 
-Vix ships with built-in support for Anthropic, OpenAI, OpenRouter, Bedrock, Ollama, and more.
+Vix ships with built-in support for Anthropic, OpenAI, OpenRouter, Bedrock, Ollama, llama.cpp,
+Lemonade, and more.
 You can add your own providers — or override settings of the built-ins — without touching the
 binary. Everything is driven by a plain JSON file you drop into `~/.vix/`.
 
@@ -276,6 +277,25 @@ The probe times out after 1.5 seconds.
 ```
 
 Only `base_url` changes. `"local": true` is inherited — models are still discovered live.
+
+---
+
+### Point vix at Lemonade (built-in local provider)
+
+[Lemonade](https://lemonade-server.ai) is a local AI server that exposes an OpenAI-compatible
+API on `http://localhost:13305/v1`. It ships as a **built-in** `lemonade` provider, so no config
+is needed: start Lemonade Server, and any served model shows up under the `lemonade/` prefix in
+the Models tab (F3), discovered live from `/v1/models`.
+
+Only override the base URL if your server listens elsewhere (a different port, or a Lemonade box
+on your LAN):
+
+```bash
+export LEMONADE_BASE_URL="http://my-lemonade-host:13305/v1"
+```
+
+An API key is optional (`LEMONADE_API_KEY`) and only needed if your server requires one. Being a
+local provider, Lemonade may use plain HTTP on loopback or your LAN.
 
 ---
 

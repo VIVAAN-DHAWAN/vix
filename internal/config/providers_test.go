@@ -32,6 +32,7 @@ func TestPrimaryEnvVar(t *testing.T) {
 		"mimo":       "MIMO_API_KEY",
 		"ollama":     "OLLAMA_API_KEY",
 		"llamacpp":   "LLAMACPP_API_KEY",
+		"lemonade":   "LEMONADE_API_KEY",
 	}
 	for p, env := range want {
 		if got := PrimaryEnvVar(p); got != env {
@@ -45,7 +46,7 @@ func TestPrimaryEnvVar(t *testing.T) {
 
 func TestKnownProvidersStable(t *testing.T) {
 	got := KnownProviders()
-	want := []string{"anthropic", "openai", "openrouter", "minimax", "mimo", "deepseek", "bedrock", "ollama", "llamacpp"}
+	want := []string{"anthropic", "openai", "openrouter", "minimax", "mimo", "deepseek", "bedrock", "ollama", "llamacpp", "lemonade"}
 	if len(got) != len(want) {
 		t.Fatalf("KnownProviders len = %d, want %d", len(got), len(want))
 	}

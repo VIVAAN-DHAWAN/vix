@@ -95,6 +95,43 @@ func TestLocalLANHTTPBoots(t *testing.T) {
 	h.UI.Shot("turn-completed")
 }
 
+// TestLemonadeLocalProviderBoots guards the Lemonade local provider added to the
+// embedded providers.json. With LEMONADE_BASE_URL pointing at a reachable
+// OpenAI-compatible server (here the mock, on loopback), vixd must boot without
+// tripping the providers-config validation (the new provider defaults to the
+// plain-HTTP loopback endpoint http://localhost:13305/v1) and run a normal turn.
+// The mock serves the local-provider discovery shape, so the advertised model is
+// discoverable, but this scenario asserts only the robust signals — clean boot
+// and a completed turn on the default model — leaving F3 picker navigation to
+// the (skipped) detection spec above.
+//
+// T · asserts the daemon boots clean (no panic in the vixd log) and a turn
+// completes over the wire.
+func TestLemonadeLocalProviderBoots(t *testing.T) {
+	meta := harness.Meta{
+		Category:    "providers",
+		Subcategory: "providers.lemonade",
+		Description: "vixd boots and runs a turn with LEMONADE_BASE_URL set (new local provider, no startup panic)",
+		Wire:        harness.WireMessages,
+	}
+
+	h := harness.Start(t, meta, harness.WithEnv("LEMONADE_BASE_URL", "{{MOCK_URL}}/v1"))
+
+	h.Mock.SetLocalModel("Qwen3-Coder-30B-A3B-Instruct-GGUF", 32768)
+	h.UI.WaitStable(500 * time.Millisecond)
+	h.UI.Shot("booted-with-lemonade")
+
+	if log := h.Daemon.LogTail(200); strings.Contains(log, "panic:") {
+		t.Fatalf("vixd panicked at startup with LEMONADE_BASE_URL set; log:\n%s", log)
+	}
+
+	h.Mock.Enqueue(harness.Text("Booted fine with a Lemonade endpoint."))
+	h.UI.Type("are you up?")
+	h.UI.Enter()
+	h.UI.WaitFor("Booted fine with a Lemonade endpoint.")
+	h.UI.Shot("turn-completed")
+}
+
 // (a valid credential is wrongly reported missing on switch). The harness
 // injects OpenAI creds (key + base URL → mock) by default, so a switch to an
 // OpenAI model should succeed. Skipped because #26 is open and the F3 picker

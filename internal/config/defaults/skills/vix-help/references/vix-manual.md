@@ -696,6 +696,7 @@ Vix is multi-provider. Every model is addressed by a **provider-prefixed spec** 
 | Xiaomi MiMo | mimo/ | MIMO\_API\_KEY | — |
 | Ollama (local) | ollama/ | OLLAMA\_API\_KEY (optional) | — |
 | llama.cpp (local) | llamacpp/ | LLAMACPP\_API\_KEY (optional) | — |
+| Lemonade (local) | lemonade/ | LEMONADE\_API\_KEY (optional) | — |
 
 Anthropic also accepts an OAuth bearer token via `CLAUDE_CODE_OAUTH_TOKEN`. Each provider ships a curated model catalogue — Anthropic Claude, OpenAI GPT / o-series, and hundreds of models through OpenRouter, plus MiniMax and Xiaomi MiMo.
 
@@ -726,9 +727,9 @@ Each provider declares an effort policy (Anthropic adaptive thinking, OpenAI-sty
 
 Each catalogue entry carries its context-window size, which drives automatic [context compaction](/docs#compaction).
 
-## Local models (Ollama & llama.cpp)
+## Local models (Ollama, llama.cpp & Lemonade)
 
-Vix ships two **local providers** — `ollama/` and `llamacpp/` — for models you self-host. Point them at your server with an environment variable; vix then discovers the served models and lists them in the Models tab (F3):
+Vix ships three **local providers** — `ollama/`, `llamacpp/`, and `lemonade/` — for models you self-host. Point them at your server with an environment variable; vix then discovers the served models and lists them in the Models tab (F3):
 
 ```
 # llama.cpp (defaults to http://localhost:8080/v1)
@@ -736,9 +737,14 @@ export LLAMACPP_BASE_URL="http://localhost:8080/v1"
 
 # Ollama (defaults to http://localhost:11434/v1)
 export OLLAMA_BASE_URL="http://localhost:11434/v1"
+
+# Lemonade (defaults to http://localhost:13305/v1)
+export LEMONADE_BASE_URL="http://localhost:13305/v1"
 ```
 
-Because these endpoints are ones you control, the local providers may use **plain HTTP on any host** — loopback _or_ a beefier box on your LAN, e.g. `http://freyr.local:8080/v1`. Every other (remote) provider still requires HTTPS. HTTP sends traffic — including any `LLAMACPP_API_KEY`/`OLLAMA_API_KEY` you set — in the clear, so keep it to a trusted network; if your server supports TLS, prefer an `https://` base URL. An API key is optional for local servers and only needed if yours requires one.
+[Lemonade](https://lemonade-server.ai) is a local AI server that serves optimized LLMs from your own GPU/NPU over an OpenAI-compatible API; because it's a built-in provider, just start Lemonade Server and its models appear under the `lemonade/` prefix.
+
+Because these endpoints are ones you control, the local providers may use **plain HTTP on any host** — loopback _or_ a beefier box on your LAN, e.g. `http://freyr.local:8080/v1`. Every other (remote) provider still requires HTTPS. HTTP sends traffic — including any `LLAMACPP_API_KEY`/`OLLAMA_API_KEY`/`LEMONADE_API_KEY` you set — in the clear, so keep it to a trusted network; if your server supports TLS, prefer an `https://` base URL. An API key is optional for local servers and only needed if yours requires one.
 
 ## Custom providers & models (providers.json)
 
