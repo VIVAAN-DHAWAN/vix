@@ -23,7 +23,7 @@ public final class SessionModel {
     public let cwd: String
     private let client: VixSessionClient
     private var streamTask: Task<Void, Never>?
-    private var lastMakeStream: ((String) throws -> AsyncThrowingStream<SessionEvent, Error>)?
+    private var lastMakeStream: (@Sendable (String) throws -> AsyncThrowingStream<SessionEvent, Error>)?
 
     public init(client: VixSessionClient = VixSessionClient(),
                 cwd: String = FileManager.default.currentDirectoryPath) {
@@ -34,12 +34,16 @@ public final class SessionModel {
     /// Ping the daemon (dev-friendly version discovery), open a new session, and
     /// begin consuming events into `state`.
     public func connect() {
-        begin { try self.client.start(cwd: self.cwd, clientVersion: $0) }
+        let client = self.client
+        let cwd = self.cwd
+        begin { try client.start(cwd: cwd, clientVersion: $0) }
     }
 
     /// Resume a persisted session by id; the daemon replays it via event.replay.
     public func attach(sessionID: String) {
-        begin { try self.client.attach(sessionID: sessionID, cwd: self.cwd, clientVersion: $0) }
+        let client = self.client
+        let cwd = self.cwd
+        begin { try client.attach(sessionID: sessionID, cwd: cwd, clientVersion: $0) }
     }
 
     /// Retry the last connect/attach after a failure.
@@ -49,29 +53,45 @@ public final class SessionModel {
         begin(make)
     }
 
-    private func begin(_ makeStream: @escaping (String) throws -> AsyncThrowingStream<SessionEvent, Error>) {
+    private func begin(_ makeStream: @escaping @Sendable (String) throws -> AsyncThrowingStream<SessionEvent, Error>) {
         guard connection == .disconnected || isFailed else { return }
         lastMakeStream = makeStream
         connection = .connecting
-        do {
-            let ping = try client.ping()
-            guard ping.ok else {
-                connection = .failed("vixd is not responding on \(client.socketPath)")
-                return
-            }
-            let events = try makeStream(ping.version)
-            connection = .connected(version: ping.version)
-            streamTask = Task { @MainActor [weak self] in
-                do {
-                    for try await event in events {
-                        self?.apply(event)
+
+        let client = self.client
+        Task { [weak self] in
+            // Run the blocking handshake (ping + connect + session.start) off the
+            // main actor so the UI never stalls and we never mutate observed
+            // state during a SwiftUI update.
+            let outcome: Result<(String, AsyncThrowingStream<SessionEvent, Error>), ConnectError> =
+                await Task.detached {
+                    do {
+                        let ping = try client.ping()
+                        guard ping.ok else {
+                            return .failure(.unresponsive(client.socketPath))
+                        }
+                        return .success((ping.version, try makeStream(ping.version)))
+                    } catch {
+                        return .failure(.failed("\(error)"))
                     }
-                } catch {
-                    self?.connection = .failed("\(error)")
+                }.value
+
+            guard let self else { return }
+            switch outcome {
+            case .failure(let error):
+                self.connection = .failed(error.message)
+            case .success(let (version, events)):
+                self.connection = .connected(version: version)
+                self.streamTask = Task { @MainActor [weak self] in
+                    do {
+                        for try await event in events {
+                            self?.apply(event)
+                        }
+                    } catch {
+                        self?.connection = .failed("\(error)")
+                    }
                 }
             }
-        } catch {
-            connection = .failed("cannot reach vixd at \(client.socketPath): \(error)")
         }
     }
 
@@ -136,5 +156,19 @@ public final class SessionModel {
     private var isFailed: Bool {
         if case .failed = connection { return true }
         return false
+    }
+}
+
+/// A Sendable connect failure, so the outcome can cross the actor boundary from
+/// the off-main handshake task.
+private enum ConnectError: Error, Sendable {
+    case unresponsive(String)
+    case failed(String)
+
+    var message: String {
+        switch self {
+        case .unresponsive(let path): return "vixd is not responding on \(path)"
+        case .failed(let m): return "cannot reach vixd: \(m)"
+        }
     }
 }

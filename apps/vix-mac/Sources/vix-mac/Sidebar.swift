@@ -40,8 +40,10 @@ struct SessionListView: View {
         Binding(
             get: { app.selectedID },
             set: { id in
+                // Defer out of the view-update cycle: opening mutates AppModel
+                // state and must not run synchronously inside the List's binding.
                 if let id, let summary = app.sessions.first(where: { $0.id == id }) {
-                    app.open(summary)
+                    Task { @MainActor in app.open(summary) }
                 }
             })
     }

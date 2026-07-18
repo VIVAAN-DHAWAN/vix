@@ -27,9 +27,14 @@ public final class AppModel {
         VixSessionClient(socketPath: socketPath, authToken: authToken)
     }
 
-    /// Refresh the persisted session list (best-effort; empty on failure).
+    /// Refresh the persisted session list (best-effort; off the main thread).
     public func refresh() {
-        sessions = (try? makeClient().listSessions(cwd: cwd)) ?? []
+        let client = makeClient()
+        let cwd = self.cwd
+        Task { [weak self] in
+            let list = await Task.detached { (try? client.listSessions(cwd: cwd)) ?? [] }.value
+            self?.sessions = list
+        }
     }
 
     /// Start a fresh session and make it active.
