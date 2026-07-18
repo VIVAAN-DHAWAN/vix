@@ -56,6 +56,12 @@ struct ContentView: View {
                     .buttonStyle(.borderless)
                     .font(.caption)
             }
+            if let tokens = model.state.lastTokens {
+                Text("↑\(tokens.input) ↓\(tokens.output)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .help("Tokens: input / output (last turn)")
+            }
             Text(statusText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -88,6 +94,13 @@ struct ContentView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    if model.state.items.isEmpty && !model.state.isStreaming {
+                        Text("Send a message to start.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 40)
+                    }
                     ForEach(model.state.items) { item in
                         row(for: item).id(item.id)
                     }
@@ -111,13 +124,20 @@ struct ContentView: View {
         case .user(_, let text):
             messageBubble(text, role: "You", color: .accentColor.opacity(0.15), align: .trailing)
         case .assistant(_, let text):
-            messageBubble(markdown(text), role: "vix", color: .gray.opacity(0.12), align: .leading)
+            assistantBubble(text)
         case .thinking(_, let text):
-            Text(text)
-                .font(.callout)
-                .italic()
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            DisclosureGroup {
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } label: {
+                Label("Thinking", systemImage: "brain")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(_, let tool):
             toolRow(tool)
         case .notice(_, let text):
@@ -143,25 +163,60 @@ struct ContentView: View {
         messageBubble(Text(text), role: role, color: color, align: align)
     }
 
+    // Assistant bubble: prose rendered as inline markdown, fenced code blocks
+    // rendered as monospaced, copyable blocks.
+    private func assistantBubble(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("vix").font(.caption2).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(splitMarkdown(text).enumerated()), id: \.offset) { _, segment in
+                    switch segment {
+                    case .text(let t):
+                        markdown(t)
+                            .font(.callout)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    case .code(let language, let code):
+                        CodeBlockView(language: language, code: code)
+                    }
+                }
+            }
+            .padding(8)
+            .background(.gray.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func toolRow(_ tool: ToolRow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: tool.done ? (tool.isError ? "xmark.circle" : "checkmark.circle") : "gearshape")
-                    .foregroundStyle(tool.isError ? .red : .secondary)
-                Text(tool.name).font(.callout.monospaced()).bold()
-                Text(tool.summary).font(.callout).foregroundStyle(.secondary)
-            }
             if tool.done, !tool.output.isEmpty {
-                Text(tool.output.prefix(2000))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(8)
-                    .textSelection(.enabled)
+                DisclosureGroup {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Text(tool.output.prefix(4000))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } label: {
+                    toolHeader(tool)
+                }
+            } else {
+                toolHeader(tool)
             }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func toolHeader(_ tool: ToolRow) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: tool.done ? (tool.isError ? "xmark.circle" : "checkmark.circle") : "gearshape")
+                .foregroundStyle(tool.isError ? .red : .secondary)
+            Text(tool.name).font(.callout.monospaced()).bold()
+            Text(tool.summary).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+        }
     }
 
     private func markdown(_ text: String) -> Text {
@@ -199,5 +254,45 @@ struct ContentView: View {
     private var isConnected: Bool {
         if case .connected = model.connection { return true }
         return false
+    }
+}
+
+/// A fenced code block: language label + copy button + horizontally-scrollable
+/// monospaced body.
+struct CodeBlockView: View {
+    let language: String?
+    let code: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(language ?? "code")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc").font(.caption2)
+                }
+                .buttonStyle(.borderless)
+                .help("Copy")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.06))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(.black.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
     }
 }
