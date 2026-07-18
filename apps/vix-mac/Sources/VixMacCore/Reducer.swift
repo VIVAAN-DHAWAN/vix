@@ -66,6 +66,9 @@ public struct TranscriptState: Equatable, Sendable {
     /// or plan review), or nil when the turn is free-running.
     public var pending: PendingInteraction?
 
+    /// The current todo list (from event.todo_list_updated / replay).
+    public var todos: [TodoItem] = []
+
     // Cursors into `items` for the row currently being streamed into.
     var streamingAssistantID: UUID?
     var streamingThinkingID: UUID?
@@ -136,6 +139,16 @@ public func reduce(_ s: inout TranscriptState, _ event: SessionEvent) {
     case "event.plan_proposed":
         if let d = try? event.data.decode(EventPlanProposed.self) {
             s.pending = .plan(d.plan)
+        }
+
+    case "event.todo_list_updated":
+        if let d = try? event.data.decode(EventTodoListUpdated.self) {
+            s.todos = d.todos
+        }
+
+    case "event.replay":
+        if let d = try? event.data.decode(EventReplay.self) {
+            applyReplay(&s, d)
         }
 
     case "event.error":
@@ -210,4 +223,45 @@ private func endStreaming(_ s: inout TranscriptState) {
     s.isStreaming = false
     s.streamingAssistantID = nil
     s.streamingThinkingID = nil
+}
+
+// applyReplay rebuilds the transcript from a persisted session (event.replay,
+// emitted once right after session_started when attaching).
+private func applyReplay(_ s: inout TranscriptState, _ d: EventReplay) {
+    s.items.removeAll()
+    s.streamingAssistantID = nil
+    s.streamingThinkingID = nil
+
+    for message in d.messages {
+        for block in message.blocks {
+            switch block.kind {
+            case "text":
+                let text = block.text ?? ""
+                if message.role == "user" {
+                    s.items.append(.user(id: UUID(), text: text))
+                } else {
+                    s.items.append(.assistant(id: UUID(), text: text))
+                }
+            case "thinking":
+                s.items.append(.thinking(id: UUID(), text: block.text ?? ""))
+            case "tool_use":
+                s.items.append(.tool(id: UUID(), ToolRow(
+                    toolID: block.toolId ?? "", name: block.toolName ?? "", summary: "")))
+            case "tool_result":
+                applyToolResult(&s, EventToolResult(
+                    isError: block.isError ?? false,
+                    name: block.toolName ?? "",
+                    output: block.output ?? "",
+                    toolId: block.toolId ?? ""))
+            case "retry":
+                s.items.append(.notice(id: UUID(), text: block.text ?? "retrying…"))
+            default:
+                break
+            }
+        }
+    }
+
+    if let todos = d.todos { s.todos = todos }
+    if let title = d.title { s.title = title }
+    s.isStreaming = false
 }

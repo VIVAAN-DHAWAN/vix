@@ -166,3 +166,55 @@ private func event(_ type: String, _ data: JSONValue) -> SessionEvent {
     reduce(&s, event("event.error", .object(["message": .string("boom")])))
     #expect(s.pending == nil)
 }
+
+// MARK: Todos & replay
+
+@Test func todoListUpdateReplacesTodos() {
+    var s = TranscriptState()
+    reduce(&s, event("event.todo_list_updated", .object([
+        "todos": .array([
+            .object(["id": .string("t1"), "content": .string("do a"), "status": .string("in_progress")]),
+            .object(["id": .string("t2"), "content": .string("do b"), "status": .string("pending")]),
+        ]),
+    ])))
+    #expect(s.todos.count == 2)
+    #expect(s.todos.first?.content == "do a")
+    #expect(s.todos.first?.status == "in_progress")
+}
+
+@Test func replayRebuildsTranscriptTodosAndTitle() {
+    var s = TranscriptState()
+    // Pre-existing junk that replay must clear.
+    reduce(&s, event("event.stream_chunk", .object(["text": .string("stale")])))
+
+    reduce(&s, event("event.replay", .object([
+        "messages": .array([
+            .object([
+                "role": .string("user"),
+                "blocks": .array([.object(["kind": .string("text"), "text": .string("hello")])]),
+            ]),
+            .object([
+                "role": .string("assistant"),
+                "blocks": .array([
+                    .object(["kind": .string("text"), "text": .string("hi there")]),
+                    .object(["kind": .string("tool_use"), "tool_id": .string("t1"), "tool_name": .string("bash")]),
+                    .object(["kind": .string("tool_result"), "tool_id": .string("t1"), "output": .string("done"), "is_error": .bool(false)]),
+                ]),
+            ]),
+        ]),
+        "todos": .array([
+            .object(["id": .string("x"), "content": .string("task"), "status": .string("completed")]),
+        ]),
+        "title": .string("Resumed session"),
+    ])))
+
+    #expect(s.title == "Resumed session")
+    #expect(s.todos.count == 1)
+    #expect(s.assistantText == "hi there")
+    // user + assistant text + one tool row (call+result merged)
+    #expect(s.toolRows.count == 1)
+    #expect(s.toolRows.first?.done == true)
+    #expect(s.toolRows.first?.output == "done")
+    // no leftover "stale" chunk
+    #expect(s.assistantText.contains("stale") == false)
+}

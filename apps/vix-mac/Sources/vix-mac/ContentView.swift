@@ -5,12 +5,19 @@ struct ContentView: View {
     @Bindable var model: SessionModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            transcript
-            Divider()
-            inputBar
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                transcript
+                Divider()
+                inputBar
+            }
+            if !model.state.todos.isEmpty {
+                Divider()
+                TodoPanelView(todos: model.state.todos)
+                    .frame(width: 240)
+            }
         }
         .sheet(isPresented: pendingBinding) {
             InteractionSheet(model: model).interactiveDismissDisabled()
@@ -33,6 +40,11 @@ struct ContentView: View {
             Text(model.state.title.isEmpty ? "vix" : model.state.title)
                 .font(.headline)
             Spacer()
+            if case .failed = model.connection {
+                Button("Reconnect") { model.retry() }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+            }
             Text(statusText)
                 .font(.caption)
                 .foregroundStyle(.secondary)

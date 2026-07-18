@@ -31,29 +31,42 @@ public final class VixSessionClient: @unchecked Sendable {
         self.authToken = authToken
     }
 
-    // MARK: Handshake
+    // MARK: Handshake / RPC
 
-    /// Learn the running daemon's version (and liveness) via the one-shot `ping`
-    /// RPC on a short-lived connection.
-    public func ping() throws -> PingResult {
+    /// One-shot request/response on a short-lived connection (the daemon's
+    /// non-session RPC path). The auth token is stamped automatically.
+    func rpc(_ request: [String: JSONValue]) throws -> [String: JSONValue] {
         let sock = try VixSocket(path: socketPath)
         defer { sock.close() }
-        var req: [String: JSONValue] = ["action": .string("ping")]
+        var req = request
         if let t = authToken { req["auth_token"] = .string(t) }
         try sock.writeLine(try encoder.encode(JSONValue.object(req)))
         let resp = try decoder.decode(JSONValue.self, from: try sock.readLine())
-        let obj = resp.objectValue ?? [:]
+        return resp.objectValue ?? [:]
+    }
+
+    /// Learn the running daemon's version (and liveness) via the `ping` RPC.
+    public func ping() throws -> PingResult {
+        let obj = try rpc(["action": .string("ping")])
         return PingResult(
             ok: obj["status"]?.stringValue == "ok",
             version: obj["version"]?.stringValue ?? "")
     }
 
+    /// List the daemon's persisted open sessions for a working directory.
+    public func listSessions(cwd: String) throws -> [SessionSummary] {
+        let obj = try rpc(["command": .string("session.list"), "cwd": .string(cwd)])
+        guard let sessions = obj["sessions"] else { return [] }
+        let data = try encoder.encode(sessions)
+        return try decoder.decode([SessionSummary].self, from: data)
+    }
+
     // MARK: Session
 
-    /// Open a session and return its live event stream. When `clientVersion` is
-    /// nil the version is discovered via `ping()` first (dev-friendly). The first
-    /// event is normally `event.session_started`, or `event.error` with code
-    /// `version_mismatch` if the stamped version does not match the daemon.
+    /// Open a new session and return its live event stream. When `clientVersion`
+    /// is nil the version is discovered via `ping()` first (dev-friendly). The
+    /// first event is normally `event.session_started`, or `event.error` with
+    /// code `version_mismatch`.
     public func start(
         cwd: String,
         model: String = "",
@@ -61,20 +74,41 @@ public final class VixSessionClient: @unchecked Sendable {
         clientVersion: String? = nil
     ) throws -> AsyncThrowingStream<SessionEvent, Error> {
         let version = try clientVersion ?? ping().version
-
-        let sock = try VixSocket(path: socketPath)
-        self.socket = sock
-
-        let payload = SessionStartData(
+        return try openStream(SessionStartData(
             clientVersion: version,
             cwd: cwd,
             enableAutomaticDirectoryAccess: false,
             enableAutomaticWritePermission: false,
             forceInit: false,
             headless: headless,
-            model: model)
-        try send(type: "session.start", payload: payload)
+            model: model))
+    }
 
+    /// Resume a persisted session by id. The daemon replays the conversation via
+    /// `event.replay` right after `event.session_started`.
+    public func attach(
+        sessionID: String,
+        cwd: String = "",
+        clientVersion: String? = nil
+    ) throws -> AsyncThrowingStream<SessionEvent, Error> {
+        let version = try clientVersion ?? ping().version
+        return try openStream(SessionStartData(
+            attachSessionId: sessionID,
+            clientVersion: version,
+            cwd: cwd,
+            enableAutomaticDirectoryAccess: false,
+            enableAutomaticWritePermission: false,
+            forceInit: false,
+            headless: true,
+            model: ""))
+    }
+
+    /// Dial a fresh session socket, send session.start, and stream decoded
+    /// events. Shared by start() and attach().
+    private func openStream(_ payload: SessionStartData) throws -> AsyncThrowingStream<SessionEvent, Error> {
+        let sock = try VixSocket(path: socketPath)
+        self.socket = sock
+        try send(type: "session.start", payload: payload)
         let raw = sock.lines()
         let dec = decoder
         return AsyncThrowingStream { continuation in

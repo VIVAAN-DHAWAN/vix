@@ -1,9 +1,11 @@
 import SwiftUI
 import VixMacCore
+import VixClient
+import VixProtocol
 
 @main
 struct VixMacApp: App {
-    @State private var model = SessionModel()
+    @State private var app = AppModel()
 
     init() {
         // Help `swift run` (no bundle) show a normal, focusable window.
@@ -12,10 +14,34 @@ struct VixMacApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model)
-                .frame(minWidth: 640, minHeight: 480)
-                .task { model.connect() }
+            RootView(app: app)
+                .frame(minWidth: 900, minHeight: 560)
         }
         .windowStyle(.titleBar)
+    }
+}
+
+/// Split view: session sidebar + active chat detail.
+struct RootView: View {
+    @Bindable var app: AppModel
+
+    var body: some View {
+        NavigationSplitView {
+            SessionListView(app: app)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+        } detail: {
+            if let model = app.active {
+                ContentView(model: model)
+            } else {
+                ContentUnavailableView(
+                    "No session",
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text("Create a new session to start."))
+            }
+        }
+        .task {
+            app.refresh()
+            if app.active == nil { app.newSession() }
+        }
     }
 }

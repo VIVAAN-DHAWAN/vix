@@ -23,6 +23,7 @@ public final class SessionModel {
     public let cwd: String
     private let client: VixSessionClient
     private var streamTask: Task<Void, Never>?
+    private var lastMakeStream: ((String) throws -> AsyncThrowingStream<SessionEvent, Error>)?
 
     public init(client: VixSessionClient = VixSessionClient(),
                 cwd: String = FileManager.default.currentDirectoryPath) {
@@ -30,10 +31,27 @@ public final class SessionModel {
         self.cwd = cwd
     }
 
-    /// Ping the daemon (dev-friendly version discovery), open a session, and
+    /// Ping the daemon (dev-friendly version discovery), open a new session, and
     /// begin consuming events into `state`.
     public func connect() {
+        begin { try self.client.start(cwd: self.cwd, clientVersion: $0) }
+    }
+
+    /// Resume a persisted session by id; the daemon replays it via event.replay.
+    public func attach(sessionID: String) {
+        begin { try self.client.attach(sessionID: sessionID, cwd: self.cwd, clientVersion: $0) }
+    }
+
+    /// Retry the last connect/attach after a failure.
+    public func retry() {
+        guard let make = lastMakeStream else { return }
+        connection = .disconnected
+        begin(make)
+    }
+
+    private func begin(_ makeStream: @escaping (String) throws -> AsyncThrowingStream<SessionEvent, Error>) {
         guard connection == .disconnected || isFailed else { return }
+        lastMakeStream = makeStream
         connection = .connecting
         do {
             let ping = try client.ping()
@@ -41,7 +59,7 @@ public final class SessionModel {
                 connection = .failed("vixd is not responding on \(client.socketPath)")
                 return
             }
-            let events = try client.start(cwd: cwd, clientVersion: ping.version)
+            let events = try makeStream(ping.version)
             connection = .connected(version: ping.version)
             streamTask = Task { @MainActor [weak self] in
                 do {
