@@ -9,6 +9,17 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 header
                 Divider()
+                if let banner = model.banner {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Text(banner).font(.callout)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.orange.opacity(0.12))
+                    Divider()
+                }
                 transcript
                 Divider()
                 inputBar

@@ -4143,4 +4143,6 @@ Three events block the turn until the client answers — this is what makes a cl
 
 The full message surface is generated from the Go structs into a committed JSON Schema (`internal/protocol/schema/vix-protocol.schema.json`, via `make proto-schema`). The same generator emits Swift models for the macOS app (`make mac-models`). Drift tests fail the build if either committed artifact falls out of sync with the structs, so a client generated from the schema stays in lockstep with the daemon.
 
+This covers not just events and commands but also the RPC projection types returned by `session.list` / `job.list` / `hook.list` (`SessionSummary`, `JobSummary`, `HookSummary`) — so a custom client never hand-maintains any part of the wire contract.
+
 ---

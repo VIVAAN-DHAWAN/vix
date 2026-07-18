@@ -65,6 +65,10 @@ func TestRegistryExhaustive(t *testing.T) {
 			registered[reflect.TypeOf(v).Name()] = true
 		}
 	}
+	rpcRegistered := map[string]bool{}
+	for _, v := range protocol.RPCTypes {
+		rpcRegistered[reflect.TypeOf(v).Name()] = true
+	}
 
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
@@ -90,6 +94,16 @@ func TestRegistryExhaustive(t *testing.T) {
 						continue
 					}
 					name := ts.Name.Name
+
+					// RPC projection types (*Summary) must be in RPCTypes.
+					if strings.HasSuffix(name, "Summary") {
+						if !rpcRegistered[name] {
+							t.Errorf("struct %q looks like an RPC projection (*Summary) but is absent from "+
+								"protocol.RPCTypes — add it to registry.go", name)
+						}
+						continue
+					}
+
 					looksWire := strings.HasPrefix(name, "Event") || strings.HasSuffix(name, "Data")
 					if !looksWire || nonWireTypes[name] {
 						continue

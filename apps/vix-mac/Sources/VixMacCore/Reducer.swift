@@ -225,6 +225,18 @@ private func endStreaming(_ s: inout TranscriptState) {
     s.streamingThinkingID = nil
 }
 
+/// A user-facing banner when an event indicates the session can't proceed
+/// (already open elsewhere, or gone), else nil. Pure — unit-tested headlessly.
+public func connectionBanner(for event: SessionEvent) -> String? {
+    guard event.type == "event.error",
+          let error = try? event.data.decode(EventError.self) else { return nil }
+    switch error.code {
+    case "session_busy": return "This session is already open in another window."
+    case "session_not_found": return "This session no longer exists."
+    default: return nil
+    }
+}
+
 // applyReplay rebuilds the transcript from a persisted session (event.replay,
 // emitted once right after session_started when attaching).
 private func applyReplay(_ s: inout TranscriptState, _ d: EventReplay) {

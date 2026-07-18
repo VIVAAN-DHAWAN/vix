@@ -688,6 +688,42 @@ public struct EventWorkflowsAvailable: Codable, Sendable, Equatable {
     }
 }
 
+public struct HookSummary: Codable, Sendable, Equatable {
+    public var createdBy: String?
+    public var enabled: Bool
+    public var event: String?
+    public var id: String
+    public var lastFiredAt: String?
+    public var lastStatus: String?
+    public var matcher: String?
+    public var mode: String?
+    public var name: String?
+
+    public init(createdBy: String? = nil, enabled: Bool, event: String? = nil, id: String, lastFiredAt: String? = nil, lastStatus: String? = nil, matcher: String? = nil, mode: String? = nil, name: String? = nil) {
+        self.createdBy = createdBy
+        self.enabled = enabled
+        self.event = event
+        self.id = id
+        self.lastFiredAt = lastFiredAt
+        self.lastStatus = lastStatus
+        self.matcher = matcher
+        self.mode = mode
+        self.name = name
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case createdBy = "created_by"
+        case enabled = "enabled"
+        case event = "event"
+        case id = "id"
+        case lastFiredAt = "last_fired_at"
+        case lastStatus = "last_status"
+        case matcher = "matcher"
+        case mode = "mode"
+        case name = "name"
+    }
+}
+
 public struct InstanceRegisterData: Codable, Sendable, Equatable {
     public var instanceId: String?
     public var mode: String?
@@ -700,6 +736,45 @@ public struct InstanceRegisterData: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case instanceId = "instance_id"
         case mode = "mode"
+    }
+}
+
+public struct JobSummary: Codable, Sendable, Equatable {
+    public var createdBy: String?
+    public var enabled: Bool
+    public var id: String
+    public var lastRunAt: String?
+    public var lastStatus: String?
+    public var name: String?
+    public var nextRunAt: String?
+    public var running: Bool?
+    public var schedule: String?
+    public var triggerType: String?
+
+    public init(createdBy: String? = nil, enabled: Bool, id: String, lastRunAt: String? = nil, lastStatus: String? = nil, name: String? = nil, nextRunAt: String? = nil, running: Bool? = nil, schedule: String? = nil, triggerType: String? = nil) {
+        self.createdBy = createdBy
+        self.enabled = enabled
+        self.id = id
+        self.lastRunAt = lastRunAt
+        self.lastStatus = lastStatus
+        self.name = name
+        self.nextRunAt = nextRunAt
+        self.running = running
+        self.schedule = schedule
+        self.triggerType = triggerType
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case createdBy = "created_by"
+        case enabled = "enabled"
+        case id = "id"
+        case lastRunAt = "last_run_at"
+        case lastStatus = "last_status"
+        case name = "name"
+        case nextRunAt = "next_run_at"
+        case running = "running"
+        case schedule = "schedule"
+        case triggerType = "trigger_type"
     }
 }
 
@@ -970,6 +1045,51 @@ public struct SessionStartData: Codable, Sendable, Equatable {
     }
 }
 
+public struct SessionSummary: Codable, Sendable, Equatable {
+    public var attached: Bool?
+    public var cwd: String
+    public var firstMessage: String?
+    public var id: String
+    public var jobStatus: String?
+    public var lastRequestAt: String?
+    public var model: String
+    public var origin: String?
+    public var startedAt: String?
+    public var title: String?
+    public var trigger: TriggerInfo?
+    public var unread: Bool?
+
+    public init(attached: Bool? = nil, cwd: String, firstMessage: String? = nil, id: String, jobStatus: String? = nil, lastRequestAt: String? = nil, model: String, origin: String? = nil, startedAt: String? = nil, title: String? = nil, trigger: TriggerInfo? = nil, unread: Bool? = nil) {
+        self.attached = attached
+        self.cwd = cwd
+        self.firstMessage = firstMessage
+        self.id = id
+        self.jobStatus = jobStatus
+        self.lastRequestAt = lastRequestAt
+        self.model = model
+        self.origin = origin
+        self.startedAt = startedAt
+        self.title = title
+        self.trigger = trigger
+        self.unread = unread
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case attached = "attached"
+        case cwd = "cwd"
+        case firstMessage = "first_message"
+        case id = "id"
+        case jobStatus = "job_status"
+        case lastRequestAt = "last_request_at"
+        case model = "model"
+        case origin = "origin"
+        case startedAt = "started_at"
+        case title = "title"
+        case trigger = "trigger"
+        case unread = "unread"
+    }
+}
+
 public struct SessionTrimData: Codable, Sendable, Equatable {
     public var turnIdx: Int64
 
@@ -1117,6 +1237,21 @@ public struct ToolStat: Codable, Sendable, Equatable {
         case calls = "calls"
         case name = "name"
         case summary = "summary"
+    }
+}
+
+public struct TriggerInfo: Codable, Sendable, Equatable {
+    public var ref: String?
+    public var type: String
+
+    public init(ref: String? = nil, type: String) {
+        self.ref = ref
+        self.type = type
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case ref = "ref"
+        case type = "type"
     }
 }
 

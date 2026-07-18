@@ -18,6 +18,7 @@ public final class SessionModel {
 
     public private(set) var state = TranscriptState()
     public private(set) var connection: Connection = .disconnected
+    public private(set) var banner: String?
     public var inputText = ""
 
     public let cwd: String
@@ -56,6 +57,7 @@ public final class SessionModel {
     private func begin(_ makeStream: @escaping @Sendable (String) throws -> AsyncThrowingStream<SessionEvent, Error>) {
         guard connection == .disconnected || isFailed else { return }
         lastMakeStream = makeStream
+        banner = nil
         connection = .connecting
 
         let client = self.client
@@ -150,6 +152,7 @@ public final class SessionModel {
     }
 
     private func apply(_ event: SessionEvent) {
+        if let banner = connectionBanner(for: event) { self.banner = banner }
         reduce(&state, event)
     }
 

@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import VixClient
+import VixProtocol
 
 /// Top-level coordinator: owns the persisted session list and the currently
 /// active session. Views observe this to drive the sidebar and detail panes.

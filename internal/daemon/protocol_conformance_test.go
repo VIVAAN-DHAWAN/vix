@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/get-vix/vix/internal/config"
 	"github.com/get-vix/vix/internal/protocol"
 	"github.com/get-vix/vix/internal/protocol/protoschema"
 )
@@ -104,6 +105,72 @@ func TestProtocolConformanceLiveSocket(t *testing.T) {
 	for _, want := range []string{"event.session_started", "event.agent_done"} {
 		if !validated[want] {
 			t.Errorf("expected to validate %q but never saw it", want)
+		}
+	}
+}
+
+// TestProtocolConformanceSessionListRPC drives the one-shot session.list RPC
+// over a real socket against seeded records and validates every returned
+// SessionSummary against the generated schema — the RPC-projection analog of the
+// event conformance guard.
+func TestProtocolConformanceSessionListRPC(t *testing.T) {
+	dir := t.TempDir()
+	const cwd = "/work"
+	paths := config.NewVixPaths(dir, "", cwd)
+
+	user := sampleRecord()
+	user.ID = "user-1"
+	user.CWD = cwd
+
+	vixRun := sampleRecord()
+	vixRun.ID = "vix-1"
+	vixRun.CWD = "/elsewhere"
+	vixRun.Origin = "vix"
+	vixRun.Trigger = &protocol.TriggerInfo{Type: "cron", Ref: "job-1"}
+
+	for _, r := range []sessionRecord{user, vixRun} {
+		if err := saveSessionRecord(paths, r); err != nil {
+			t.Fatalf("save %s: %v", r.ID, err)
+		}
+	}
+
+	srv := newInstanceTestServer(t)
+	RegisterBuiltinHandlers(srv)
+	_, cancel := serve(t, srv)
+	defer cancel()
+
+	conn, err := net.Dial("unix", srv.sockPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	req, _ := json.Marshal(map[string]any{"command": "session.list", "cwd": cwd, "config_dir": dir})
+	if _, err := conn.Write(append(req, '\n')); err != nil {
+		t.Fatalf("write session.list: %v", err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var resp map[string]json.RawMessage
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatalf("read session.list response: %v", err)
+	}
+	var status string
+	json.Unmarshal(resp["status"], &status)
+	if status != "ok" {
+		t.Fatalf("session.list status = %q, want ok", status)
+	}
+
+	var sessions []map[string]any
+	if err := json.Unmarshal(resp["sessions"], &sessions); err != nil {
+		t.Fatalf("decode sessions: %v", err)
+	}
+	if len(sessions) == 0 {
+		t.Fatal("expected at least one session summary from seeded records")
+	}
+	for i, s := range sessions {
+		if err := protoschema.ValidateRPC("SessionSummary", s); err != nil {
+			t.Errorf("session[%d] does not conform to SessionSummary schema: %v", i, err)
 		}
 	}
 }

@@ -116,3 +116,21 @@ import Glibc
     #expect(ev.type == "event.agent_done")
     #expect(ev.data.isNull)
 }
+
+// MARK: RPC projection decoding (generated SessionSummary)
+
+@Test func decodeSessionSummaryList() throws {
+    let json = """
+    [
+      {"id":"s1","cwd":"/work","model":"anthropic/x","title":"Hello","first_message":"hi","unread":true,"origin":""},
+      {"id":"s2","cwd":"/w","model":"","origin":"vix","job_status":"ok","trigger":{"type":"cron","ref":"job-1"}}
+    ]
+    """
+    let list = try JSONDecoder().decode([SessionSummary].self, from: Data(json.utf8))
+    #expect(list.count == 2)
+    #expect(list[0].displayTitle == "Hello")
+    #expect(list[0].unread == true)
+    #expect(list[1].isVixInitiated == true)
+    #expect(list[1].displayTitle == "s2") // no title/first_message → falls back to id
+    #expect(list[1].trigger?.ref == "job-1")
+}

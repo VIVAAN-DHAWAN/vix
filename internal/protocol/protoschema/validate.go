@@ -45,6 +45,29 @@ func ValidateCommand(discriminator string, data any) error {
 	return validatePayload(protocol.CommandTypes, "command", discriminator, data)
 }
 
+// ValidateRPC checks that an RPC projection value (keyed by type name, e.g.
+// "SessionSummary") conforms to the generated schema.
+func ValidateRPC(typeName string, data any) error {
+	zero, ok := protocol.RPCTypes[typeName]
+	if !ok {
+		return fmt.Errorf("unknown RPC type %q", typeName)
+	}
+	defs := schemaDefs()
+	sch, ok := defs[reflect.TypeOf(zero).Name()].(map[string]any)
+	if !ok {
+		return fmt.Errorf("no schema $def for %q", typeName)
+	}
+	b, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal RPC payload: %w", err)
+	}
+	var inst any
+	if err := json.Unmarshal(b, &inst); err != nil {
+		return fmt.Errorf("normalize RPC payload: %w", err)
+	}
+	return validate(inst, sch, defs, typeName)
+}
+
 func validatePayload(reg map[string]any, kind, discriminator string, data any) error {
 	zero, ok := reg[discriminator]
 	if !ok {

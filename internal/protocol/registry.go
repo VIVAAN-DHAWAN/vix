@@ -78,3 +78,14 @@ var CommandTypes = map[string]any{
 	"session.close":     nil,
 	"update.quit":       nil,
 }
+
+// RPCTypes are the projection structs returned by one-shot RPCs (session.list,
+// job.list, hook.list). Unlike EventTypes/CommandTypes these are not envelope
+// payloads keyed by a wire discriminator — they are keyed by their own type
+// name — but they are part of the client-facing contract, so they are generated
+// into the schema + Swift models and drift-gated alongside the wire types.
+var RPCTypes = map[string]any{
+	"SessionSummary": SessionSummary{},
+	"JobSummary":     JobSummary{},
+	"HookSummary":    HookSummary{},
+}

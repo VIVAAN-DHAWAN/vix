@@ -167,6 +167,26 @@ private func event(_ type: String, _ data: JSONValue) -> SessionEvent {
     #expect(s.pending == nil)
 }
 
+// MARK: Connection banner mapping
+
+@Test func sessionBusyErrorMapsToBanner() {
+    let ev = event("event.error", .object([
+        "message": .string("session is already open in another window"),
+        "code": .string("session_busy"),
+    ]))
+    #expect(connectionBanner(for: ev)?.contains("another window") == true)
+}
+
+@Test func plainErrorHasNoBanner() {
+    let ev = event("event.error", .object(["message": .string("boom")]))
+    #expect(connectionBanner(for: ev) == nil)
+}
+
+@Test func nonErrorEventHasNoBanner() {
+    let ev = event("event.stream_chunk", .object(["text": .string("hi")]))
+    #expect(connectionBanner(for: ev) == nil)
+}
+
 // MARK: Todos & replay
 
 @Test func todoListUpdateReplacesTodos() {

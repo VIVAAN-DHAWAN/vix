@@ -60,8 +60,20 @@ func buildDoc() map[string]any {
 		},
 		"commands": g.section(protocol.CommandTypes),
 		"events":   g.section(protocol.EventTypes),
+		"rpc":      g.rpcSection(protocol.RPCTypes),
 		"$defs":    g.defs,
 	}
+}
+
+// rpcSection maps each RPC projection type name to its schema $ref. Unlike
+// section() these are keyed by type name (not a wire discriminator) and always
+// carry a payload.
+func (g *generator) rpcSection(reg map[string]any) map[string]any {
+	out := make(map[string]any, len(reg))
+	for name, zero := range reg {
+		out[name] = g.schemaFor(reflect.TypeOf(zero))
+	}
+	return out
 }
 
 // section maps each discriminator in a registry to its payload schema. A nil

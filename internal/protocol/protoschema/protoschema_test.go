@@ -100,4 +100,5 @@ func TestRoundTrip(t *testing.T) {
 	}
 	check("event", protocol.EventTypes)
 	check("command", protocol.CommandTypes)
+	check("rpc", protocol.RPCTypes)
 }

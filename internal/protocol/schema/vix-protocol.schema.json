@@ -722,6 +722,42 @@
       ],
       "type": "object"
     },
+    "HookSummary": {
+      "properties": {
+        "created_by": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "event": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "last_fired_at": {
+          "type": "string"
+        },
+        "last_status": {
+          "type": "string"
+        },
+        "matcher": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "id"
+      ],
+      "type": "object"
+    },
     "InstanceRegisterData": {
       "properties": {
         "instance_id": {
@@ -731,6 +767,45 @@
           "type": "string"
         }
       },
+      "type": "object"
+    },
+    "JobSummary": {
+      "properties": {
+        "created_by": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "last_run_at": {
+          "type": "string"
+        },
+        "last_status": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "next_run_at": {
+          "type": "string"
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "trigger_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "id"
+      ],
       "type": "object"
     },
     "Plan": {
@@ -1020,6 +1095,52 @@
       ],
       "type": "object"
     },
+    "SessionSummary": {
+      "properties": {
+        "attached": {
+          "type": "boolean"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "first_message": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "job_status": {
+          "type": "string"
+        },
+        "last_request_at": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "trigger": {
+          "$ref": "#/$defs/TriggerInfo"
+        },
+        "unread": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cwd",
+        "id",
+        "model"
+      ],
+      "type": "object"
+    },
     "SessionTrimData": {
       "properties": {
         "turn_idx": {
@@ -1177,6 +1298,20 @@
         "calls",
         "name",
         "summary"
+      ],
+      "type": "object"
+    },
+    "TriggerInfo": {
+      "properties": {
+        "ref": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
       ],
       "type": "object"
     },
@@ -1450,6 +1585,17 @@
       "payload": {
         "$ref": "#/$defs/EventWorkflowsAvailable"
       }
+    }
+  },
+  "rpc": {
+    "HookSummary": {
+      "$ref": "#/$defs/HookSummary"
+    },
+    "JobSummary": {
+      "$ref": "#/$defs/JobSummary"
+    },
+    "SessionSummary": {
+      "$ref": "#/$defs/SessionSummary"
     }
   },
   "title": "Vix daemon protocol"
