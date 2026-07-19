@@ -1153,6 +1153,41 @@ func (s *Session) snapshotMessagesForFork(turnIdx int) []llm.MessageParam {
 	return s.turnSnapshots[turnIdx]
 }
 
+// rebuildTurnSnapshots reconstructs the per-turn cumulative message snapshots
+// from a flat conversation history. Each completed turn ends at an assistant
+// message with no tool_use blocks (an end_turn stop); the snapshot for that turn
+// is a copy of every message up to and including it — mirroring exactly what the
+// turn loop records live (see the append in Run). A trailing, incomplete turn
+// (no closing end_turn assistant message) contributes no snapshot, just as a
+// live in-progress turn wouldn't.
+//
+// This is what makes a session that was seeded from a fork or restored from disk
+// itself forkable/trimmable: those paths set s.messages directly and would
+// otherwise leave s.turnSnapshots empty, so a subsequent fork would find no
+// history to copy.
+func rebuildTurnSnapshots(msgs []llm.MessageParam) [][]llm.MessageParam {
+	var snapshots [][]llm.MessageParam
+	for i, m := range msgs {
+		if m.Role != llm.RoleAssistant {
+			continue
+		}
+		hasToolUse := false
+		for _, b := range m.Content {
+			if b.Type == llm.BlockToolUse {
+				hasToolUse = true
+				break
+			}
+		}
+		if hasToolUse {
+			continue
+		}
+		snap := make([]llm.MessageParam, i+1)
+		copy(snap, msgs[:i+1])
+		snapshots = append(snapshots, snap)
+	}
+	return snapshots
+}
+
 // trimHistory replaces s.messages with the snapshot at turnIdx and discards
 // all later snapshots. Out-of-range turnIdx is a no-op. Safe to call from any
 // goroutine.

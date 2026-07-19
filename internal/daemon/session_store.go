@@ -467,6 +467,10 @@ func (s *Session) persist() {
 // mismatch in emitReplay.
 func (s *Session) seedFromRecord(rec *sessionRecord) {
 	s.messages = append([]llm.MessageParam(nil), rec.Messages...)
+	// Rebuild the per-turn fork snapshots from the restored history so an
+	// attached/restored session can itself be duplicated or trimmed (both read
+	// turnSnapshots, which persistence doesn't carry).
+	s.turnSnapshots = rebuildTurnSnapshots(s.messages)
 	s.retryNotices = append([]retryNoticeRecord(nil), rec.RetryNotices...)
 	s.todoList = append([]protocol.TodoItem(nil), rec.TodoList...)
 	s.activePlan = rec.ActivePlan

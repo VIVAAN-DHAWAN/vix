@@ -369,6 +369,94 @@ func TestSessionsDuplicate(t *testing.T) {
 	h.UI.Shot("duplicated-session")
 }
 
+// TestSessionsDuplicateOfDuplicate guards the duplicate-of-a-duplicate
+// regression: a session created by duplication had its messages seeded but its
+// per-turn fork snapshots left empty, so duplicating it again produced a
+// grandchild that started from an EMPTY conversation on the daemon even though
+// the UI showed the copied history. Sending a message then went to the model
+// with no prior context.
+//
+// It asserts, across disk and wire: every duplicated record carries the same
+// non-empty history, and a follow-up from the grandchild is sent WITH the
+// original turn rather than from scratch.
+func TestSessionsDuplicateOfDuplicate(t *testing.T) {
+	h := harness.Start(t, sessionsMeta("duplicating a duplicate seeds the full history so a follow-up isn't sent from an empty conversation"))
+
+	h.UI.WaitStable(500 * time.Millisecond)
+
+	// Seed one completed turn on the original session so there is a turn to fork
+	// and a distinctive user message ("seed turn") to look for on the wire.
+	h.Mock.Enqueue(harness.Text("ok-to-fork"))
+	h.UI.Type("seed turn")
+	h.UI.Enter()
+	h.UI.WaitFor("ok-to-fork")
+
+	openDir := h.HomePath(".vix", "sessions", "open")
+
+	// First duplicate: source (top row) -> duplicate B. doDuplicate selects the
+	// new session and syncs the Sessions cursor onto it, so the highlight is now
+	// on B and we stay on the Sessions tab.
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	h.UI.Key("up")
+	h.UI.Type("d")
+	if !pollUntil(10*time.Second, func() bool { return len(readSessionRecords(openDir)) >= 2 }) {
+		t.Fatalf("first duplicate never persisted; got %d records in %s", len(readSessionRecords(openDir)), openDir)
+	}
+
+	// Second duplicate: duplicate B (still highlighted) into C. B may still be
+	// attaching, and a `d` before its client is ready is a harmless no-op
+	// warning. Press, then wait for the third record; retry only after that wait
+	// times out — re-checking the count before each press so we never
+	// over-duplicate into a fourth session.
+	duplicated := false
+	for attempt := 0; attempt < 10 && !duplicated; attempt++ {
+		if len(readSessionRecords(openDir)) >= 3 {
+			duplicated = true
+			break
+		}
+		h.UI.Type("d")
+		duplicated = pollUntil(2*time.Second, func() bool { return len(readSessionRecords(openDir)) >= 3 })
+	}
+	if !duplicated {
+		t.Fatalf("duplicate-of-a-duplicate never persisted; got %d records in %s", len(readSessionRecords(openDir)), openDir)
+	}
+	h.UI.Shot("duplicate-of-duplicate")
+
+	// Disk: every duplicated record must carry the seeded history. Before the fix
+	// the grandchild's messages were empty.
+	recs := readSessionRecords(openDir)
+	for _, r := range recs {
+		if !strings.Contains(string(r.Messages), "seed turn") {
+			t.Fatalf("duplicated record id=%s (parent=%s) is missing the seeded history: %s", r.ID, r.ParentID, r.Messages)
+		}
+		if !jsonEqual(recs[0].Messages, r.Messages) {
+			t.Fatalf("duplicated records diverge:\nfirst=%s\nid=%s=%s", recs[0].Messages, r.ID, r.Messages)
+		}
+	}
+
+	// Wire: open the grandchild (the highlighted, newest session) and send a
+	// follow-up. The outgoing request must include the original turn — the exact
+	// symptom the user hit ("starting from an empty discussion").
+	h.UI.Enter()
+	h.UI.WaitFor("ok-to-fork")
+
+	h.Mock.Enqueue(harness.Text("second-fork-reply"))
+	h.UI.Type("continue please")
+	h.UI.Enter()
+	h.UI.WaitFor("second-fork-reply")
+
+	reqs := h.Mock.Requests()
+	last := string(reqs[len(reqs)-1].Body())
+	if !strings.Contains(last, "continue please") {
+		t.Fatalf("sanity: the last request is not the follow-up:\n%s", last)
+	}
+	if !strings.Contains(last, "seed turn") {
+		t.Fatalf("duplicate-of-a-duplicate sent an empty history: the follow-up request omitted the original turn:\n%s", last)
+	}
+	h.UI.Shot("follow-up-carries-history")
+}
+
 // unreadSessionRecord is a persisted open session marked unread, seeded into
 // open/ before launch. {{WORKDIR}} is expanded to the per-test cwd so
 // session.list (cwd-scoped) returns it.

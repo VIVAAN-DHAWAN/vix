@@ -237,3 +237,92 @@ func TestTrimHistory_ThenFork_SeesOnlyTrimmedHistory(t *testing.T) {
 		t.Fatalf("expected turn 1 to have 2 messages, got %d", len(snap))
 	}
 }
+
+// --- rebuildTurnSnapshots tests ---
+
+// turnMsgs builds a two-turn history: for each turn a user message, an
+// assistant tool_use, a user tool_result, then an assistant end_turn message.
+// Turn boundaries (end_turn assistant messages) sit at indices 3 and 7.
+func twoTurnHistory() []llm.MessageParam {
+	return []llm.MessageParam{
+		llm.NewUserMessage(llm.NewTextBlock("q1")),                           // 0
+		llm.NewAssistantMessage(llm.NewToolUseBlock("t1", "read_file", nil)), // 1
+		llm.NewUserMessage(llm.NewTextBlock("result1")),                      // 2
+		llm.NewAssistantMessage(llm.NewTextBlock("answer1")),                 // 3 end_turn
+		llm.NewUserMessage(llm.NewTextBlock("q2")),                           // 4
+		llm.NewAssistantMessage(llm.NewToolUseBlock("t2", "read_file", nil)), // 5
+		llm.NewUserMessage(llm.NewTextBlock("result2")),                      // 6
+		llm.NewAssistantMessage(llm.NewTextBlock("answer2")),                 // 7 end_turn
+	}
+}
+
+func TestRebuildTurnSnapshots_MarksEndTurnBoundaries(t *testing.T) {
+	snaps := rebuildTurnSnapshots(twoTurnHistory())
+
+	if len(snaps) != 2 {
+		t.Fatalf("expected 2 snapshots, got %d", len(snaps))
+	}
+	if len(snaps[0]) != 4 {
+		t.Errorf("turn 0 snapshot should end at index 3 (4 messages), got %d", len(snaps[0]))
+	}
+	if len(snaps[1]) != 8 {
+		t.Errorf("turn 1 snapshot should include all 8 messages, got %d", len(snaps[1]))
+	}
+}
+
+func TestRebuildTurnSnapshots_IgnoresIncompleteTrailingTurn(t *testing.T) {
+	// A user prompt with no closing assistant end_turn message yet.
+	msgs := append(twoTurnHistory(),
+		llm.NewUserMessage(llm.NewTextBlock("q3")),
+		llm.NewAssistantMessage(llm.NewToolUseBlock("t3", "read_file", nil)),
+	)
+
+	snaps := rebuildTurnSnapshots(msgs)
+
+	if len(snaps) != 2 {
+		t.Fatalf("incomplete trailing turn must not produce a snapshot; got %d snapshots", len(snaps))
+	}
+}
+
+func TestRebuildTurnSnapshots_Empty(t *testing.T) {
+	if snaps := rebuildTurnSnapshots(nil); snaps != nil {
+		t.Fatalf("expected nil for empty history, got %v", snaps)
+	}
+}
+
+func TestRebuildTurnSnapshots_CopiesNotAliases(t *testing.T) {
+	msgs := twoTurnHistory()
+	snaps := rebuildTurnSnapshots(msgs)
+
+	// The snapshot must be a distinct backing array so later trims/mutations of
+	// s.messages don't corrupt stored snapshots.
+	if &snaps[1][0] == &msgs[0] {
+		t.Fatal("rebuildTurnSnapshots must copy the prefix, not alias the source slice")
+	}
+}
+
+// TestForkOfFork_SeededSessionIsForkable reproduces the duplicate-of-a-duplicate
+// bug: a session seeded purely from a fork (messages set, turnSnapshots empty)
+// must be forkable again. With snapshots rebuilt on seed, the second fork copies
+// the full history instead of starting empty.
+func TestForkOfFork_SeededSessionIsForkable(t *testing.T) {
+	// Original session with two real turns.
+	orig := &Session{}
+	orig.turnSnapshots = rebuildTurnSnapshots(twoTurnHistory())
+
+	// First duplicate: seed messages + snapshots from the last turn (as server.go does).
+	dupA := &Session{}
+	msgsA := orig.snapshotMessagesForFork(1)
+	if len(msgsA) == 0 {
+		t.Fatal("first fork found no history to copy")
+	}
+	dupA.messages = msgsA
+	dupA.turnSnapshots = rebuildTurnSnapshots(msgsA)
+
+	// Second duplicate, from the first duplicate. Before the fix this returned
+	// nil because dupA.turnSnapshots was empty.
+	msgsB := dupA.snapshotMessagesForFork(1)
+	if len(msgsB) != 8 {
+		t.Fatalf("fork-of-fork should copy all 8 messages, got %d", len(msgsB))
+	}
+}

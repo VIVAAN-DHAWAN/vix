@@ -662,6 +662,10 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 		if forkSrc != nil {
 			if msgs := forkSrc.snapshotMessagesForFork(startData.ForkTurnIdx); len(msgs) > 0 {
 				session.messages = msgs
+				// Rebuild the fork snapshots so this seeded session is itself
+				// forkable/trimmable — otherwise a duplicate-of-a-duplicate would
+				// find no history to copy and start empty.
+				session.turnSnapshots = rebuildTurnSnapshots(msgs)
 			}
 		}
 		session.parentID = startData.ForkSessionID
