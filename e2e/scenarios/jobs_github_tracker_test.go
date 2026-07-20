@@ -3,7 +3,6 @@ package scenarios
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -129,32 +128,26 @@ func trackerJobSpec() string {
 	return string(b)
 }
 
-// countJobRuns counts completed (job_status set) Vix-initiated sessions for a
-// job id, used to gate one `vix job run` on completion before firing the next.
-func countJobRuns(h *harness.Harness, ref string) int {
-	dir := h.HomePath(".vix/sessions/open")
-	entries, err := os.ReadDir(dir)
+// countStateRuns returns how many runs the job has recorded in its per-job
+// state.json (the "recent_runs" history). This — not the Vix-initiated session
+// list — is the reliable "the run finished" signal here: the tracker's workflow
+// is all bash (fetch/select/mark_done, no agent step), so every run ends with
+// agentTurns==0 and the runner correctly records it as a skip that leaves no
+// session record (that skip is the production NO_TODO / nothing-to-plan case).
+// The run is still appended to recent_runs (scheduled, manual, and skip alike),
+// so gating on it works for a no-LLM workflow.
+func countStateRuns(h *harness.Harness, jobID string) int {
+	b, err := os.ReadFile(h.HomePath(".vix/jobs/" + jobID + "/state.json"))
 	if err != nil {
 		return 0
 	}
-	n := 0
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var r planRunRecord
-		if json.Unmarshal(b, &r) != nil {
-			continue
-		}
-		if r.Origin == "vix" && r.Trigger.Ref == ref && r.JobStatus != "" {
-			n++
-		}
+	var st struct {
+		RecentRuns []json.RawMessage `json:"recent_runs"`
 	}
-	return n
+	if json.Unmarshal(b, &st) != nil {
+		return 0
+	}
+	return len(st.RecentRuns)
 }
 
 // TestJobGithubTrackerBookkeeping fires the tracker job repeatedly and asserts
@@ -190,7 +183,7 @@ func TestJobGithubTrackerBookkeeping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run %d: vix job run failed: %v\n%s", runNo, err, out)
 		}
-		if !pollUntil(30*time.Second, func() bool { return countJobRuns(h, trackerJobID) >= runNo }) {
+		if !pollUntil(30*time.Second, func() bool { return countStateRuns(h, trackerJobID) >= runNo }) {
 			t.Fatalf("run %d did not complete; tracker=%q\n%s", runNo, readTracker(), h.Daemon.LogTail(80))
 		}
 	}
