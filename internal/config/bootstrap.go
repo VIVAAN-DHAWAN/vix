@@ -24,6 +24,7 @@ var managedDefaultFiles = []string{
 	"config/workflow.json",
 	"config/languages.json",
 	"skills/jobs/SKILL.md",
+	"skills/review-pr/SKILL.md",
 	"skills/vix-help/SKILL.md",
 	"skills/vix-help/references/vix-manual.md",
 }

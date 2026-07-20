@@ -69,6 +69,9 @@ func StartWebServer(ctx context.Context, s *Server, port int) {
 	// Create a scheduled job from the web UI (local origins only).
 	mux.HandleFunc("/api/jobs", handleCreateJob(s))
 
+	// Fire an existing job immediately (add + trigger from the web UI).
+	mux.HandleFunc("/api/jobs/{id}/run", handleRunJob(s))
+
 	// New per-session API routes
 	mux.HandleFunc("/api/session/{id}/interview-data", handleInterviewData(s))
 	mux.HandleFunc("/api/session/{id}/signed-url", handleSignedURL(s))

@@ -50,6 +50,38 @@ func handleCreateJob(s *Server) http.HandlerFunc {
 	}
 }
 
+// handleRunJob handles POST /api/jobs/{id}/run: it fires an existing job
+// immediately (out of band from its schedule), mirroring `vix job run <id>`,
+// and returns the run's session id. Refused for non-local origins. This backs
+// the web UI's "add + trigger" flow, where a freshly created job is run once to
+// establish its baseline right away instead of waiting for the first tick.
+func handleRunJob(s *Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		if !sameOriginLocal(r) {
+			http.Error(w, `{"error":"forbidden origin"}`, http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		id := r.PathValue("id")
+		if id == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "missing job id"})
+			return
+		}
+		sessionID, err := s.RunJob(id)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"session_id": sessionID})
+	}
+}
+
 // sameOriginLocal reports whether the request comes from the local web UI rather
 // than a cross-site caller. The Host header must resolve to a loopback address —
 // this defeats DNS-rebinding, since a rebinding page's Host stays its own domain

@@ -9,6 +9,9 @@ package jobs
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +49,32 @@ type Permissions struct {
 	AutoDirs  *bool `json:"auto_dirs,omitempty"`
 }
 
+// SpecFile is a helper file materialized into the job's own directory (a
+// sibling of job.json) when the spec is saved or loaded. It lets a
+// self-contained job ship, declaratively, the scripts/assets its workflow needs
+// at runtime (referenced via $(workflow.dir)/<path>) without a separate install
+// step. Writes are confined to the job directory (see Validate); the spec is the
+// source of truth, so an on-disk copy is (re)written whenever the content
+// differs.
+type SpecFile struct {
+	Path    string `json:"path"`           // relative to the job dir; no "..", no absolute
+	Content string `json:"content"`        // exact bytes to write
+	Mode    string `json:"mode,omitempty"` // octal (e.g. "0755"); default "0644"
+}
+
+// FileMode returns the parsed permission bits, defaulting to 0644 when unset or
+// unparseable (Validate rejects an unparseable mode up front).
+func (f SpecFile) FileMode() os.FileMode {
+	if f.Mode == "" {
+		return 0o644
+	}
+	m, err := strconv.ParseUint(f.Mode, 8, 32)
+	if err != nil {
+		return 0o644
+	}
+	return os.FileMode(m)
+}
+
 // Spec is a user-authored job definition, one job.json per job under
 // ~/.vix/jobs/<id>/. Mutable runtime state lives separately (State) so these
 // files never churn.
@@ -66,6 +95,9 @@ type Spec struct {
 	SkipIfEmpty bool          `json:"skip_if_empty,omitempty"`
 	Timeout     string        `json:"timeout,omitempty"` // Go duration, default 10m
 	CreatedBy   string        `json:"created_by,omitempty"`
+	// Files are helper files materialized into the job's own directory on save
+	// and load (see SpecFile).
+	Files []SpecFile `json:"files,omitempty"`
 }
 
 // Validate reports the first problem with the spec, or nil.
@@ -123,7 +155,40 @@ func (s *Spec) Validate() error {
 			return fmt.Errorf("invalid timeout: must be positive")
 		}
 	}
+	seen := make(map[string]bool, len(s.Files))
+	for _, f := range s.Files {
+		rel, err := safeSpecFilePath(f.Path)
+		if err != nil {
+			return err
+		}
+		if seen[rel] {
+			return fmt.Errorf("file %q: duplicate path", f.Path)
+		}
+		seen[rel] = true
+		if f.Mode != "" {
+			if _, err := strconv.ParseUint(f.Mode, 8, 32); err != nil {
+				return fmt.Errorf("file %q: invalid mode %q (want octal like \"0755\")", f.Path, f.Mode)
+			}
+		}
+	}
 	return nil
+}
+
+// safeSpecFilePath cleans a declared file path and confines it to the job
+// directory: it must be non-empty, relative, and must not escape via "..".
+// Returns the cleaned relative path.
+func safeSpecFilePath(p string) (string, error) {
+	if strings.TrimSpace(p) == "" {
+		return "", fmt.Errorf("file: missing path")
+	}
+	clean := filepath.Clean(p)
+	if filepath.IsAbs(clean) {
+		return "", fmt.Errorf("file %q: path must be relative", p)
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("file %q: path escapes the job directory", p)
+	}
+	return clean, nil
 }
 
 // schedule parses the cron expression with its timezone. Only valid for

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tidwall/sjson"
@@ -130,6 +131,9 @@ func (st *Store) LoadSpecs() (map[string]Spec, map[string]string) {
 			invalid[spec.ID] = "duplicate job id (two spec files share it)"
 			continue
 		}
+		// Materialize declared helper files into the job dir (best-effort: a
+		// write failure must not stop the spec from loading/running).
+		_ = materializeSpecFiles(filepath.Join(st.specsDir, name), spec.Files)
 		specs[spec.ID] = spec
 	}
 	return specs, invalid
@@ -176,7 +180,65 @@ func (st *Store) SaveSpec(s Spec) error {
 		os.Remove(tmpName)
 		return err
 	}
-	return os.Rename(tmpName, filepath.Join(jobDir, "job.json"))
+	if err := os.Rename(tmpName, filepath.Join(jobDir, "job.json")); err != nil {
+		return err
+	}
+	// Materialize any declared helper files alongside job.json.
+	return materializeSpecFiles(jobDir, s.Files)
+}
+
+// materializeSpecFiles writes a spec's declared helper files into its job
+// directory (jobDir), confined to that directory. Each write is atomic (temp
+// file + rename) and write-if-changed: an on-disk copy whose content already
+// matches is left untouched (only its mode is corrected if it drifted), so
+// repeated LoadSpecs on hot-reload don't churn mtimes. The spec is the source of
+// truth, so differing content is overwritten. Paths are re-validated here as a
+// defence-in-depth check even though Validate already rejected unsafe ones.
+func materializeSpecFiles(jobDir string, files []SpecFile) error {
+	for _, f := range files {
+		rel, err := safeSpecFilePath(f.Path)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(jobDir, rel)
+		if r, err := filepath.Rel(jobDir, dst); err != nil ||
+			r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("file %q escapes the job directory", f.Path)
+		}
+		mode := f.FileMode()
+		if existing, err := os.ReadFile(dst); err == nil && string(existing) == f.Content {
+			if fi, err := os.Stat(dst); err == nil && fi.Mode().Perm() != mode.Perm() {
+				_ = os.Chmod(dst, mode)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		tmp, err := os.CreateTemp(filepath.Dir(dst), ".file.*.tmp")
+		if err != nil {
+			return err
+		}
+		tmpName := tmp.Name()
+		if _, err := tmp.WriteString(f.Content); err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmpName)
+			return err
+		}
+		if err := os.Chmod(tmpName, mode); err != nil {
+			os.Remove(tmpName)
+			return err
+		}
+		if err := os.Rename(tmpName, dst); err != nil {
+			os.Remove(tmpName)
+			return err
+		}
+	}
+	return nil
 }
 
 // SpecExists reports whether a spec file with the given id is already present.
