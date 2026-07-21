@@ -32,7 +32,10 @@ func renderVixBanner() string {
 	}
 	return result.String()
 } // renderWelcomeInline renders a centered welcome message for inline mode.
-func renderWelcomeInline(width, height int, s Styles) string {
+// workDir is the session's working directory; when draft is true the session
+// has not started yet, so the directory is shown as editable (Ctrl+O) and a
+// note explains that the first message starts the session here.
+func renderWelcomeInline(width, height int, s Styles, workDir string, draft bool) string {
 	// Build the welcome block (uncentered)
 	var block strings.Builder
 	block.WriteString(renderVixBanner())
@@ -40,12 +43,32 @@ func renderWelcomeInline(width, height int, s Styles) string {
 	block.WriteString(version + "\n\n")
 	subtitle := lipgloss.NewStyle().Foreground(s.ColorWhite).Italic(true).Render("AI coding assistant")
 	block.WriteString(subtitle + "\n\n")
+
+	// Working directory line.
+	if workDir != "" {
+		dirLabel := lipgloss.NewStyle().Foreground(s.ColorDimGray).Render("working directory")
+		dirValue := lipgloss.NewStyle().Foreground(colorPrimary).Bold(true).Render(workDir)
+		block.WriteString(dirLabel + "\n" + dirValue + "\n")
+		if draft {
+			note := lipgloss.NewStyle().Foreground(s.ColorDimGray).Italic(true).Render("Ctrl+O to change · your first message starts the session here")
+			block.WriteString(note + "\n")
+		}
+		block.WriteString("\n")
+	}
+
 	shortcutStyle := lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
 	descStyle := lipgloss.NewStyle().Foreground(s.ColorWhite)
 	shortcuts := []struct {
 		key  string
 		desc string
-	}{{"Tab", "Switch focus (input/chat)"}, {"Shift+Tab", "Cycle mode"}, {"Ctrl+N", "Next session"}, {"Ctrl+P", "Previous session"}, {"Ctrl+R", "Search history"}, {"Ctrl+C", "Quit"}, {"Esc", "Cancel current operation"}} // Find the longest key and longest desc to build fixed-width rows
+	}{{"Tab", "Switch focus (input/chat)"}, {"Shift+Tab", "Cycle mode"}, {"Ctrl+N", "Next session"}, {"Ctrl+P", "Previous session"}, {"Ctrl+R", "Search history"}, {"Ctrl+C", "Quit"}, {"Esc", "Cancel current operation"}}
+	if draft {
+		shortcuts = append([]struct {
+			key  string
+			desc string
+		}{{"Ctrl+O", "Change working directory"}}, shortcuts...)
+	}
+	// Find the longest key and longest desc to build fixed-width rows
 	maxKeyWidth := 0
 	maxDescWidth := 0
 	for _, sc := range shortcuts {

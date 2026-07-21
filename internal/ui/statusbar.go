@@ -31,6 +31,7 @@ func renderStatusBar(
 	width int,
 	connected bool,
 	reconnecting bool,
+	draft bool,
 	msg StatusMessage,
 	s Styles,
 	activeTab TabKind,
@@ -111,6 +112,8 @@ func renderStatusBar(
 		connStatus = statusConnectedStyle.Render("● Connected")
 	} else if reconnecting {
 		connStatus = statusReconnectingStyle.Render("● Reconnecting")
+	} else if draft {
+		connStatus = lipgloss.NewStyle().Foreground(s.ColorDimGray).Render("○ Draft — not started")
 	} else {
 		connStatus = statusDisconnectedStyle.Render("● Disconnected")
 	}

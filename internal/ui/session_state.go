@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
@@ -9,6 +11,34 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 	"github.com/get-vix/vix/internal/providers"
 )
+
+// sessionPhase distinguishes a draft (client-only, never connected) session
+// from a live one that has a daemon connection. A draft is created up front for
+// a fresh launch (nothing to restore) and for every ctrl+t tab; it holds no
+// SessionClient and sends no session.start until the user submits the first
+// message, at which point its working directory is frozen for the rest of the
+// session's life.
+type sessionPhase int
+
+const (
+	// phaseDraft: no daemon connection yet. The welcome screen is shown and the
+	// working directory (draftCWD) may still be changed. Committed on the first
+	// message submit.
+	phaseDraft sessionPhase = iota
+	// phaseLive: session.start has been (or is being) sent; cwd is frozen.
+	phaseLive
+)
+
+// newClientKey returns a random, process-unique handle for a SessionState. It
+// is stable for the session's lifetime and independent of daemonSessionID,
+// which lets the Update loop match an async connect result back to the right
+// draft even when several drafts coexist (all of which have an empty
+// daemonSessionID until they commit).
+func newClientKey() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 // streamRenderInterval caps how often the accumulated streaming buffers are
 // re-rendered through glamour (see lastStreamRender/lastThinkingRender).
@@ -32,6 +62,18 @@ type SessionState struct {
 	// Daemon connection
 	client       *daemon.SessionClient
 	reconnecting bool
+
+	// phase is phaseDraft until the session is committed (first message) and
+	// phaseLive thereafter. clientKey is a stable, process-unique handle used to
+	// match async connect results back to this session while its
+	// daemonSessionID is still empty. workDir is the session's working
+	// directory: editable on the welcome screen while a draft, then frozen and
+	// used as the cwd for every (re)connect. pendingFirstInput holds the message
+	// that triggered the commit, sent once the connection is established.
+	phase             sessionPhase
+	clientKey         string
+	workDir           string
+	pendingFirstInput *pendingMsg
 	// closing is set when the TUI itself initiated this session's close (the
 	// quit-time "close all sessions" flow). The daemon tears the connection
 	// down as part of handling session.close, so the subsequent disconnect is
@@ -97,6 +139,9 @@ type SessionState struct {
 	focus         FocusState
 	fileCompleter FileCompleter
 	slashMenu     SlashMenu
+	// dirPicker is the working-directory browser opened with Ctrl+O on a draft
+	// session's welcome screen. It reuses FileCompleter in directory-only mode.
+	dirPicker FileCompleter
 
 	// Animation
 	thinkingAnim ThinkingAnim
@@ -162,7 +207,14 @@ type SessionState struct {
 }
 
 // newSessionState initialises a fresh session state ready for a new agent session.
+// A nil client yields a draft session (phaseDraft): no daemon connection is
+// opened until the first message commits it. A non-nil client (restore/attach)
+// is live immediately.
 func newSessionState(cfg *config.Config, client *daemon.SessionClient) *SessionState {
+	phase := phaseDraft
+	if client != nil {
+		phase = phaseLive
+	}
 	s := &SessionState{
 		agentState:    StateWaitingForInput,
 		input:         newInput(),
@@ -170,6 +222,9 @@ func newSessionState(cfg *config.Config, client *daemon.SessionClient) *SessionS
 		questionPanel: NewQuestionPanel(),
 		focus:         FocusEditor,
 		client:        client,
+		phase:         phase,
+		clientKey:     newClientKey(),
+		workDir:       cfg.CWD,
 		modelName:     cfg.Model,
 		contextWindow: providers.Default().ContextWindow(cfg.Model),
 		history:       NewHistory(cfg.Paths.Primary()),

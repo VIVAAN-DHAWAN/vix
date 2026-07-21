@@ -135,6 +135,41 @@ func startSessionEventLoop(client *daemon.SessionClient) tea.Cmd {
 	}
 }
 
+// draftConnectedMsg is sent when a draft session's deferred connection (opened
+// on its first message) succeeds. The handler wires the client, marks the
+// session live, and flushes the queued first message.
+type draftConnectedMsg struct {
+	clientKey string
+	client    *daemon.SessionClient
+}
+
+// draftConnectFailedMsg is sent when a draft's deferred connection fails. The
+// session stays a draft so the user can retry (or change the directory).
+type draftConnectFailedMsg struct {
+	clientKey string
+	err       error
+}
+
+// connectDraft opens the daemon connection for a draft session on its first
+// message, in the chosen working directory. Unlike attemptReconnect it never
+// attaches by ID (a draft has no daemon-side record yet) and echoes back the
+// stable clientKey so the Update loop can match the result to the right draft.
+func connectDraft(socketPath, clientKey, cwd, configDir, model, authToken string, forceInit, enableWrite, enableDir bool) tea.Cmd {
+	return func() tea.Msg {
+		client := daemon.NewClient(socketPath)
+		client.SetAuthToken(authToken)
+		if !client.Ping() {
+			return draftConnectFailedMsg{clientKey: clientKey, err: fmt.Errorf("daemon is not responding")}
+		}
+		session := daemon.NewSessionClient(socketPath)
+		session.SetAuthToken(authToken)
+		if err := session.Connect(cwd, configDir, model, forceInit, enableWrite, enableDir, false); err != nil {
+			return draftConnectFailedMsg{clientKey: clientKey, err: err}
+		}
+		return draftConnectedMsg{clientKey: clientKey, client: session}
+	}
+}
+
 // attemptReconnect tries to reconnect a session to the daemon.
 // targetDaemonSessionID identifies which session this attempt is for; it is
 // echoed back in the result message so the handler can match it to the right
@@ -232,6 +267,27 @@ func (m *Model) findSessionByDaemonID(id string) (int, *SessionState) {
 		}
 	}
 	return -1, nil
+}
+
+// findSessionByClientKey locates a session by its stable client-side handle.
+// Used to match async draft-connect results, since a draft's daemonSessionID is
+// empty until it commits (and several drafts may coexist).
+func (m *Model) findSessionByClientKey(key string) (int, *SessionState) {
+	for i, s := range m.sessions {
+		if s.clientKey == key {
+			return i, s
+		}
+	}
+	return -1, nil
+}
+
+// pickCWD returns primary when it is non-blank, else fallback. Used to prefer a
+// session's own working directory over the model-global launch cwd.
+func pickCWD(primary, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return primary
+	}
+	return fallback
 }
 
 // AppState represents the current state of the application.
@@ -487,7 +543,7 @@ func (m Model) Init() tea.Cmd {
 	}
 	// Reopen any persisted open sessions beyond the initial one.
 	for _, sum := range m.restoreSessions {
-		cmds = append(cmds, attachRestoreSession(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, sum))
+		cmds = append(cmds, attachRestoreSession(m.socketPath, pickCWD(sum.CWD, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, sum))
 	}
 	// Populate the Vix-initiated group of the Sessions tab.
 	cmds = append(cmds, fetchVixSessions(m.socketPath, m.cwd, m.cfg.ConfigDir, m.authToken))
@@ -634,12 +690,12 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+t":
 			newSess := newSessionState(m.cfg, nil)
 			newSess.input.SetWidth(m.width - 4)
-			newSess.reconnecting = true
 			newIdx := len(m.sessions)
 			m.sessions = append(m.sessions, newSess)
 			m.selectedSession = newIdx
 			m.activeTab = TabKindChat
-			cmds = append(cmds, attemptReconnect(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, newSess.daemonSessionID))
+			// A ctrl+t tab starts as a draft (no connection) so the user can
+			// pick its working directory before committing on the first message.
 			cmds = append(cmds, armCursorBlink(newSess))
 			return m, tea.Batch(cmds...)
 
@@ -664,7 +720,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// session; the replay rebuilds the conversation and the
 					// matching sessionRestoredMsg focuses it.
 					m.focusRestoredID = sum.ID
-					return m, attachRestoreSession(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, sum)
+					return m, attachRestoreSession(m.socketPath, pickCWD(sum.CWD, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, sum)
 				}
 				if idx, ok := m.sessionsSelectedIdx(); ok {
 					m.selectedSession = idx
@@ -674,7 +730,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					selSess.input.SetWidth(m.width - 4)
 					if selSess.client == nil && !selSess.reconnecting {
 						selSess.reconnecting = true
-						cmds = append(cmds, attemptReconnect(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, selSess.daemonSessionID))
+						cmds = append(cmds, attemptReconnect(m.socketPath, pickCWD(selSess.workDir, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, selSess.daemonSessionID))
 					}
 					cmds = append(cmds, selSess.thinkingAnim.Resume())
 					cmds = append(cmds, armCursorBlink(selSess))
@@ -684,15 +740,13 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, tea.Batch(cmds...)
 			case "t":
-				// Add a new session
+				// Add a new session (draft — connects on first message).
 				newSess := newSessionState(m.cfg, nil)
 				newSess.input.SetWidth(m.width - 4)
-				newSess.reconnecting = true
 				newIdx := len(m.sessions)
 				m.sessions = append(m.sessions, newSess)
 				m.selectedSession = newIdx
 				m.activeTab = TabKindChat
-				cmds = append(cmds, attemptReconnect(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, newSess.daemonSessionID))
 				cmds = append(cmds, armCursorBlink(newSess))
 				return m, tea.Batch(cmds...)
 			case "d":
@@ -837,6 +891,61 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	processKey:
+
+		// Directory picker (draft welcome screen, Ctrl+O). Intercepts keys while
+		// open so navigation doesn't leak into the input.
+		if sess.dirPicker.IsVisible() {
+			switch msg.String() {
+			case "up":
+				sess.dirPicker.MoveUp()
+				return m, nil
+			case "down":
+				sess.dirPicker.MoveDown()
+				return m, nil
+			case "esc":
+				sess.dirPicker.Close()
+				return m, nil
+			case "right", "tab":
+				if entry := sess.dirPicker.SelectedEntry(); entry != nil && entry.IsDir() {
+					sess.dirPicker.Descend(entry)
+				}
+				return m, nil
+			case "left":
+				sess.dirPicker.Parent()
+				return m, nil
+			case "backspace":
+				if sess.dirPicker.query != "" {
+					sess.dirPicker.Refresh(strings.TrimSuffix(sess.dirPicker.query, sess.dirPicker.query[len(sess.dirPicker.query)-1:]))
+				} else {
+					sess.dirPicker.Parent()
+				}
+				return m, nil
+			case "enter":
+				// Choose the highlighted directory, or the listed directory
+				// itself when the listing is empty.
+				if entry := sess.dirPicker.SelectedEntry(); entry != nil && entry.IsDir() {
+					sess.workDir = sess.dirPicker.SelectedPath()
+				} else {
+					sess.workDir = sess.dirPicker.CurrentDir()
+				}
+				sess.dirPicker.Close()
+				return m, nil
+			default:
+				if s := msg.String(); len(s) == 1 && s >= " " {
+					sess.dirPicker.Refresh(sess.dirPicker.query + s)
+				}
+				return m, nil
+			}
+		}
+
+		// Ctrl+O opens the working-directory picker on a draft session that has
+		// not started connecting yet. Once committing/live the cwd is frozen.
+		if msg.String() == "ctrl+o" {
+			if sess.phase == phaseDraft && sess.client == nil && !sess.reconnecting {
+				sess.dirPicker.OpenDir(sess.workDir)
+			}
+			return m, nil
+		}
 
 		// Slash menu
 		if sess.slashMenu.IsVisible() {
@@ -1131,7 +1240,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			query, found := extractAtQuery(sess.input.Value())
 			if found {
-				dir, prefix := resolveAtDir(query, m.cwd)
+				dir, prefix := resolveAtDir(query, pickCWD(sess.workDir, m.cwd))
 				if sess.fileCompleter.IsVisible() && dir == sess.fileCompleter.currentDir {
 					sess.fileCompleter.Refresh(prefix)
 				} else {
@@ -1223,7 +1332,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sess.agentState != StatePlanReview {
 				sess.agentState = StateWaitingForInput
 			}
-			cmds = append(cmds, attemptReconnect(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.forceInit, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, msg.daemonSessionID))
+			cmds = append(cmds, attemptReconnect(m.socketPath, pickCWD(sess.workDir, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.forceInit, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, msg.daemonSessionID))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -1264,8 +1373,42 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		_, sess := m.findSessionByDaemonID(msg.daemonSessionID)
 		if sess != nil && sess.reconnecting {
-			return m, attemptReconnect(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.forceInit, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, msg.daemonSessionID)
+			return m, attemptReconnect(m.socketPath, pickCWD(sess.workDir, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.forceInit, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, msg.daemonSessionID)
 		}
+		return m, nil
+
+	case draftConnectedMsg:
+		_, sess := m.findSessionByClientKey(msg.clientKey)
+		if sess == nil {
+			// The draft was closed while the connect goroutine was in flight.
+			msg.client.Close()
+			return m, nil
+		}
+		sess.client = msg.client
+		sess.daemonSessionID = msg.client.SessionID()
+		sess.phase = phaseLive
+		sess.reconnecting = false
+		cmds = append(cmds, startSessionEventLoop(msg.client))
+		// Flush the message that triggered the commit.
+		if pending := sess.pendingFirstInput; pending != nil {
+			sess.pendingFirstInput = nil
+			telemetry.TrackTurn(sess.modelName)
+			msg.client.SendInput(pending.text, pending.attachments)
+		}
+		return m, tea.Batch(cmds...)
+
+	case draftConnectFailedMsg:
+		_, sess := m.findSessionByClientKey(msg.clientKey)
+		if sess == nil {
+			return m, nil
+		}
+		// Keep the session a draft so the user can retry (or change directory).
+		sess.reconnecting = false
+		sess.pendingFirstInput = nil
+		sess.agentState = StateWaitingForInput
+		sess.thinkingAnim.Stop()
+		sess.chatMessages = append(sess.chatMessages, renderErrorMessage(fmt.Errorf("couldn't start session: %w", msg.err)))
+		sess.chatScrollOffset = 0
 		return m, nil
 
 	case sessionOrphanedMsg:
@@ -1293,6 +1436,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		restored := newSessionState(m.cfg, msg.client)
+		restored.workDir = pickCWD(msg.summary.CWD, m.cwd)
 		if msg.summary.Model != "" {
 			restored.setModel(msg.summary.Model)
 		}
@@ -2342,6 +2486,26 @@ func (m Model) handleEnter(sess *SessionState) (tea.Model, tea.Cmd) {
 		sess.chatMessages = append(sess.chatMessages, renderUserMessage(displayText, m.mdRenderer.width))
 		sess.chatScrollOffset = 0
 
+		// Draft session: commit it now. Open the daemon connection in the
+		// chosen working directory, then flush this message once connected
+		// (draftConnectedMsg). The cwd is frozen from here on.
+		if sess.phase == phaseDraft {
+			cwd := resolveWorkDir(sess.workDir)
+			if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+				sess.chatMessages = append(sess.chatMessages, renderErrorMessage(fmt.Errorf("working directory does not exist: %s", sess.workDir)))
+				sess.chatScrollOffset = 0
+				return m, nil
+			}
+			sess.workDir = cwd
+			sess.pendingFirstInput = &pendingMsg{text: displayText, attachments: attachments}
+			sess.reconnecting = true
+			sess.agentState = StateStreaming
+			return m, tea.Batch(
+				connectDraft(m.socketPath, sess.clientKey, cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.forceInit, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess),
+				sess.thinkingAnim.Start(),
+			)
+		}
+
 		sess.agentState = StateStreaming
 		animCmd := sess.thinkingAnim.Start()
 
@@ -2906,14 +3070,14 @@ func (m Model) View() tea.View {
 			}
 			lines, rowStart := sess.cachedChatLines(m.styles, innerWidth)
 			if emptyChatLines(lines) && tail == "" && !m.testMode {
-				welcome := renderWelcomeInline(innerWidth, contentHeight, m.styles)
+				welcome := renderWelcomeInline(innerWidth, contentHeight, m.styles, sess.workDir, sess.phase == phaseDraft)
 				allLines = strings.Split(welcome, "\n")
 				visualRowStart = visualRowPrefix(allLines, innerWidth)
 			} else {
 				allLines, visualRowStart = combineTail(lines, rowStart, tail, innerWidth)
 			}
 		case !m.testMode:
-			welcome := renderWelcomeInline(innerWidth, contentHeight, m.styles)
+			welcome := renderWelcomeInline(innerWidth, contentHeight, m.styles, m.cwd, false)
 			allLines = strings.Split(welcome, "\n")
 			visualRowStart = visualRowPrefix(allLines, innerWidth)
 		default:
@@ -3081,7 +3245,8 @@ func (m Model) View() tea.View {
 		statusInputTokens = sess.lastInputTokens
 		statusContextWindow = sess.contextWindow
 	}
-	statusBar := renderStatusBar(m.width, connected, reconnecting, m.statusMsg, m.styles, m.activeTab, statusFocus, statusInputTokens, statusContextWindow)
+	draft := sess != nil && sess.phase == phaseDraft
+	statusBar := renderStatusBar(m.width, connected, reconnecting, draft, m.statusMsg, m.styles, m.activeTab, statusFocus, statusInputTokens, statusContextWindow)
 	uv.NewStyledString(statusBar).Draw(canvas, image.Rect(0, y, m.width, m.height))
 
 	// Command palette overlay
@@ -3160,6 +3325,25 @@ func (m Model) View() tea.View {
 				popupY = 0
 			}
 			uv.NewStyledString(overlay).Draw(canvas, image.Rect(2, popupY, 2+popupWidth, popupY+h))
+		}
+	}
+
+	// Directory picker overlay (draft welcome screen, centered)
+	if sess != nil && sess.dirPicker.IsVisible() {
+		popupWidth := 60
+		if popupWidth > m.width-4 {
+			popupWidth = m.width - 4
+		}
+		list := sess.dirPicker.View(popupWidth, 10, m.styles)
+		if list != "" {
+			header := lipgloss.NewStyle().Foreground(colorPrimary).Bold(true).
+				Width(popupWidth).Render(truncatePathLeft(sess.dirPicker.CurrentDir(), popupWidth))
+			hint := lipgloss.NewStyle().Foreground(m.styles.ColorDimGray).
+				Width(popupWidth).Render("↑↓ select · → open · ← up · Enter choose · Esc cancel")
+			overlay := header + "\n" + list + "\n" + hint
+			w, h := lipgloss.Size(overlay)
+			center := centerRect(canvas.Bounds(), w, h)
+			uv.NewStyledString(overlay).Draw(canvas, center)
 		}
 	}
 
@@ -3644,6 +3828,7 @@ func (m *Model) doFork(sep TurnSepInfo) (Model, tea.Cmd) {
 
 	newSess := newSessionState(m.cfg, nil)
 	newSess.reconnecting = true
+	newSess.workDir = pickCWD(sess.workDir, m.cwd)
 	forkedMsgs := make([]ChatMessage, sep.MsgIdx+1)
 	copy(forkedMsgs, sess.chatMessages[:sep.MsgIdx+1])
 	newSess.chatMessages = forkedMsgs
@@ -3658,7 +3843,7 @@ func (m *Model) doFork(sep TurnSepInfo) (Model, tea.Cmd) {
 	m.selectedSession = newIdx
 
 	return *m, tea.Batch(connectFork(
-		m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken,
+		m.socketPath, newSess.workDir, m.cfg.ConfigDir, m.cfg.Model, m.authToken,
 		m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess,
 		forkSessionID, sep.TurnIdx, newSess.daemonSessionID,
 	), armCursorBlink(newSess))
@@ -3671,6 +3856,7 @@ func (m *Model) doFork(sep TurnSepInfo) (Model, tea.Cmd) {
 func (m *Model) doDuplicate(srcSess *SessionState, sep TurnSepInfo) (Model, tea.Cmd) {
 	newSess := newSessionState(m.cfg, nil)
 	newSess.reconnecting = true
+	newSess.workDir = pickCWD(srcSess.workDir, m.cwd)
 	copiedMsgs := make([]ChatMessage, sep.MsgIdx+1)
 	copy(copiedMsgs, srcSess.chatMessages[:sep.MsgIdx+1])
 	newSess.chatMessages = copiedMsgs
@@ -3686,7 +3872,7 @@ func (m *Model) doDuplicate(srcSess *SessionState, sep TurnSepInfo) (Model, tea.
 	m.syncSessionsSelected()
 
 	return *m, tea.Batch(connectFork(
-		m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken,
+		m.socketPath, newSess.workDir, m.cfg.ConfigDir, m.cfg.Model, m.authToken,
 		m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess,
 		forkSessionID, sep.TurnIdx, newSess.daemonSessionID,
 	), armCursorBlink(newSess))
@@ -3764,11 +3950,12 @@ func (m *Model) doCloseSession(sessionIdx int) (Model, tea.Cmd) {
 
 	var reconnectCmd tea.Cmd
 	if len(m.sessions) == 0 {
+		// All sessions closed: open a fresh draft (welcome screen), which
+		// connects on its first message.
 		newSess := newSessionState(m.cfg, nil)
-		newSess.reconnecting = true
 		m.sessions = append(m.sessions, newSess)
 		m.selectedSession = 0
-		reconnectCmd = attemptReconnect(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, newSess.daemonSessionID)
+		reconnectCmd = armCursorBlink(newSess)
 	}
 
 	// Keep the Sessions-tab cursor on the same row index: the closed row was the
@@ -3939,7 +4126,7 @@ func (m *Model) stepWorkspaceSession(dir int) ([]tea.Cmd, bool) {
 		if len(m.vixSessions) > 0 {
 			sum := m.vixSessions[0]
 			m.focusRestoredID = sum.ID
-			return []tea.Cmd{attachRestoreSession(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, sum)}, true
+			return []tea.Cmd{attachRestoreSession(m.socketPath, pickCWD(sum.CWD, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, sum)}, true
 		}
 		return nil, false
 	}
@@ -3951,7 +4138,7 @@ func (m *Model) stepWorkspaceSession(dir int) ([]tea.Cmd, bool) {
 	selSess.input.SetWidth(m.width - 4)
 	if selSess.client == nil && !selSess.reconnecting {
 		selSess.reconnecting = true
-		cmds = append(cmds, attemptReconnect(m.socketPath, m.cwd, m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, selSess.daemonSessionID))
+		cmds = append(cmds, attemptReconnect(m.socketPath, pickCWD(selSess.workDir, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, selSess.daemonSessionID))
 	}
 	cmds = append(cmds, selSess.thinkingAnim.Resume())
 	cmds = append(cmds, armCursorBlink(selSess))

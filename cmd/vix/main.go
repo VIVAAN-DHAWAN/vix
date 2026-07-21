@@ -350,9 +350,19 @@ func main() {
 			}
 		}
 		if !attached {
-			if err := session.Connect(cfg.CWD, cfg.ConfigDir, cfg.Model, cfg.ForceInit, !*disableWritePermission, !*disableDirAccess, *prompt != ""); err != nil {
-				fmt.Fprintf(os.Stderr, "Error connecting to daemon: %v\n", err)
-				os.Exit(1)
+			if *prompt != "" {
+				// Headless mode always needs a live connection up front.
+				if err := session.Connect(cfg.CWD, cfg.ConfigDir, cfg.Model, cfg.ForceInit, !*disableWritePermission, !*disableDirAccess, true); err != nil {
+					fmt.Fprintf(os.Stderr, "Error connecting to daemon: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				// TUI mode with nothing to restore: start as a draft. No
+				// session.start is sent until the user submits the first
+				// message, which lets them pick the working directory first and
+				// avoids creating a ghost empty session on quit. Passing a nil
+				// client to NewModel yields a draft initial session.
+				session = nil
 			}
 		}
 		// Headless sessions are one-shot: close the record explicitly so
