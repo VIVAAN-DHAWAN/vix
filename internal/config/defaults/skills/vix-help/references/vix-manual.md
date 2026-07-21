@@ -1264,6 +1264,14 @@ Switch tabs with the function keys:
 
 The Models tab is documented under [Models & Providers](/docs#models-providers).
 
+## Starting a session & the working directory
+
+A brand-new tab (a fresh launch with nothing to restore, or one you open with `Ctrl+T`) starts as a **draft**: the welcome screen shows the target **working directory** and the status bar reads _Draft — not started_. No session is created on the daemon until you send your first message. This lets you set the directory up front, and means quitting without typing leaves nothing behind.
+
+While the tab is still a draft, press `Ctrl+O` to open a directory picker (`↑`/`↓` select, `→` open a folder, `←` go up, `Enter` choose, `Esc` cancel). Your **first message commits the session** in the chosen directory, after which the working directory is **fixed for the life of that session** — to work somewhere else, start another session (`Ctrl+T`) and point it there. The initial directory comes from where you launched `vix` (or the [`--workdir`](/docs#cli-flags) flag).
+
+Note: when vix runs with an explicit `--config-dir`, changing the working directory only moves where files, shell commands and the code index resolve — your `.vix` config (skills, settings, agents) stays fixed at that config directory.
+
 ## Multiple sessions
 
 One daemon can drive many concurrent sessions in the same project, each with its own conversation. Cycle between them without leaving the Workspace tab:
@@ -1290,6 +1298,7 @@ The **Jobs & Triggers tab (F4)** is a live catalogue of what vix runs for you: [
 | Ctrl+R | Open the input-history panel |
 | Shift+Tab | Cycle between Chat and configured workflows |
 | Tab | Toggle focus between input and the chat pane |
+| Ctrl+O | Change the working directory (draft session, before it starts) |
 | Esc | Cancel the running operation |
 | @ | File-path autocomplete |
 | / | Slash-command & skill menu |
@@ -1350,6 +1359,8 @@ Chat mode is the default way to interact with vix. You type a message, the agent
 ## Sending messages
 
 Type in the input box and press `Enter`. Multi-line input: press `Shift+Enter` (or `Alt+Enter`, `Ctrl+J`). Clear input without submitting: `Ctrl+Shift+U`.
+
+A new tab is a **draft** until your first message: it shows a welcome screen with the working directory, and the session is created on the daemon only when you send. You can change the directory first with `Ctrl+O`; once the session starts, its working directory is fixed. See [The TUI](/docs#tui-basics) for details.
 
 ## Interrupting the agent
 
