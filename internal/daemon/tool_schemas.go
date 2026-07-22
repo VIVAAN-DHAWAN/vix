@@ -108,7 +108,7 @@ func buildToolSchemas(def, max time.Duration) []anthropic.ToolUnionParam {
 	return []anthropic.ToolUnionParam{
 		{OfTool: &anthropic.ToolParam{
 			Name:        "read_file",
-			Description: anthropic.String("Read a file from disk. Returns content with line numbers. Use offset/limit for large files."),
+			Description: anthropic.String("Read a file from disk. Returns text content with line numbers. PDFs are automatically extracted to Markdown (headings, paragraphs, best-effort tables) — no external tools or scripts needed in the common case. Use offset/limit for large files."),
 			InputSchema: anthropic.ToolInputSchemaParam{
 				Properties: map[string]any{
 					"path":   map[string]any{"type": "string", "description": "The absolute path to the file."},

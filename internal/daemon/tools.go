@@ -363,7 +363,7 @@ func readFileImpl(cwd string, allowedDirs []string, path string, offset, limit *
 
 	// PDFs are binary: convert to Markdown instead of emitting raw bytes with
 	// line numbers. offset/limit still slice the resulting Markdown by line.
-	if pdfEnabled() && looksLikePDF(raw) {
+	if looksLikePDF(raw) {
 		md, perr := pdfToMarkdown(path, raw)
 		if perr != nil {
 			return "", perr

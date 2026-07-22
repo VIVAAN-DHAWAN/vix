@@ -142,14 +142,20 @@ type Attachment struct {
 
 // ValidateAttachment checks if an attachment is valid.
 func ValidateAttachment(att Attachment) error {
-	if att.Type != "image" {
-		return fmt.Errorf("invalid attachment type: %s (only 'image' supported)", att.Type)
-	}
-	if !strings.HasPrefix(att.MediaType, "image/") {
-		return fmt.Errorf("invalid media type: %s (must start with 'image/')", att.MediaType)
-	}
-	if _, err := base64.StdEncoding.DecodeString(att.Data); err != nil {
-		return fmt.Errorf("invalid base64 data: %w", err)
+	switch att.Type {
+	case "image":
+		if !strings.HasPrefix(att.MediaType, "image/") {
+			return fmt.Errorf("invalid media type: %s (must start with 'image/')", att.MediaType)
+		}
+		if _, err := base64.StdEncoding.DecodeString(att.Data); err != nil {
+			return fmt.Errorf("invalid base64 data: %w", err)
+		}
+	case "file":
+		if att.Path == "" {
+			return fmt.Errorf("file attachment missing path")
+		}
+	default:
+		return fmt.Errorf("invalid attachment type: %s (only 'image' and 'file' supported)", att.Type)
 	}
 	return nil
 }

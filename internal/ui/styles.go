@@ -57,6 +57,9 @@ var (
 	userTimestampStyle = lipgloss.NewStyle().
 				Foreground(colorDim)
 
+	userAttachmentStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
+
 	// Tool call
 	toolCallStyle = lipgloss.NewStyle().
 			Foreground(colorSecondary)

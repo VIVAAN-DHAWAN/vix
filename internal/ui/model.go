@@ -7,6 +7,7 @@ import (
 	"image"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -198,6 +199,29 @@ func connectDraft(socketPath, clientKey, cwd, configDir, model, authToken string
 			return draftConnectFailedMsg{clientKey: clientKey, err: err}
 		}
 		return draftConnectedMsg{clientKey: clientKey, client: session}
+	}
+}
+
+// fileAttachmentValidatedMsg carries the daemon's verdict for a drag-dropped
+// text/PDF file. Matched back to its session by clientKey.
+type fileAttachmentValidatedMsg struct {
+	clientKey string
+	cand      fileCandidate
+	status    string // "ok", "invalid", "error"
+	reason    string
+}
+
+// validateFileAttachmentCmd asks the daemon (attachment.validate) whether a
+// drag-dropped file can be attached, without blocking the UI loop.
+func validateFileAttachmentCmd(socketPath, authToken, sessionID, clientKey string, cand fileCandidate) tea.Cmd {
+	return func() tea.Msg {
+		client := daemon.NewClient(socketPath)
+		client.SetAuthToken(authToken)
+		status, reason, err := client.ValidateAttachment(sessionID, cand.Path)
+		if err != nil {
+			return fileAttachmentValidatedMsg{clientKey: clientKey, cand: cand, status: "invalid", reason: err.Error()}
+		}
+		return fileAttachmentValidatedMsg{clientKey: clientKey, cand: cand, status: status, reason: reason}
 	}
 }
 
@@ -562,6 +586,12 @@ type Model struct {
 	// Transient status bar message (second line)
 	statusMsg StatusMessage
 
+	// alertPopup holds the text of a persistent, centered error popup. When
+	// non-empty it renders as a modal overlay that stays until the user
+	// dismisses it with a key press. Error-kind status messages route here
+	// instead of the transient status bar.
+	alertPopup string
+
 	// Connection parameters (for reconnect / new sessions)
 	socketPath                     string
 	cwd                            string
@@ -736,9 +766,16 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.closeSessionsForQuit(m.quitCloseAll)
 				return m, tea.Quit
 			}
+			m.alertPopup = ""
 			m.state = StateQuitConfirm
 			m.quitSelected = 0
 			m.quitCloseAll = config.CloseAllSessionsOnQuit()
+			return m, nil
+		}
+
+		// --- Error alert popup intercepts all keys (dismiss on any key) ---
+		if m.alertPopup != "" {
+			m.alertPopup = ""
 			return m, nil
 		}
 
@@ -1781,6 +1818,22 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				stripped := imagePathPattern.ReplaceAllString(val, "")
 				stripped = strings.TrimSpace(stripped)
 				sess.input.SetValue(stripped)
+				val = stripped
+			}
+			// Text/PDF files: when connected, the daemon validates before a
+			// chip appears. While still connecting (no client yet) there's no
+			// daemon to ask, so add the chip optimistically — the file is
+			// re-validated at send time.
+			cmds := []tea.Cmd{cmd}
+			for _, cand := range detectFileCandidates(val) {
+				if sess.client != nil {
+					cmds = append(cmds, validateFileAttachmentCmd(m.socketPath, m.authToken, sess.client.SessionID(), sess.clientKey, cand))
+					continue
+				}
+				sess.attachmentPanel.Add(protocol.Attachment{Type: "file", Path: cand.Path})
+				stripped := strings.TrimSpace(strings.ReplaceAll(sess.input.Value(), cand.Raw, ""))
+				sess.input.SetValue(stripped)
+				val = stripped
 			}
 			newHeight := m.visualLineCount()
 			if newHeight != sess.input.Height() {
@@ -1788,12 +1841,34 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			sess.input.MoveToBegin()
 			sess.input.MoveToEnd()
-			return m, cmd
+			return m, tea.Batch(cmds...)
 		}
+
+	case fileAttachmentValidatedMsg:
+		_, sess := m.findSessionByClientKey(msg.clientKey)
+		if sess == nil {
+			return m, nil
+		}
+		switch msg.status {
+		case "ok":
+			sess.attachmentPanel.Add(protocol.Attachment{Type: "file", Path: msg.cand.Path})
+			stripped := strings.TrimSpace(strings.ReplaceAll(sess.input.Value(), msg.cand.Raw, ""))
+			sess.input.SetValue(stripped)
+		default: // "invalid" / "error"
+			stripped := strings.TrimSpace(strings.ReplaceAll(sess.input.Value(), msg.cand.Raw, ""))
+			sess.input.SetValue(stripped)
+			return m, m.emitStatusMsg(fmt.Sprintf("Attachment skipped (%s): %s", filepath.Base(msg.cand.Path), msg.reason), StatusMsgError)
+		}
+		if sess == m.currentSession() {
+			newHeight := m.visualLineCount()
+			if newHeight != sess.input.Height() {
+				sess.input.SetHeight(newHeight)
+			}
+		}
+		return m, nil
 
 	case tea.KeyboardEnhancementsMsg:
 		m.kittySupported = msg.SupportsKeyDisambiguation()
-
 	case tea.BackgroundColorMsg:
 		m.hasDarkBG = msg.IsDark()
 		m.styles = NewStyles(m.hasDarkBG)
@@ -2635,9 +2710,10 @@ func (m Model) handleEnter(sess *SessionState) (tea.Model, tea.Cmd) {
 		for _, e := range imgErrs {
 			sess.chatMessages = append(sess.chatMessages, renderErrorMessage(fmt.Errorf("%s", e)))
 		}
-		attachments := append(panelAtts, textAtts...)
+		displayText, fileAtts := extractFileAttachments(displayText)
+		attachments := append(append(panelAtts, textAtts...), fileAtts...)
 
-		sess.chatMessages = append(sess.chatMessages, renderUserMessage(displayText, m.mdRenderer.width))
+		sess.chatMessages = append(sess.chatMessages, renderUserMessage(displayText, m.mdRenderer.width, attachments...))
 		sess.chatScrollOffset = 0
 
 		if sess.activeWorkflow != "" && !strings.HasPrefix(displayText, "/") && sess.agentState != StatePlanExecuting {
@@ -2684,9 +2760,10 @@ func (m Model) handleEnter(sess *SessionState) (tea.Model, tea.Cmd) {
 		for _, e := range imgErrs {
 			sess.chatMessages = append(sess.chatMessages, renderErrorMessage(fmt.Errorf("%s", e)))
 		}
-		attachments := append(panelAtts, textAtts...)
+		displayText, fileAtts := extractFileAttachments(displayText)
+		attachments := append(append(panelAtts, textAtts...), fileAtts...)
 
-		sess.chatMessages = append(sess.chatMessages, renderUserMessage(displayText, m.mdRenderer.width))
+		sess.chatMessages = append(sess.chatMessages, renderUserMessage(displayText, m.mdRenderer.width, attachments...))
 		sess.chatScrollOffset = 0
 
 		// Draft session: commit it now. Open the daemon connection in the
@@ -3554,6 +3631,15 @@ func (m Model) View() tea.View {
 		}
 	}
 
+	// Error alert popup overlay (topmost — drawn last so it sits above other
+	// overlays; dismissed on any key press).
+	if m.alertPopup != "" {
+		overlay := renderAlertDialog(m.width, m.height, m.styles, m.alertPopup)
+		w, h := lipgloss.Size(overlay)
+		center := centerRect(canvas.Bounds(), w, h)
+		uv.NewStyledString(overlay).Draw(canvas, center)
+	}
+
 	content := strings.ReplaceAll(canvas.Render(), "\r\n", "\n")
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -3716,7 +3802,8 @@ func (m *Model) buildReplayChatMessages(rep protocol.EventReplay) []ChatMessage 
 			switch b.Kind {
 			case "text":
 				if msg.Role == "user" {
-					out = append(out, renderUserMessageAt(b.Text, m.width, ts))
+					body, atts := parseAttachmentRefs(b.Text)
+					out = append(out, renderUserMessageAt(body, m.width, ts, atts...))
 				} else {
 					out = append(out, renderAssistantMessage(b.Text, m.mdRenderer))
 				}
@@ -4513,10 +4600,16 @@ func (m *Model) currentModeName(sess *SessionState) string {
 	return "Chat"
 }
 
-// emitStatusMsg sets the global transient status bar message and returns a
-// tea.Cmd that clears it after 3 seconds. Rapid successive calls are safe
-// because each call bumps the generation counter; only the matching clear fires.
+// emitStatusMsg surfaces a transient status bar message and returns a tea.Cmd
+// that clears it after 3 seconds. Error-kind messages are instead shown as a
+// persistent centered popup (m.alertPopup) that stays until the user dismisses
+// it, so failures aren't missed. Rapid successive calls are safe because each
+// status message bumps a generation counter; only the matching clear fires.
 func (m *Model) emitStatusMsg(text string, kind StatusMsgKind) tea.Cmd {
+	if kind == StatusMsgError {
+		m.alertPopup = text
+		return nil
+	}
 	m.statusMsg.gen++
 	m.statusMsg.Text = text
 	m.statusMsg.Kind = kind

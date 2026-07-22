@@ -1099,27 +1099,44 @@ func (s *Session) contextSystemBlocks() []llm.SystemBlock {
 	return blocks
 }
 
-// AddUserMessage appends a user message to the conversation, optionally with image attachments.
+// AddUserMessage appends a user message to the conversation, optionally with
+// attachments. "image" attachments become vision blocks; "file" attachments
+// (their extracted text already stashed in Data by handleInput) become text
+// blocks delimited with a filename header.
 func (s *Session) AddUserMessage(text string, attachments ...protocol.Attachment) {
 	var contentBlocks []llm.ContentBlock
 
-	// Build text with image references
+	// Build the main text block with a reference line per attachment.
 	textContent := text
 	if len(attachments) > 0 {
 		var refs strings.Builder
 		for _, att := range attachments {
-			refs.WriteString(fmt.Sprintf("[Image: %s]\n", att.Path))
+			if att.Type == "file" {
+				refs.WriteString(fmt.Sprintf("[File: %s]\n", att.Path))
+			} else {
+				refs.WriteString(fmt.Sprintf("[Image: %s]\n", att.Path))
+			}
 		}
 		if text == "" {
-			textContent = "[Image attachment]"
+			// Attachment-only send: keep the reference lines so the paths
+			// persist (and replay can recover the filenames) instead of a bare
+			// "[Attachment]" placeholder that loses them.
+			textContent = strings.TrimRight(refs.String(), "\n")
 		} else {
 			textContent = refs.String() + "\n" + text
 		}
 	}
 	contentBlocks = append(contentBlocks, llm.NewTextBlock(textContent))
 
-	// Add image blocks
+	// One block per attachment: image blocks for images, a delimited text block
+	// for each file's extracted content.
 	for _, att := range attachments {
+		if att.Type == "file" {
+			base := filepath.Base(att.Path)
+			contentBlocks = append(contentBlocks, llm.NewTextBlock(
+				fmt.Sprintf("[Attached file: %s]\n\n%s\n\n[End of %s]", base, att.Data, base)))
+			continue
+		}
 		contentBlocks = append(contentBlocks, llm.NewImageBlock(att.MediaType, att.Data))
 	}
 
@@ -1911,14 +1928,34 @@ func (s *Session) handleInput(text string, attachments []protocol.Attachment) {
 		}
 	}
 
-	// Validate attachments before adding
+	// Validate attachments, and resolve "file" attachments (text/PDF) to prompt
+	// text now: read the file fresh, convert PDFs with the built-in reader, and
+	// stash the extracted text in Data for AddUserMessage. Files that can't be
+	// read are dropped with an alert rather than failing the whole turn.
+	resolved := attachments[:0]
 	for _, att := range attachments {
 		if err := protocol.ValidateAttachment(att); err != nil {
 			s.emit("event.error", protocol.EventError{Message: fmt.Sprintf("Invalid attachment: %v", err)})
 			s.emit("event.agent_done", nil)
 			return
 		}
+		if att.Type == "file" {
+			raw, err := s.readAttachmentFile(att.Path)
+			if err != nil {
+				s.emit("event.error", protocol.EventError{Message: fmt.Sprintf("Attachment %s dropped: %v", filepath.Base(att.Path), err)})
+				continue
+			}
+			status, reason, content := resolveFileAttachment(att.Path, raw)
+			if status != attachmentOK {
+				s.emit("event.error", protocol.EventError{Message: fmt.Sprintf("Attachment %s dropped: %s", filepath.Base(att.Path), reason)})
+				continue
+			}
+			att.Data = content
+			att.MediaType = "text/plain"
+		}
+		resolved = append(resolved, att)
 	}
+	attachments = resolved
 
 	// UserPromptSubmit hooks: may rewrite or veto the prompt before it enters
 	// the conversation.

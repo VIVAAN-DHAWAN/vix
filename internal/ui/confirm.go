@@ -155,6 +155,38 @@ func renderTrimDialog(width, height int, s Styles, selected int) string {
 	return s.CommandPaletteStyle.Width(dialogWidth).Render(content)
 }
 
+// renderAlertDialog renders a persistent, dismissible error popup as a centered
+// overlay box, styled like the other dialogs. It stays until the user presses a
+// key. width/height are the terminal dimensions; text is the message to show.
+func renderAlertDialog(width, height int, s Styles, text string) string {
+	dialogWidth := 60
+	if dialogWidth > width-4 {
+		dialogWidth = width - 4
+	}
+	if dialogWidth < 20 {
+		dialogWidth = 20
+	}
+	innerWidth := dialogWidth - 4 // account for border + padding
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(colorError).
+		Width(innerWidth).Align(lipgloss.Center).
+		Render("Error")
+
+	sep := s.CommandPaletteSepStyle.Width(innerWidth).Render(strings.Repeat("─", innerWidth))
+
+	msg := lipgloss.NewStyle().Foreground(s.ColorDimGray).
+		Width(innerWidth).Align(lipgloss.Center).
+		Render(text)
+
+	hint := lipgloss.NewStyle().Foreground(s.ColorDimGray).
+		Width(innerWidth).Align(lipgloss.Center).
+		Render("press any key to dismiss")
+
+	content := title + "\n" + sep + "\n" + msg + "\n\n" + hint
+
+	return s.CommandPaletteStyle.Width(dialogWidth).Render(content)
+}
+
 // renderSessionCloseDialog renders the session-close confirmation as a centered overlay box.
 // selected: 0 = Yes, 1 = No.
 func renderSessionCloseDialog(width, height int, s Styles, selected int, sessionID string) string {

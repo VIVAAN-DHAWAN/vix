@@ -96,6 +96,32 @@ func RegisterBuiltinHandlers(s *Server) {
 		return map[string]any{"status": "ok", "dirs": dirs}, nil
 	})
 
+	// attachment.validate checks, at drop time, whether a user-attached file can
+	// be turned into prompt text: it authorizes the path against the owning
+	// session's access policy + deny list, enforces the size cap, and (for PDFs)
+	// confirms the built-in reader can extract a text layer. The file is re-read
+	// and converted at send time; this is a fast up-front gate so the TUI can add
+	// a chip ("ok") or alert and drop it ("invalid").
+	s.RegisterHandler("attachment.validate", func(data map[string]any) (map[string]any, error) {
+		path, _ := data["path"].(string)
+		if path == "" {
+			return map[string]any{"status": "error", "message": "missing 'path'"}, nil
+		}
+		sessionID, _ := data["session_id"].(string)
+		s.sessionMu.Lock()
+		sess := s.sessions[sessionID]
+		s.sessionMu.Unlock()
+		if sess == nil {
+			return map[string]any{"status": "error", "message": "unknown session"}, nil
+		}
+		raw, err := sess.readAttachmentFile(path)
+		if err != nil {
+			return map[string]any{"status": attachmentInvalid, "reason": err.Error()}, nil
+		}
+		status, reason, _ := resolveFileAttachment(path, raw)
+		return map[string]any{"status": status, "reason": reason}, nil
+	})
+
 	// session.dismiss archives a persisted session record (open/ → closed/)
 	// without attaching it. Used by the TUI to dismiss vix-initiated run
 	// records from the sessions list. Refuses sessions currently live in a

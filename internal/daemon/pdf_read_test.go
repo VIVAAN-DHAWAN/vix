@@ -50,24 +50,6 @@ func TestReadFileImpl_PDFReturnsMarkdown(t *testing.T) {
 	}
 }
 
-func TestReadFileImpl_PDFKillSwitch(t *testing.T) {
-	t.Setenv("VIX_DISABLE_PDF", "1")
-	dir := t.TempDir()
-	pdfPath := filepath.Join(dir, "doc.pdf")
-	if err := os.WriteFile(pdfPath, minimalPDF("Hello"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	out, err := readFileImpl(dir, []string{dir}, pdfPath, nil, nil)
-	if err != nil {
-		t.Fatalf("readFileImpl: %v", err)
-	}
-	// With the feature disabled, we fall back to raw numbered output, so the
-	// first line carries the line-number prefix and the %PDF- header.
-	if !strings.Contains(out, "%PDF-") || !strings.Contains(out, "\t") {
-		t.Errorf("expected raw numbered fallback when disabled; got:\n%s", out[:min(200, len(out))])
-	}
-}
-
 func TestLooksLikePDF(t *testing.T) {
 	if !looksLikePDF([]byte("%PDF-1.7\n...")) {
 		t.Error("expected true for %PDF- header")

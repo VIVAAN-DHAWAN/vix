@@ -1268,7 +1268,9 @@ The Models tab is documented under [Models & Providers](/docs#models-providers).
 
 A brand-new tab (a fresh launch with nothing to restore, or one you open with `Ctrl+T`) starts as a **draft**: the welcome screen shows the target **working directory** and the status bar reads _Draft — not started_. No session is created on the daemon until you send your first message. This lets you set the directory up front, and means quitting without typing leaves nothing behind.
 
-While the tab is still a draft, press `Ctrl+O` to open a directory picker (`↑`/`↓` select, `→` open a folder, `←` go up, `Enter` choose, `Esc` cancel). Your **first message commits the session** in the chosen directory, after which the working directory is **fixed for the life of that session** — to work somewhere else, start another session (`Ctrl+T`) and point it there. The initial directory comes from where you launched `vix` (or the [`--workdir`](/docs#cli-flags) flag).
+While the tab is still a draft, press `Ctrl+o` to open a directory picker (`↑`/`↓` select, `→` open a folder, `←` go up, `Enter` choose, `Esc` cancel). Your **first message commits the session** in the chosen directory, after which the working directory is **fixed for the life of that session** — to work somewhere else, start another session (`Ctrl+T`) and point it there.
+
+The draft welcome also lists your **most-used working directories** — the top five directories ranked by how many open sessions use each. Press `Tab` to focus the welcome area, then `↑`/`↓` to highlight a directory and `Enter` to make it the draft's working directory (no need to walk the picker). A brand-new tab defaults to the **most recently used** working directory; the very first tab on launch uses where you started `vix` (or the [`--workdir`](/docs#cli-flags) flag).
 
 Note: when vix runs with an explicit `--config-dir`, changing the working directory only moves where files, shell commands and the code index resolve — your `.vix` config (skills, settings, agents) stays fixed at that config directory.
 
@@ -1297,8 +1299,8 @@ The **Jobs & Triggers tab (F4)** is a live catalogue of what vix runs for you: [
 | Ctrl+Shift+U | Clear the input |
 | Ctrl+R | Open the input-history panel |
 | Shift+Tab | Cycle between Chat and configured workflows |
-| Tab | Toggle focus between input and the chat pane |
-| Ctrl+O | Change the working directory (draft session, before it starts) |
+| Tab | Toggle focus between input and the chat pane (on a draft welcome, focuses the recent-directories list) |
+| Ctrl+o | Change the working directory (draft session, before it starts) |
 | Esc | Cancel the running operation |
 | @ | File-path autocomplete |
 | / | Slash-command & skill menu |
@@ -1360,7 +1362,7 @@ Chat mode is the default way to interact with vix. You type a message, the agent
 
 Type in the input box and press `Enter`. Multi-line input: press `Shift+Enter` (or `Alt+Enter`, `Ctrl+J`). Clear input without submitting: `Ctrl+Shift+U`.
 
-A new tab is a **draft** until your first message: it shows a welcome screen with the working directory, and the session is created on the daemon only when you send. You can change the directory first with `Ctrl+O`; once the session starts, its working directory is fixed. See [The TUI](/docs#tui-basics) for details.
+A new tab is a **draft** until your first message: it shows a welcome screen with the working directory and your most-used directories, and the session is created on the daemon only when you send. You can change the directory first with `Ctrl+o` (or pick from the recent list via `Tab` then `↑`/`↓`/`Enter`); once the session starts, its working directory is fixed. See [The TUI](/docs#tui-basics) for details.
 
 ## Interrupting the agent
 
@@ -1757,7 +1759,7 @@ The search runs through [Agent Reach](https://github.com/Panniantong/agent-reach
 
 ## Where results go
 
-Finished runs appear on the **Sessions tab (F1)** under a separate **Vix-initiated** group. Each titled run shows its bare title (for the GitHub-plan job, the per-item `[job] Addressing issue #N — …`); a failed run is flagged with a ⚠ marker. Press `enter` to open a run and read the full conversation, or `x` to dismiss it. The unread dot is persistent — quit vix, come back tomorrow, and anything that ran while you were away is still flagged.
+Finished runs appear on the **Sessions tab (F1)** under a separate **Vix-initiated** group. Each titled run shows its bare title (for the GitHub-plan job, the per-item `[job] Addressing issue #N — …`); a failed run is flagged with a ⚠ marker. Press `enter` to open a run and read the full conversation, or `x` to dismiss it. The unread dot is persistent — quit vix, come back tomorrow, and anything that ran while you were away is still flagged. The group refreshes **live**: a run that lands while you're looking at the Sessions tab appears on its own, even before you've started a session in that window.
 
 To see every job at a glance — including ones that haven't run yet — open the **Jobs & Triggers tab (F4)**. It lists each job with its schedule, next/last run, and a live spinner while it's executing, and lets you enable or disable any job (or [hook](/docs#guide-hooks)) with `space` — no need to hand-edit the spec file.
 
@@ -2547,57 +2549,67 @@ See the [settings.json reference](/docs#settings-json) for the full `languages` 
 
 ---
 
-# Attaching images
+# Attaching images & files
 
 > Section: Guides · vix docs · https://getvix.dev/docs#attaching-images
 
-# Attaching Images
+# Attaching Images & Files
 
-Vix supports vision inputs — you can send images to the LLM alongside your messages. Useful for screenshots of bugs, UI mockups, error dialogs, architecture diagrams, or anything visual.
+Vix supports vision inputs and file attachments — you can send images, text files, and PDFs to the LLM alongside your messages. Useful for screenshots of bugs, UI mockups, error dialogs, architecture diagrams, log excerpts, source files, or reports.
 
 ## Supported formats
 
-PNG, JPEG, GIF, WEBP, BMP. Maximum 20MB per image.
+-   **Images** — PNG, JPEG, GIF, WEBP, BMP. Maximum 20MB per image. Sent to the model as vision input.
+-   **Text** — common docs/data and source-code formats (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.log`, `.go`, `.py`, `.ts`, and more). Embedded as UTF-8 text.
+-   **PDF** — `.pdf`. Converted to text by vix's built-in PDF reader (headings, paragraphs, best-effort tables); no external tools required.
+
+Text and PDF files are capped at 10MB by default. Change the limit with `attachments.max_text_bytes` in `settings.json`.
 
 ## Drag and drop
 
-Drag an image file from Finder into the terminal. Vix detects image paths in your message and converts them automatically:
+Drag a file from Finder into the terminal, or type its path. Vix detects file paths in your message and attaches them automatically:
 
 ```
 > what's wrong with this layout? /Users/me/Desktop/screenshot.png
+> summarize /Users/me/docs/report.pdf
 ```
 
-The path is replaced with `[Image #1]` in the chat display, and the image is base64-encoded and sent to the LLM.
+The path is replaced with a placeholder in the chat display — `[Image #1]`, `[PDF #1]`, or `[File #1]`. Images are base64-encoded and sent as vision input; text and PDF files are read by the daemon and their extracted text is embedded into the message.
+
+You can attach a file from _anywhere on disk_ — including paths outside your project, such as iCloud Drive documents under `~/Library/Mobile Documents/…`. Dragging a file is explicit intent, so attachment access isn't limited to the working directory the way the agent's own file tools are (deny-listed paths such as `~/.ssh` stay blocked). You can also attach while a session is still connecting — the chip appears right away and the file is validated when you send.
 
 ## Attachment panel
 
-1.  Paste or type an image path — it appears in the attachment panel
+1.  Paste or type a file path — it appears in the attachment panel, labelled by type
 2.  Press `Tab` to focus the panel
 3.  Navigate with `↑` / `↓`
 4.  Press `Delete` or `Backspace` to remove
 5.  Press `Esc` to return to input
 
-## Multiple images
+## Multiple attachments
 
 ```
 > before and after screenshots: /tmp/before.png /tmp/after.png — what changed?
+> compare /tmp/spec.pdf against /tmp/notes.md
 ```
 
-Both are sent to the LLM. The message becomes: `[Image #1] [Image #2]`.
+Each is attached and numbered per type, e.g. `[Image #1] [Image #2]` or `[PDF #1] [File #1]`.
 
 ## Practical uses
 
 ```
 > the button is misaligned on mobile — see /tmp/bug.png — fix the CSS
 > implement this component based on the mockup /tmp/mockup.png
-> I'm getting this error /tmp/error.png — what's causing it?
-> here's our architecture diagram /tmp/arch.png — how would you refactor auth?
+> what are the action items in /tmp/meeting-notes.pdf?
+> here's a failing test log /tmp/run.log — what's going wrong?
 ```
 
 ## Notes
 
--   Images are not persisted — they are sent inline and part of the LLM context for that turn
--   Very large images are rejected with an error. Compress or crop if needed
+-   Attachments are not persisted — they are sent inline and part of the LLM context for that turn
+-   Very large files are rejected with an error. Compress, crop, or trim if needed
+-   If a file can't be attached (too large, unreadable, or a password-protected/scanned PDF), vix surfaces the reason in a popup you dismiss with any key press
+-   Password-protected or scanned/image-only PDFs (no text layer) can't be read — vix reports this and skips them; OCR is not performed. Permissions-only encrypted PDFs (those that open in a viewer without a password) are decrypted automatically
 -   Vision quality depends on the model. Claude Sonnet and Opus handle images well
 
 ---
@@ -2785,8 +2797,7 @@ json
     "read_agents_md": true,
     "show_thinking": false,
     "telemetry": true,
-    "jobs": true,
-    "pdf": true
+    "jobs": true
   },
   "jobs": { "max_concurrent_runs": 2 },
   "logs": { "retention_days": 10 },
@@ -3617,7 +3628,7 @@ Read a file from disk. PDFs are converted to Markdown automatically.
 | offset | integer | — | Start line (1-based). |
 | limit | integer | — | Max lines to return. |
 
-Output cap: 20,000 chars. Re-reading an unchanged file in the same session is rejected. When the target is a PDF, vix extracts its text layer and returns Markdown (headings, paragraphs, best-effort tables) instead of raw bytes — no external tools required. Scanned/image-only PDFs (no text layer) and encrypted PDFs are reported as such; OCR is not performed. Disable with features.pdf=false or VIX\_DISABLE\_PDF=1.
+Output cap: 20,000 chars. Re-reading an unchanged file in the same session is rejected. When the target is a PDF, vix extracts its text layer and returns Markdown (headings, paragraphs, best-effort tables) instead of raw bytes — no external tools required. Scanned/image-only PDFs (no text layer) and password-protected PDFs are reported as such; OCR is not performed. Permissions-only encrypted PDFs that open without a password are decrypted automatically.
 
 ## read\_minified\_file
 

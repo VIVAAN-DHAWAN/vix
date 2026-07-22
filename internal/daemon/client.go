@@ -308,8 +308,28 @@ func (c *Client) ListSessionDirs(cwd, configDir string) ([]protocol.DirUsage, er
 	return out, nil
 }
 
+// ValidateAttachment asks the daemon whether a user-attached file (text or PDF)
+// can be turned into prompt text for the given session. It returns a status —
+// "ok" (add a chip), "invalid" (alert + drop), or "error" — and a human-readable
+// reason.
+func (c *Client) ValidateAttachment(sessionID, path string) (status, reason string, err error) {
+	resp, err := c.sendRequest(map[string]any{
+		"command":    "attachment.validate",
+		"session_id": sessionID,
+		"path":       path,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	status, _ = resp["status"].(string)
+	reason, _ = resp["reason"].(string)
+	if reason == "" {
+		reason, _ = resp["message"].(string)
+	}
+	return status, reason, nil
+}
+
 // DismissSession archives a persisted session record (open/ → closed/) without
-// attaching it. Used to dismiss vix-initiated run records from the TUI.
 func (c *Client) DismissSession(cwd, configDir, id string) error {
 	resp, err := c.sendRequest(map[string]any{
 		"command":    "session.dismiss",

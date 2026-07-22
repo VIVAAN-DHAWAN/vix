@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/get-vix/vix/internal/protocol"
 )
 
 func TestRenderUserMessageAt_ShowsStoredTime(t *testing.T) {
@@ -45,6 +47,81 @@ func TestRerenderUserMessagePreservesTimestamp(t *testing.T) {
 	}
 	if !strings.Contains(strip(got.Rendered), "Sent at 9:07 AM") {
 		t.Errorf("rerender must keep original send time, not now; got:\n%s", strip(got.Rendered))
+	}
+}
+
+func TestRenderUserMessage_ShowsAttachments(t *testing.T) {
+	strip := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
+	msg := renderUserMessage("look at this", 80,
+		protocol.Attachment{Type: "image", Path: "/tmp/shot.png"},
+		protocol.Attachment{Type: "file", Path: "/tmp/notes.pdf"},
+	)
+	out := strip(msg.Rendered)
+	if !strings.Contains(out, "look at this") {
+		t.Errorf("missing body text; got:\n%s", out)
+	}
+	if !strings.Contains(out, "🖼 shot.png") {
+		t.Errorf("missing image attachment line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "📎 notes.pdf") {
+		t.Errorf("missing file attachment line; got:\n%s", out)
+	}
+	if len(msg.Attachments) != 2 {
+		t.Errorf("expected 2 attachments retained, got %d", len(msg.Attachments))
+	}
+}
+
+func TestRenderUserMessage_AttachmentOnly(t *testing.T) {
+	strip := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
+	msg := renderUserMessage("", 80, protocol.Attachment{Type: "image", Path: "/tmp/only.png"})
+	out := strip(msg.Rendered)
+	if !strings.Contains(out, "🖼 only.png") {
+		t.Errorf("attachment-only message should show the chip; got:\n%s", out)
+	}
+}
+
+func TestRerenderUserMessagePreservesAttachments(t *testing.T) {
+	strip := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
+	orig := renderUserMessage("hi", 120, protocol.Attachment{Type: "file", Path: "/tmp/a.txt"})
+	got := orig.rerender(nil, NewStyles(true), 60)
+	if !strings.Contains(strip(got.Rendered), "📎 a.txt") {
+		t.Errorf("rerender must keep the attachment line; got:\n%s", strip(got.Rendered))
+	}
+}
+
+func TestParseAttachmentRefs(t *testing.T) {
+	body, atts := parseAttachmentRefs("[File: /tmp/doc.pdf]\n[Image: /tmp/p.png]\n\nplease review")
+	if body != "please review" {
+		t.Errorf("body = %q, want %q", body, "please review")
+	}
+	if len(atts) != 2 {
+		t.Fatalf("expected 2 attachments, got %d", len(atts))
+	}
+	if atts[0].Type != "file" || atts[0].Path != "/tmp/doc.pdf" {
+		t.Errorf("att[0] = %+v", atts[0])
+	}
+	if atts[1].Type != "image" || atts[1].Path != "/tmp/p.png" {
+		t.Errorf("att[1] = %+v", atts[1])
+	}
+}
+
+func TestParseAttachmentRefs_AttachmentOnly(t *testing.T) {
+	body, atts := parseAttachmentRefs("[Image: /tmp/p.png]")
+	if body != "" {
+		t.Errorf("body = %q, want empty", body)
+	}
+	if len(atts) != 1 || atts[0].Path != "/tmp/p.png" {
+		t.Errorf("atts = %+v", atts)
+	}
+}
+
+func TestParseAttachmentRefs_NoRefs(t *testing.T) {
+	body, atts := parseAttachmentRefs("just a normal message\nwith two lines")
+	if body != "just a normal message\nwith two lines" {
+		t.Errorf("body altered: %q", body)
+	}
+	if atts != nil {
+		t.Errorf("expected no attachments, got %+v", atts)
 	}
 }
 

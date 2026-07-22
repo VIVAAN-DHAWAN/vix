@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/get-vix/vix/internal/config"
 	"github.com/get-vix/vix/internal/daemon/pdf"
 )
 
@@ -13,14 +12,28 @@ import (
 // bound parse time and memory. Larger files return a clear error.
 const maxPDFBytes = 50 << 20 // 50 MiB
 
-// looksLikePDF reports whether raw is a PDF by locating the %PDF- header within
-// the first kilobyte (some files carry a small amount of leading junk).
+// looksLikePDF reports whether raw is a PDF by requiring the %PDF- header at the
+// start of the file (after an optional UTF-8 BOM and leading whitespace/NULs).
+// A small leading window tolerates the handful of non-conformant producers that
+// emit a few junk bytes first, but the header is deliberately NOT matched
+// anywhere in the file — otherwise source code or prose that merely contains the
+// bytes "%PDF-" (such as this reader's own tests) would be misclassified.
 func looksLikePDF(raw []byte) bool {
 	head := raw
 	if len(head) > 1024 {
 		head = head[:1024]
 	}
-	return bytes.Contains(head, []byte("%PDF-"))
+	head = bytes.TrimPrefix(head, []byte{0xEF, 0xBB, 0xBF}) // UTF-8 BOM
+	head = bytes.TrimLeft(head, "\x00 \t\r\n\f")
+	if bytes.HasPrefix(head, []byte("%PDF-")) {
+		return true
+	}
+	// Tolerate a tiny amount of leading binary junk before the header.
+	window := head
+	if len(window) > 32 {
+		window = window[:32]
+	}
+	return bytes.Contains(window, []byte("%PDF-"))
 }
 
 // pdfToMarkdown converts a PDF's bytes to Markdown for read_file, prefixed with
@@ -33,7 +46,7 @@ func pdfToMarkdown(path string, raw []byte) (string, error) {
 	res, err := pdf.ToMarkdown(raw)
 	if err != nil {
 		if err == pdf.ErrEncrypted {
-			return "", fmt.Errorf("this PDF is encrypted; vix cannot extract its text")
+			return "", fmt.Errorf("this PDF is password-protected; vix cannot extract its text without the password")
 		}
 		return "", fmt.Errorf("could not parse PDF: %v", err)
 	}
@@ -45,6 +58,3 @@ func pdfToMarkdown(path string, raw []byte) (string, error) {
 	header := fmt.Sprintf("<!-- converted from %s · %d page(s) · vix pdf reader -->\n\n", base, res.Pages)
 	return header + res.Markdown, nil
 }
-
-// pdfEnabled reports whether the PDF-to-Markdown path is active.
-func pdfEnabled() bool { return config.PDFEnabled() }

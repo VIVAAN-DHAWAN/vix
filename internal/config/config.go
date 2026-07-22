@@ -227,14 +227,32 @@ func JobsEnabled() bool {
 	return feature("jobs", true)
 }
 
-// PDFEnabled reads the pdf feature flag (read_file's PDF-to-Markdown
-// conversion). Defaults to true; the VIX_DISABLE_PDF environment variable
-// overrides everything as an emergency kill switch.
-func PDFEnabled() bool {
-	if v := os.Getenv("VIX_DISABLE_PDF"); v == "1" || v == "true" {
-		return false
+// DefaultMaxAttachmentTextBytes bounds the size of a text or PDF file a user may
+// attach to a prompt when attachments.max_text_bytes is unset in settings.json.
+const DefaultMaxAttachmentTextBytes = 10 << 20 // 10 MiB
+
+// MaxAttachmentTextBytes reads attachments.max_text_bytes from
+// ~/.vix/settings.json: the maximum size of a single text or PDF file a user may
+// attach to a prompt (the daemon reads and embeds the file's text). A missing,
+// zero, or negative value falls back to DefaultMaxAttachmentTextBytes.
+func MaxAttachmentTextBytes() int {
+	p := filepath.Join(HomeVixDir(), "settings.json")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return DefaultMaxAttachmentTextBytes
 	}
-	return feature("pdf", true)
+	var cfg struct {
+		Attachments struct {
+			MaxTextBytes int `json:"max_text_bytes"`
+		} `json:"attachments"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return DefaultMaxAttachmentTextBytes
+	}
+	if cfg.Attachments.MaxTextBytes > 0 {
+		return cfg.Attachments.MaxTextBytes
+	}
+	return DefaultMaxAttachmentTextBytes
 }
 
 // HooksEnabled reads the hooks feature flag (the lifecycle-hooks engine in

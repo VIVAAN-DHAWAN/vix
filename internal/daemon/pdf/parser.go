@@ -16,6 +16,7 @@ type Document struct {
 	trailer Dict
 	cache   map[int]Object
 	stmObjs map[int][]Object // decoded object-stream contents, keyed by stream obj num
+	crypt   *decryptor       // non-nil when the document is encrypted (and unlocked)
 }
 
 type xrefEntry struct {
@@ -24,8 +25,10 @@ type xrefEntry struct {
 	index  int   // typ 2: index within the object stream
 }
 
-// ErrEncrypted is returned when the PDF declares an /Encrypt dictionary; v1 does
-// not attempt decryption.
+// ErrEncrypted is returned when the PDF is encrypted and cannot be unlocked
+// with the empty user password — i.e. it genuinely requires a password (or uses
+// an unsupported security handler). Empty-password/permissions-only encryption
+// is decrypted transparently and does not surface this error.
 var ErrEncrypted = errors.New("pdf: encrypted document not supported")
 
 // Parse reads a PDF file's structure from raw bytes.
@@ -47,8 +50,14 @@ func Parse(data []byte) (*Document, error) {
 	if err := doc.readXref(); err != nil || len(doc.xref) == 0 {
 		doc.rebuildXref()
 	}
-	if _, ok := doc.trailer["Encrypt"]; ok {
-		return nil, ErrEncrypted
+	if encObj, ok := doc.trailer["Encrypt"]; ok {
+		if err := doc.setupDecryptor(encObj); err != nil {
+			return nil, err
+		}
+		// Objects resolved while deriving the key (the /Encrypt dict itself, the
+		// trailer /ID) are never encrypted; drop the cache so every subsequent
+		// object is decrypted on first access.
+		doc.cache = map[int]Object{}
 	}
 	// If the cross-reference table did not yield a resolvable Catalog (a common
 	// symptom of misaligned offsets), rebuild it by scanning object headers.
@@ -63,6 +72,29 @@ func Parse(data []byte) (*Document, error) {
 		}
 	}
 	return doc, nil
+}
+
+// setupDecryptor derives the file key for the empty user password and attaches a
+// decryptor to the document. It returns ErrEncrypted when the empty password
+// does not unlock the file (the PDF genuinely needs a password) or the handler
+// is unsupported.
+func (d *Document) setupDecryptor(encObj Object) error {
+	enc, ok := d.Resolve(encObj).(Dict)
+	if !ok {
+		return ErrEncrypted
+	}
+	var id []byte
+	if arr, ok := d.trailer["ID"].(Array); ok && len(arr) > 0 {
+		if s, ok := d.Resolve(arr[0]).(String); ok {
+			id = []byte(s)
+		}
+	}
+	dec, err := newDecryptor(d, enc, id)
+	if err != nil {
+		return err
+	}
+	d.crypt = dec
+	return nil
 }
 
 var startxrefRe = regexp.MustCompile(`startxref\s+(\d+)`)
@@ -328,13 +360,40 @@ func (d *Document) loadObject(num int) Object {
 	if e.offset <= 0 || int(e.offset) >= len(d.buf) {
 		return Null{}
 	}
-	p := newObjParser(d.buf, d)
-	p.lex.pos = int(e.offset)
-	obj, err := p.parseObject()
+	obj, gen, err := d.parseObjectAt(int(e.offset))
 	if err != nil {
 		return Null{}
 	}
+	if d.crypt != nil {
+		obj = d.crypt.decryptObject(num, gen, obj)
+	}
 	return obj
+}
+
+// parseObjectAt parses the indirect object at a byte offset, returning its value
+// and generation number. It consumes the "num gen obj" header when present so
+// the generation (needed for per-object decryption) is captured; a missing or
+// malformed header leaves parsing to parseObject and yields generation 0.
+func (d *Document) parseObjectAt(offset int) (Object, int, error) {
+	p := newObjParser(d.buf, d)
+	p.lex.pos = offset
+	gen := 0
+	save := p.lex.pos
+	if t1, e1 := p.lex.next(); e1 == nil && t1.kind == tokInt {
+		if t2, e2 := p.lex.next(); e2 == nil && t2.kind == tokInt {
+			if t3, e3 := p.lex.next(); e3 == nil && t3.kind == tokKeyword && string(t3.str) == "obj" {
+				gen = int(t2.ival)
+			} else {
+				p.lex.pos = save
+			}
+		} else {
+			p.lex.pos = save
+		}
+	} else {
+		p.lex.pos = save
+	}
+	obj, err := p.parseObject()
+	return obj, gen, err
 }
 
 // loadFromObjStm returns the object at index within object stream stmNum.
@@ -355,15 +414,19 @@ func (d *Document) parseObjStm(stmNum int) []Object {
 	if !ok || e.typ != 1 {
 		return nil
 	}
-	p := newObjParser(d.buf, d)
-	p.lex.pos = int(e.offset)
-	obj, err := p.parseObject()
+	obj, gen, err := d.parseObjectAt(int(e.offset))
 	if err != nil {
 		return nil
 	}
 	st, ok := obj.(Stream)
 	if !ok {
 		return nil
+	}
+	// The object stream is itself an encrypted indirect object; decrypt its body
+	// before inflating. The objects it contains are then plaintext and must not
+	// be decrypted again.
+	if d.crypt != nil && d.crypt.encryptStreams {
+		st.Raw = d.crypt.decryptData(stmNum, gen, st.Raw)
 	}
 	data, err := d.decodeStream(st)
 	if err != nil {
