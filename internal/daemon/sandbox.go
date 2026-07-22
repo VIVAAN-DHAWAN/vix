@@ -113,7 +113,16 @@ func seatbeltProfile(cwd string, extraDirs []string) string {
 	// expect, some REPLs — fail with "fork failed: Operation not permitted"
 	// even though process-fork is allowed, because the denial is on the pty
 	// grant, not on fork itself.
-	b.WriteString("(allow pseudo-tty)\n\n")
+	b.WriteString("(allow pseudo-tty)\n")
+	// pseudo-tty is necessary but not sufficient: grantpt(3) issues an
+	// ioctl(TIOCPTYGRANT) on /dev/ptmx, and that ioctl is a distinct
+	// Seatbelt operation (file-ioctl) which file-write* does NOT imply. On
+	// macOS 26+ the grant fails with EPERM without it, so tmux/script/expect
+	// still can't allocate a controlling terminal. Mirror Apple's own
+	// profiles (e.g. /System/Library/Sandbox/Profiles/application.sb) by
+	// allowing file-ioctl on the pty master and the cloned /dev/ttys* slaves.
+	b.WriteString("(allow file-ioctl (literal \"/dev/ptmx\"))\n")
+	b.WriteString("(allow file-ioctl (regex #\"^/dev/ttys[0-9]*\"))\n\n")
 
 	b.WriteString(";; cwd: read-write\n")
 	fmt.Fprintf(&b, "(allow file-read* (subpath %q))\n", realCwd)

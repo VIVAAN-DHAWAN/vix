@@ -365,6 +365,61 @@ func TestSeatbeltProfile_ContainsCwd(t *testing.T) {
 	}
 }
 
+// TestSeatbeltProfile_AllowsPTY guards the full set of directives a
+// controlling terminal needs on macOS. process-fork + pseudo-tty are
+// necessary but NOT sufficient: grantpt(3) issues an ioctl(TIOCPTYGRANT)
+// on /dev/ptmx, and that is a distinct Seatbelt file-ioctl operation which
+// file-write* does not imply. Without the file-ioctl directives, tmux /
+// script / expect fail with a misleading "fork failed: Operation not
+// permitted" even though fork itself works.
+func TestSeatbeltProfile_AllowsPTY(t *testing.T) {
+	profile := seatbeltProfile("/Users/test/myproject", nil)
+
+	for _, want := range []string{
+		"(allow process-fork)",
+		"(allow pseudo-tty)",
+		`(allow file-ioctl (literal "/dev/ptmx"))`,
+		`(allow file-ioctl (regex #"^/dev/ttys[0-9]*"))`,
+	} {
+		if !strings.Contains(profile, want) {
+			t.Errorf("profile missing pty directive %q\nprofile:\n%s", want, profile)
+		}
+	}
+}
+
+// TestSandboxedBashCmd_CanAllocatePTY actually allocates a pseudo-terminal
+// inside the real Seatbelt sandbox and asserts the grant succeeds. This is
+// the runtime counterpart to TestSeatbeltProfile_AllowsPTY: the Go test
+// runner is not itself sandboxed, so it can apply the profile (unlike a
+// process already running under a deny-default profile, which cannot nest
+// sandbox_apply). Uses python3's os.openpty(), which performs the full
+// posix_openpt -> grantpt -> unlockpt handshake that tmux relies on.
+func TestSandboxedBashCmd_CanAllocatePTY(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt pty test only runs on macOS")
+	}
+	if detectSandbox() != sandboxSeatbelt {
+		t.Skip("sandbox-exec not available")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+
+	cwd := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	script := `python3 -c 'import os; m,s=os.openpty(); os.close(m); os.close(s); print("PTY_OK")'`
+	cmd := sandboxedBashCmd(ctx, script, cwd, nil)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pty allocation failed under sandbox: %v\noutput: %s", err, out)
+	}
+	if !strings.Contains(string(out), "PTY_OK") {
+		t.Errorf("expected PTY_OK, got: %s", out)
+	}
+}
+
 func TestSandboxName_ReturnsString(t *testing.T) {
 	name := SandboxName()
 	if name == "" {
