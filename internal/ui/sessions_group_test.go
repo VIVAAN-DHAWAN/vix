@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/get-vix/vix/internal/protocol"
 )
@@ -13,6 +14,18 @@ import (
 // directory with an activity timestamp used for recency ordering.
 func userRec(id, cwd, lastReq string) protocol.SessionSummary {
 	return protocol.SessionSummary{ID: id, CWD: cwd, Title: "title-" + id, LastRequestAt: lastReq}
+}
+
+// liveAt builds a live (attached) user session in the given directory whose
+// daemon creation time is fixed, so tests can assert creation-time ordering.
+// The client is nil (a real one can't be constructed cross-package), so the
+// cached startedAt supplies the sort key via SessionState.createdAt.
+func liveAt(dir, rfc3339 string) *SessionState {
+	s := newSessionState(testCfg(dir), nil)
+	s.phase = phaseLive
+	t, _ := time.Parse(time.RFC3339, rfc3339)
+	s.startedAt = t
+	return s
 }
 
 // TestAbbreviatePath replaces the home prefix with "~" and labels empties.
@@ -36,18 +49,17 @@ func TestAbbreviatePath(t *testing.T) {
 }
 
 // TestUserDirBlocksGrouping: user sessions are grouped by working directory with
-// the current cwd first, other directories by most-recent activity (desc), and
-// within a directory live sessions precede not-attached records.
+// the current cwd first and other directories by most-recent activity (desc).
 func TestUserDirBlocksGrouping(t *testing.T) {
-	liveWork := newSessionState(testCfg("/work"), nil) // current cwd
-	liveBeta := newSessionState(testCfg("/beta"), nil) // attached other-dir session
+	liveWork := liveAt("/work", "2026-01-04T00:00:00Z") // current cwd, newest in /work
+	liveBeta := liveAt("/beta", "2026-01-01T00:00:00Z") // attached other-dir session, oldest in /beta
 	m := &Model{
 		cwd:      "/work",
 		sessions: []*SessionState{liveWork, liveBeta},
 		userSessionRecords: []protocol.SessionSummary{
-			userRec("rWork", "/work", "2026-01-01T00:00:00Z"),
-			userRec("rAlpha", "/alpha", "2026-01-02T00:00:00Z"),
-			userRec("rBeta", "/beta", "2026-01-03T00:00:00Z"),
+			{ID: "rWork", CWD: "/work", Title: "rWork", StartedAt: "2026-01-01T00:00:00Z", LastRequestAt: "2026-01-01T00:00:00Z"},
+			{ID: "rAlpha", CWD: "/alpha", Title: "rAlpha", StartedAt: "2026-01-02T00:00:00Z", LastRequestAt: "2026-01-02T00:00:00Z"},
+			{ID: "rBeta", CWD: "/beta", Title: "rBeta", StartedAt: "2026-01-03T00:00:00Z", LastRequestAt: "2026-01-03T00:00:00Z"},
 		},
 	}
 
@@ -63,13 +75,58 @@ func TestUserDirBlocksGrouping(t *testing.T) {
 	if blocks[1].dir != "/beta" || blocks[2].dir != "/alpha" {
 		t.Errorf("other-dir order = [%q, %q], want [/beta, /alpha]", blocks[1].dir, blocks[2].dir)
 	}
-	// Within /work: live session first, then its record.
-	if len(blocks[0].rows) != 2 || blocks[0].rows[0].liveIdx != 0 || blocks[0].rows[1].sum == nil || blocks[0].rows[1].sum.ID != "rWork" {
-		t.Errorf("/work rows = %+v, want [live#0, record rWork]", blocks[0].rows)
+	// Within /work: record rWork (01-01) precedes the newer live session (01-04),
+	// i.e. the live session is NOT hoisted ahead of an older record.
+	if len(blocks[0].rows) != 2 || blocks[0].rows[0].sum == nil || blocks[0].rows[0].sum.ID != "rWork" || blocks[0].rows[1].liveIdx != 0 {
+		t.Errorf("/work rows = %+v, want [record rWork, live#0]", blocks[0].rows)
 	}
-	// Within /beta: attached live session (m.sessions[1]) first, then its record.
+	// Within /beta: the older live session (01-01) precedes its newer record (01-03).
 	if len(blocks[1].rows) != 2 || blocks[1].rows[0].liveIdx != 1 || blocks[1].rows[1].sum == nil || blocks[1].rows[1].sum.ID != "rBeta" {
 		t.Errorf("/beta rows = %+v, want [live#1, record rBeta]", blocks[1].rows)
+	}
+}
+
+// TestUserDirBlocksOrdersByCreatedAt: within one directory, live sessions and
+// not-attached records interleave strictly by creation time (asc), and a
+// still-connecting session (unknown start time) sorts last.
+func TestUserDirBlocksOrdersByCreatedAt(t *testing.T) {
+	oldRec := protocol.SessionSummary{ID: "old", CWD: "/work", Title: "old", StartedAt: "2026-01-01T00:00:00Z", LastRequestAt: "2026-01-01T00:00:00Z"}
+	midLive := liveAt("/work", "2026-01-02T00:00:00Z")
+	newRec := protocol.SessionSummary{ID: "new", CWD: "/work", Title: "new", StartedAt: "2026-01-03T00:00:00Z", LastRequestAt: "2026-01-03T00:00:00Z"}
+	connecting := newSessionState(testCfg("/work"), nil) // no start time yet
+	connecting.phase = phaseLive
+
+	m := &Model{
+		cwd:                "/work",
+		sessions:           []*SessionState{midLive, connecting},
+		userSessionRecords: []protocol.SessionSummary{newRec, oldRec}, // deliberately out of order
+	}
+
+	blocks := m.userDirBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("want 1 dir block, got %d", len(blocks))
+	}
+	got := make([]string, 0, len(blocks[0].rows))
+	for _, r := range blocks[0].rows {
+		if r.sum != nil {
+			got = append(got, r.sum.ID)
+		} else {
+			got = append(got, "live")
+		}
+	}
+	// old (01-01), midLive (01-02), new (01-03), then the connecting session last.
+	want := []string{"old", "live", "new", "live"}
+	if len(got) != len(want) {
+		t.Fatalf("row count = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("row order = %v, want %v", got, want)
+		}
+	}
+	// The last row must be the still-connecting session (no client, zero start).
+	if last := blocks[0].rows[len(blocks[0].rows)-1]; last.liveIdx != 1 {
+		t.Errorf("connecting session should sort last, got liveIdx=%d", last.liveIdx)
 	}
 }
 

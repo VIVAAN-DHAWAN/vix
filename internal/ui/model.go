@@ -1624,6 +1624,9 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sess.client = msg.client
 		sess.daemonSessionID = msg.client.SessionID()
 		sess.reconnecting = false
+		if t := msg.client.StartedAt(); !t.IsZero() {
+			sess.startedAt = t
+		}
 		// A (re)connected session is live, never a draft. Fork/duplicate creates
 		// the new session as phaseDraft and connects it through this path; without
 		// promoting it here, its first message would fall into the draft-commit
@@ -1666,6 +1669,9 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sess.daemonSessionID = msg.client.SessionID()
 		sess.phase = phaseLive
 		sess.reconnecting = false
+		if t := msg.client.StartedAt(); !t.IsZero() {
+			sess.startedAt = t
+		}
 		cmds = append(cmds, startSessionEventLoop(msg.client))
 		// Flush the message that triggered the commit.
 		if pending := sess.pendingFirstInput; pending != nil {
@@ -4400,22 +4406,26 @@ type rowTarget struct {
 	sum     *protocol.SessionSummary
 }
 
-// rowStartedAt returns the creation time used to order the Vix-initiated group.
-// A live vix session carries its origin record in vixSummary, so a record keeps
+// rowStartedAt returns the creation time used to order a Sessions-tab row. A
+// live vix session carries its origin record in vixSummary, so a record keeps
 // the same StartedAt — and therefore the same list position — when it
-// transitions from persisted to attached (on read).
+// transitions from persisted to attached (on read). A live user session has no
+// such record, so its creation time comes from the daemon session itself
+// (SessionState.createdAt). Not-attached records use their persisted StartedAt.
 func (m *Model) rowStartedAt(r rowTarget) time.Time {
-	var raw string
 	switch {
 	case r.sum != nil:
-		raw = r.sum.StartedAt
+		t, _ := time.Parse(time.RFC3339, r.sum.StartedAt)
+		return t
 	case r.liveIdx >= 0 && r.liveIdx < len(m.sessions):
-		if vs := m.sessions[r.liveIdx].vixSummary; vs != nil {
-			raw = vs.StartedAt
+		sess := m.sessions[r.liveIdx]
+		if vs := sess.vixSummary; vs != nil {
+			t, _ := time.Parse(time.RFC3339, vs.StartedAt)
+			return t
 		}
+		return sess.createdAt()
 	}
-	t, _ := time.Parse(time.RFC3339, raw)
-	return t
+	return time.Time{}
 }
 
 // userDirBlock is one working directory's block within the User-initiated group:
@@ -4442,8 +4452,9 @@ func recordActivity(sum *protocol.SessionSummary) time.Time {
 // sessions (auto-attached on launch, so mostly the current cwd) and persisted
 // not-attached records (from every directory). The current cwd sorts first; the
 // remaining directories follow by most-recent activity (desc), tiebroken by path
-// (asc) for determinism. Within a directory, live sessions come first (m.sessions
-// creation order) then records (StartedAt order).
+// (asc) for determinism. Within a directory, rows are ordered by creation time
+// (asc), interleaving live sessions and records — a live session is not hoisted
+// ahead of an older record.
 func (m *Model) userDirBlocks() []userDirBlock {
 	byDir := map[string]*userDirBlock{}
 	var order []string
@@ -4456,7 +4467,8 @@ func (m *Model) userDirBlocks() []userDirBlock {
 		}
 		return b
 	}
-	// Live rows first so each block lists them ahead of its records.
+	// Collect live rows first only so records can dedup against them; the final
+	// per-block order is by creation time below, not live-first.
 	liveIDs := map[string]bool{}
 	for i, s := range m.sessions {
 		if s.vixSummary != nil {
@@ -4500,9 +4512,26 @@ func (m *Model) userDirBlocks() []userDirBlock {
 	})
 	out := make([]userDirBlock, 0, len(order))
 	for _, dir := range order {
-		out = append(out, *byDir[dir])
+		b := byDir[dir]
+		// Order rows by creation time (asc). A connecting/draft session with an
+		// unknown start time (zero) sorts last, matching a freshly-created row.
+		sort.SliceStable(b.rows, func(i, j int) bool {
+			return m.userRowSortKey(b.rows[i]).Before(m.userRowSortKey(b.rows[j]))
+		})
+		out = append(out, *b)
 	}
 	return out
+}
+
+// userRowSortKey is the creation-time key used to order rows within a directory
+// block. Rows with an unknown start time (a session still connecting) sort last
+// rather than first, so a just-created session lands at the bottom of its block.
+func (m *Model) userRowSortKey(r rowTarget) time.Time {
+	t := m.rowStartedAt(r)
+	if t.IsZero() {
+		return time.Unix(1<<62, 0)
+	}
+	return t
 }
 
 // vixRowTargets returns the Vix-initiated group's rows: live attached records

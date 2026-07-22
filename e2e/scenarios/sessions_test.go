@@ -903,3 +903,102 @@ func TestSessionsGroupedByDirectory(t *testing.T) {
 	}
 	h.UI.Shot("cross-dir-session-opened")
 }
+
+// orderCurrentRecord is the launch-cwd session (auto-restored as a live session).
+// otherOldRecord and otherNewRecord are two persisted sessions in the same
+// sibling directory ({{WORKDIR}}/otherproj), created on 2024-01-01 and
+// 2024-01-03 respectively. The test opens the NEWER one so it attaches (becomes
+// live) and verifies it still renders below the older, not-attached record —
+// i.e. rows order by creation time, a live session is not hoisted to the top.
+const orderCurrentRecord = `{
+  "schema_version": 1,
+  "id": "c1111111-1111-1111-1111-111111111111",
+  "cwd": "{{WORKDIR}}",
+  "session_mode": "chat",
+  "started_at": "2024-01-02T00:00:00Z",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "CURRENT-DIR-SESSION"}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "current dir reply"}]}
+  ]
+}`
+
+const orderOtherOldRecord = `{
+  "schema_version": 1,
+  "id": "a1111111-1111-1111-1111-111111111111",
+  "cwd": "{{WORKDIR}}/otherproj",
+  "session_mode": "chat",
+  "started_at": "2024-01-01T00:00:00Z",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "OTHER-OLD-SESSION"}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "other old reply"}]}
+  ]
+}`
+
+const orderOtherNewRecord = `{
+  "schema_version": 1,
+  "id": "b1111111-1111-1111-1111-111111111111",
+  "cwd": "{{WORKDIR}}/otherproj",
+  "session_mode": "chat",
+  "started_at": "2024-01-03T00:00:00Z",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "OTHER-NEW-SESSION"}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "other new reply"}]}
+  ]
+}`
+
+// TestSessionsOrderedByCreationTime verifies that within a working-directory
+// block the rows are ordered by creation time — a live (attached) session is NOT
+// hoisted above an older not-attached record. It seeds two sessions in a sibling
+// directory (old = 2024-01-01, new = 2024-01-03), opens the newer one so it
+// attaches (becomes live), and asserts the older record still renders above it.
+func TestSessionsOrderedByCreationTime(t *testing.T) {
+	h := harness.Start(t, sessionsMeta("within a directory block, rows order by creation time; opening the newer session does not hoist it above the older record"),
+		harness.WithWorkdirFile("otherproj/keep.txt", "seed"),
+		harness.WithHomeFile(".vix/sessions/open/c1111111-1111-1111-1111-111111111111.json", orderCurrentRecord),
+		harness.WithHomeFile(".vix/sessions/open/a1111111-1111-1111-1111-111111111111.json", orderOtherOldRecord),
+		harness.WithHomeFile(".vix/sessions/open/b1111111-1111-1111-1111-111111111111.json", orderOtherNewRecord),
+	)
+
+	h.UI.WaitStable(500 * time.Millisecond)
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+
+	// Both otherproj sessions are listed as not-attached records, older above newer.
+	if !pollUntil(10*time.Second, func() bool {
+		s := h.UI.Snapshot()
+		return strings.Contains(s, "OTHER-OLD-SESSION") && strings.Contains(s, "OTHER-NEW-SESSION")
+	}) {
+		t.Fatalf("both otherproj sessions not listed; screen:\n%s", h.UI.Snapshot())
+	}
+	snap := h.UI.Snapshot()
+	if strings.Index(snap, "OTHER-OLD-SESSION") > strings.Index(snap, "OTHER-NEW-SESSION") {
+		t.Fatalf("older record should render above newer record; screen:\n%s", snap)
+	}
+	h.UI.Shot("order-before-attach")
+
+	// Open the NEWER otherproj session so it attaches (becomes live). Rows:
+	// 0=CURRENT (cwd), 1=OTHER-OLD, 2=OTHER-NEW. Move down twice and open it.
+	h.UI.Key("down")
+	h.UI.Key("down")
+	h.UI.Enter()
+	if !pollUntil(10*time.Second, func() bool { return h.UI.Contains("other new reply") }) {
+		t.Fatalf("opening the newer session did not replay its conversation; screen:\n%s", h.UI.Snapshot())
+	}
+
+	// Back to the Sessions tab: the newer session is now live, but must still
+	// render BELOW the older not-attached record (ordered by creation time, not
+	// live-first). Before the fix, the live row was hoisted to the top.
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	if !pollUntil(10*time.Second, func() bool {
+		s := h.UI.Snapshot()
+		return strings.Contains(s, "OTHER-OLD-SESSION") && strings.Contains(s, "OTHER-NEW-SESSION")
+	}) {
+		t.Fatalf("both otherproj rows not listed after attach; screen:\n%s", h.UI.Snapshot())
+	}
+	snap = h.UI.Snapshot()
+	if strings.Index(snap, "OTHER-OLD-SESSION") > strings.Index(snap, "OTHER-NEW-SESSION") {
+		t.Fatalf("attached (live) newer session was hoisted above the older record; rows must order by creation time; screen:\n%s", snap)
+	}
+	h.UI.Shot("order-after-attach")
+}

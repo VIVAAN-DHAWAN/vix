@@ -101,7 +101,7 @@ type userRowView struct {
 
 // userDirGroupView is one working directory's block within the User-initiated
 // group: the directory path (rendered as a subtitle) and its rows in display
-// order (live sessions first, then not-attached records).
+// order (by creation time, interleaving live sessions and not-attached records).
 type userDirGroupView struct {
 	dir  string
 	rows []userRowView

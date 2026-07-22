@@ -63,6 +63,11 @@ type SessionState struct {
 	client       *daemon.SessionClient
 	reconnecting bool
 
+	// startedAt caches the daemon session's creation time, captured from the
+	// client on (re)connect. It survives brief client==nil windows (reconnect,
+	// orphaned) so the Sessions tab can keep ordering the row by creation time.
+	startedAt time.Time
+
 	// phase is phaseDraft until the session is committed (first message) and
 	// phaseLive thereafter. clientKey is a stable, process-unique handle used to
 	// match async connect results back to this session while its
@@ -238,6 +243,19 @@ func newSessionState(cfg *config.Config, client *daemon.SessionClient) *SessionS
 		s.daemonSessionID = client.SessionID()
 	}
 	return s
+}
+
+// createdAt returns the daemon session's creation time, used to order the row in
+// the Sessions tab. It prefers the live client's start time and falls back to
+// the cached startedAt while the client is momentarily absent (reconnect,
+// orphaned) or in tests. A draft that has never connected returns the zero time.
+func (s *SessionState) createdAt() time.Time {
+	if s.client != nil {
+		if t := s.client.StartedAt(); !t.IsZero() {
+			return t
+		}
+	}
+	return s.startedAt
 }
 
 // setModel updates the session's model spec and refreshes the resolved context
