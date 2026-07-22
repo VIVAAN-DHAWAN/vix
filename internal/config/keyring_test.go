@@ -1,8 +1,12 @@
 package config
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/get-vix/vix/internal/providers"
 	"github.com/zalando/go-keyring"
 )
 
@@ -255,5 +259,96 @@ func TestLocalProviderCredential(t *testing.T) {
 	st := GetProviderAuthStatus("ollama")
 	if len(st.Methods) != 1 || st.Methods[0].Label != "API Key" {
 		t.Errorf("ollama auth status = %+v, want a single API Key method", st.Methods)
+	}
+}
+
+// configureCustomProvider registers a custom provider "acmeenv" with the given
+// credential_methods JSON and resets the registry to embedded defaults on
+// cleanup. It models the providers.json overlay path from issue #57.
+func configureCustomProvider(t *testing.T, credMethods string) {
+	t.Helper()
+	dir := t.TempDir()
+	overlay := filepath.Join(dir, "providers.json")
+	body := `{
+	  "schema_version": 1,
+	  "providers": [
+	    { "id": "acmeenv", "display_name": "Acme Env", "model_prefix": "acmeenv",
+	      "wire_format": "chat_completions",
+	      "inference": { "base_url": "https://api.acme.example/v1", "auth_scheme": "bearer" },
+	      "credential_methods": ` + credMethods + `,
+	      "models": [ { "spec": "acmeenv/fast", "display_name": "Acme Fast" } ] }
+	  ]
+	}`
+	if err := os.WriteFile(overlay, []byte(body), 0o644); err != nil {
+		t.Fatalf("write overlay: %v", err)
+	}
+	if err := providers.Configure([]string{overlay}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	t.Cleanup(func() { _ = providers.Configure(nil) })
+}
+
+// TestEnvOnlyProvider_HasCredential is the regression for issue #57: a custom
+// provider whose only credential method is an env_var (no keyring) must report
+// as configured when the env var is set, without any keychain entry.
+func TestEnvOnlyProvider_HasCredential(t *testing.T) {
+	keyring.MockInit() // clean, reachable keychain with nothing stored
+	configureCustomProvider(t, `[ { "kind": "api_key", "env_var": "ACME_ENV_API_KEY" } ]`)
+	t.Setenv("ACME_ENV_API_KEY", "acme-env-secret")
+
+	st := GetProviderAuthStatus("acmeenv")
+	if !st.HasCredential() {
+		t.Fatalf("HasCredential = false, want true (env var set, no keychain entry)")
+	}
+	if len(st.Methods) != 1 || !st.Methods[0].Stored {
+		t.Fatalf("method status = %+v, want a single stored API Key method", st.Methods)
+	}
+	if st.Methods[0].Prefix != "acme-env-s" {
+		t.Errorf("prefix = %q, want %q", st.Methods[0].Prefix, "acme-env-s")
+	}
+
+	key, source := ResolveProviderKey("acmeenv")
+	if key != "acme-env-secret" || source != KeySourceEnv {
+		t.Errorf("resolved = %q/%q, want acme-env-secret/%s", key, source, KeySourceEnv)
+	}
+}
+
+// TestEnvOnlyProvider_NoCredentialWithoutEnv confirms the same provider reports
+// as unconfigured when neither env var nor keychain provides a value.
+func TestEnvOnlyProvider_NoCredentialWithoutEnv(t *testing.T) {
+	keyring.MockInit()
+	configureCustomProvider(t, `[ { "kind": "api_key", "env_var": "ACME_ENV_API_KEY" } ]`)
+	t.Setenv("ACME_ENV_API_KEY", "")
+
+	if GetProviderAuthStatus("acmeenv").HasCredential() {
+		t.Errorf("HasCredential = true, want false with no env var and empty keychain")
+	}
+}
+
+// TestEnvOnlyProvider_KeychainUnavailable is the headless/container case: the
+// keychain is unreachable, but the env var must still make the provider count as
+// configured.
+func TestEnvOnlyProvider_KeychainUnavailable(t *testing.T) {
+	keyring.MockInitWithError(errors.New("no keychain"))
+	t.Cleanup(keyring.MockInit)
+	configureCustomProvider(t, `[ { "kind": "api_key", "env_var": "ACME_ENV_API_KEY" } ]`)
+	t.Setenv("ACME_ENV_API_KEY", "acme-env-secret")
+
+	if !GetProviderAuthStatus("acmeenv").HasCredential() {
+		t.Errorf("HasCredential = false, want true (env var set, keychain unavailable)")
+	}
+}
+
+// TestEnvVarProvider_KeyringDeclaredButEmpty guards the exact symptom from the
+// issue: with a keyring name declared but nothing stored, the env var alone must
+// still resolve the credential — no dummy keychain value required.
+func TestEnvVarProvider_KeyringDeclaredButEmpty(t *testing.T) {
+	keyring.MockInit()
+	configureCustomProvider(t, `[ { "kind": "api_key", "env_var": "ACME_ENV_API_KEY", "keyring": "acmeenv-api-key" } ]`)
+	t.Setenv("ACME_ENV_API_KEY", "acme-env-secret")
+
+	st := GetProviderAuthStatus("acmeenv")
+	if !st.HasCredential() {
+		t.Errorf("HasCredential = false, want true (env var set, keyring declared but empty)")
 	}
 }

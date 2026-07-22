@@ -472,7 +472,10 @@ func methodLabel(m AuthMethod) string {
 }
 
 // methodStored reports whether a credential is available for a method and, for
-// API-key methods, the first 10 chars of the stored key for display.
+// API-key methods, the first 10 chars of the resolved key for display. API-key
+// availability follows the same env → keychain → .env order as resolution (see
+// resolveKey), so a provider configured purely via its env_var counts as
+// available even without a keychain entry.
 func methodStored(m AuthMethod) (stored bool, prefix string) {
 	if isOAuthMethod(m) {
 		if m.LoginID == "" {
@@ -480,11 +483,11 @@ func methodStored(m AuthMethod) (stored bool, prefix string) {
 		}
 		return auth.DefaultStorage().HasLogin(m.LoginID), ""
 	}
-	if m.Keyring == "" {
+	if m.EnvVar == "" && m.Keyring == "" {
 		return false, ""
 	}
-	k, err := defaultStore().Get(m.Keyring)
-	if err != nil || k == "" {
+	k, _ := resolveKey(m.EnvVar, m.Keyring)
+	if k == "" {
 		return false, ""
 	}
 	if len(k) > 10 {
