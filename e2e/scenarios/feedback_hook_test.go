@@ -81,6 +81,7 @@ func TestFeedbackHookFiresAtThreshold(t *testing.T) {
 	}, harness.WithHomeFile(".vix/hooks/feedback-at-10/count.log", strings.Repeat("1\n", 9)))
 
 	h.UI.WaitStable(400 * time.Millisecond)
+	startSession(h)
 	h.UI.Shot("feedback-threshold")
 
 	if !pollUntil(15*time.Second, func() bool { return len(feedbackSessions(h)) == 1 }) {
@@ -111,6 +112,7 @@ func TestFeedbackHookFiresOnlyOnce(t *testing.T) {
 	)
 
 	h.UI.WaitStable(400 * time.Millisecond)
+	startSession(h)
 
 	// Wait until the hook has run (the counter grew past the seeded 12), then
 	// confirm it delivered nothing.
@@ -134,6 +136,7 @@ func TestFeedbackHookBelowThreshold(t *testing.T) {
 	}, harness.WithHomeFile(".vix/hooks/feedback-at-10/count.log", strings.Repeat("1\n", 3)))
 
 	h.UI.WaitStable(400 * time.Millisecond)
+	startSession(h)
 
 	if !pollUntil(15*time.Second, func() bool { return countLogLines(h) >= 4 }) {
 		t.Fatalf("feedback hook never counted this session (count=%d)", countLogLines(h))

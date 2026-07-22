@@ -254,6 +254,12 @@ func main() {
 
 	var session *daemon.SessionClient
 
+	// instanceClient is the window's long-lived control channel to the daemon,
+	// carrying process-level events (sessions_changed, jobs_changed, quit)
+	// independent of any chat session. Held for the process lifetime; passed to
+	// the TUI model so it can read the channel. nil when registration failed.
+	var instanceClient *daemon.InstanceClient
+
 	// restoreSessions holds the persisted open sessions (beyond the first,
 	// which becomes the initial client) that the TUI reopens on Init.
 	var restoreSessions []protocol.SessionSummary
@@ -308,14 +314,20 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Register this vix process as an attached instance for its whole
-		// lifetime. The daemon counts these for observability (web UI vitals,
-		// logging). Best-effort: if registration fails we still run.
 		instanceMode := "tui"
 		if *prompt != "" {
 			instanceMode = "headless"
 		}
+		// Register this vix process as an attached instance for its whole
+		// lifetime. Besides the observability count (web UI vitals, logging),
+		// the connection is the window's control channel: the daemon pushes
+		// process-level events (sessions_changed, jobs_changed, quit) to it,
+		// independent of any chat session, so a launch-time draft still refreshes
+		// live. Best-effort: if registration fails we still run (just without
+		// live process-level updates). Only the TUI reads the channel; headless
+		// holds it open purely for the count.
 		if ic, err := daemon.RegisterInstance(cfg.SocketPath, authToken, instanceMode); err == nil {
+			instanceClient = ic
 			defer ic.Close()
 		}
 
@@ -394,6 +406,7 @@ func main() {
 	model := ui.NewModel(cfg, session, *testMode, authToken, !*disableWritePermission, !*disableDirAccess)
 	model.SetRestoreSessions(restoreSessions)
 	model.SetInitialAwaitingReplay(initialAttached)
+	model.SetInstanceClient(instanceClient)
 
 	p := tea.NewProgram(model)
 	ui.SetProgram(p)

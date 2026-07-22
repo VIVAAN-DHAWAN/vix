@@ -266,18 +266,20 @@ func (s *Server) hasAttachedInstances() bool {
 	return s.instanceCount > 0
 }
 
-// broadcastSessionsChanged tells attached clients (and web UI subscribers) the
-// persisted sessions list changed outside their own connection.
+// broadcastSessionsChanged tells every attached instance (over the control
+// channel, once per window) and the web UI subscribers that the persisted
+// sessions list changed outside their own connection.
 func (s *Server) broadcastSessionsChanged() {
-	s.BroadcastEvent(protocol.SessionEvent{Type: "event.sessions_changed", Data: protocol.EventSessionsChanged{}})
+	s.BroadcastToInstances(protocol.SessionEvent{Type: "event.sessions_changed", Data: protocol.EventSessionsChanged{}})
 	s.notifySubscribers()
 }
 
-// broadcastJobsChanged tells attached clients (and web UI subscribers) the jobs
-// or hooks list changed — a run started/finished, a spec was enabled/disabled,
-// or the spec directory was reloaded — so the Jobs & Triggers tab re-fetches.
+// broadcastJobsChanged tells every attached instance (over the control channel,
+// once per window) and the web UI subscribers that the jobs or hooks list
+// changed — a run started/finished, a spec was enabled/disabled, or the spec
+// directory was reloaded — so the Jobs & Triggers tab re-fetches.
 func (s *Server) broadcastJobsChanged() {
-	s.BroadcastEvent(protocol.SessionEvent{Type: "event.jobs_changed", Data: protocol.EventJobsChanged{}})
+	s.BroadcastToInstances(protocol.SessionEvent{Type: "event.jobs_changed", Data: protocol.EventJobsChanged{}})
 	s.notifySubscribers()
 }
 

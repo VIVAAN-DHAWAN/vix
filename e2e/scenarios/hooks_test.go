@@ -414,7 +414,8 @@ const sessionStartHook = `{
 }`
 
 // TestHookSessionStartFires proves a SessionStart hook runs when the session
-// begins, with no user prompt needed.
+// begins. Under the draft-session model a session starts on the first message,
+// so sending one commits the draft and fires the hook.
 func TestHookSessionStartFires(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "hooks",
@@ -424,6 +425,7 @@ func TestHookSessionStartFires(t *testing.T) {
 	}, harness.WithHomeFile(".vix/hooks/session-start/hook.json", sessionStartHook))
 
 	h.UI.WaitStable(400 * time.Millisecond)
+	startSession(h)
 	h.UI.Shot("session-start")
 
 	if !pollUntil(10*time.Second, func() bool { return h.FS.Exists("sessionstart.flag") }) {

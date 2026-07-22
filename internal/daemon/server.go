@@ -93,6 +93,15 @@ type Server struct {
 	instanceMu    sync.Mutex
 	instanceCount int
 
+	// instances holds the live instance control connections — one per vix
+	// window, opened at launch and held for the process lifetime (see
+	// handleInstance). Process-level events (sessions_changed, jobs_changed,
+	// quit) are pushed to each exactly once via BroadcastToInstances,
+	// independent of any chat session, so a draft window with no session still
+	// receives them. Guarded by instanceRegMu.
+	instanceRegMu sync.Mutex
+	instances     map[*instanceConn]struct{}
+
 	// version is the daemon build version (vixd's main.Version). Sessions from
 	// clients with a different version are refused (see handleSession). Empty
 	// in in-process test embeddings, which disables the gate.
@@ -155,14 +164,63 @@ func (s *Server) BroadcastEvent(ev protocol.SessionEvent) {
 	}
 }
 
+// instanceConn is one live instance control connection. Writes are serialized
+// through sendCh, drained by a single writer goroutine (handleInstance), so
+// concurrent BroadcastToInstances calls never interleave frames on the wire.
+type instanceConn struct {
+	conn   net.Conn
+	sendCh chan []byte
+}
+
+// registerInstanceConn adds ic to the live-instance registry.
+func (s *Server) registerInstanceConn(ic *instanceConn) {
+	s.instanceRegMu.Lock()
+	s.instances[ic] = struct{}{}
+	s.instanceRegMu.Unlock()
+}
+
+// deregisterInstanceConn removes ic from the registry and closes its send
+// channel so the writer goroutine returns. Idempotent: the close happens under
+// the same lock that guards sends, so a concurrent BroadcastToInstances can
+// never send on a closed channel.
+func (s *Server) deregisterInstanceConn(ic *instanceConn) {
+	s.instanceRegMu.Lock()
+	defer s.instanceRegMu.Unlock()
+	if _, ok := s.instances[ic]; ok {
+		delete(s.instances, ic)
+		close(ic.sendCh)
+	}
+}
+
+// BroadcastToInstances pushes ev to every live instance control connection
+// (best-effort, non-blocking, once per window). Process-level events
+// (sessions_changed, jobs_changed, quit) travel this path so they reach every
+// window exactly once — including a launch-time draft that has no session yet.
+func (s *Server) BroadcastToInstances(ev protocol.SessionEvent) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		LogError("Marshal instance event error: %v", err)
+		return
+	}
+	data = append(data, '\n')
+	s.instanceRegMu.Lock()
+	defer s.instanceRegMu.Unlock()
+	for ic := range s.instances {
+		select {
+		case ic.sendCh <- data:
+		default:
+		}
+	}
+}
+
 // QuitAll tells every attached vix instance to quit, then shuts the daemon
 // down. Invoked after an in-app update so all old processes exit and the
 // freshly-installed binaries take effect on relaunch (brew keep_alive restart
-// or vix auto-spawn). The short delay lets the per-session writer goroutines
+// or vix auto-spawn). The short delay lets the per-instance writer goroutines
 // flush the quit event onto their sockets before the context is cancelled.
 func (s *Server) QuitAll() {
-	LogInfo("update: broadcasting quit to all sessions, then shutting down")
-	s.BroadcastEvent(protocol.SessionEvent{Type: "event.quit"})
+	LogInfo("update: broadcasting quit to all instances, then shutting down")
+	s.BroadcastToInstances(protocol.SessionEvent{Type: "event.quit"})
 	time.AfterFunc(500*time.Millisecond, func() {
 		if s.cancel != nil {
 			s.cancel()
@@ -196,6 +254,7 @@ func NewServer(sockPath string, cred config.Credential, sessionID, model string,
 		model:      model,
 		plugins:    plugins,
 		sessions:   make(map[string]*Session),
+		instances:  make(map[*instanceConn]struct{}),
 		homeVixDir: daemonConfig.HomeVixDir,
 		authToken:  daemonConfig.AuthToken,
 		vixBin:     resolveVixBin(),
@@ -307,7 +366,16 @@ func (s *Server) EnableJobScheduler() {
 		return
 	}
 	notify := func(eventType string, data any) {
-		s.BroadcastEvent(protocol.SessionEvent{Type: eventType, Data: data})
+		ev := protocol.SessionEvent{Type: eventType, Data: data}
+		// Process-level events go to the instance control channels (once per
+		// window); session-scoped events (job_run/job_done status lines) stay on
+		// the per-session fan-out.
+		switch eventType {
+		case "event.sessions_changed", "event.jobs_changed":
+			s.BroadcastToInstances(ev)
+		default:
+			s.BroadcastEvent(ev)
+		}
 		s.notifySubscribers()
 	}
 	logger := jobRunLogger{dir: s.jobsLogDir}
@@ -566,16 +634,38 @@ func (s *Server) handleClient(conn net.Conn) {
 }
 
 // handleInstance holds an instance.register connection open for the lifetime of
-// a vix process, counting it as an attached instance. It blocks reading until
-// the peer closes the connection (clean exit or process death both deliver EOF
-// on a local Unix socket), then records the disconnect.
+// a vix process. It counts the instance (web-UI vitals) and registers a
+// bidirectional control channel: process-level events (sessions_changed,
+// jobs_changed, quit) are pushed to it via BroadcastToInstances, one serialized
+// writer goroutine per connection. It blocks reading until the peer closes the
+// connection (clean exit or process death both deliver EOF on a local Unix
+// socket), then deregisters and records the disconnect.
 func (s *Server) handleInstance(conn net.Conn, scanner *bufio.Scanner) {
 	s.instanceConnected()
 	defer s.instanceDisconnected()
+
+	ic := &instanceConn{conn: conn, sendCh: make(chan []byte, 32)}
+	s.registerInstanceConn(ic)
+
+	// Writer goroutine: the sole writer to this connection, so frames pushed by
+	// concurrent BroadcastToInstances calls never interleave. Exits when the
+	// send channel is closed by deregisterInstanceConn.
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for data := range ic.sendCh {
+			conn.Write(data)
+		}
+	}()
+
 	// Drain anything the client sends (it normally sends nothing). The loop
 	// exits when the connection closes.
 	for scanner.Scan() {
 	}
+
+	// Deregister (idempotent) closes the send channel, unblocking the writer.
+	s.deregisterInstanceConn(ic)
+	<-writerDone
 }
 
 // handleSession upgrades a connection to a persistent bidirectional session.
@@ -662,6 +752,9 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 		if forkSrc != nil {
 			if msgs := forkSrc.snapshotMessagesForFork(startData.ForkTurnIdx); len(msgs) > 0 {
 				session.messages = msgs
+				// Rebuild the read-gate set from the forked history so the new
+				// session can edit files the parent had already read.
+				session.rebuildReadFilesFromHistory(msgs)
 				// Rebuild the fork snapshots so this seeded session is itself
 				// forkable/trimmable — otherwise a duplicate-of-a-duplicate would
 				// find no history to copy and start empty.
@@ -717,8 +810,17 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 
 	// Persist the freshly-created (or attached) session to open/ so it survives
 	// a crash and is reopened on next launch. Attached sessions are already on
-	// disk; this is a no-op-equivalent rewrite. Skipped when persistence is off.
-	session.persist()
+	// disk; this is a no-op-equivalent rewrite. Forked/duplicated sessions carry
+	// seeded history and are persisted too.
+	//
+	// A brand-new session with NO messages is deliberately NOT persisted here:
+	// doing so leaves a ghost empty record if the connection drops before the
+	// first message ever arrives (the user quits, or a turn is cancelled in the
+	// connect→first-turn window). The session's first turn persists it
+	// (s.persist() after the turn), so nothing with real content is ever lost.
+	if attachRec != nil || len(session.messages) > 0 {
+		session.persist()
+	}
 
 	LogInfo("Session %s started (cwd=%s, model=%s)", sessionID, cwd, model)
 

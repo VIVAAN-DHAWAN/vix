@@ -25,6 +25,25 @@ internal/
 
 The daemon listens on a Unix socket (`/tmp/vixd.sock`). The TUI client connects to it and exchanges JSON events.
 
+### Instance control channel
+
+Besides per-session connections, each vix window (TUI **instance**) holds one
+long-lived `instance.register` connection to the daemon for its whole lifetime.
+This is the window's **control channel**: the daemon pushes **process-level**
+events — `sessions_changed`, `jobs_changed`, and the coordinated `quit` — to it
+**once per window**, independent of any chat session. A launch-time draft (no
+session yet) therefore still refreshes the Sessions tab's *Vix-initiated* group
+live, and windows aren't notified once per open session.
+
+The daemon keeps a registry of live instance connections (each drained by a
+single serialized writer goroutine) and fans these events out via
+`Server.BroadcastToInstances` (`internal/daemon/server.go`); session-scoped
+events (`job_run`/`job_done` status lines) still travel per-session via
+`BroadcastEvent`. The TUI reads the channel from launch
+(`startInstanceEventLoop`, `internal/ui/model.go`) and routes events into the
+existing `fetchVixSessions` / `fetchJobsAndHooks` / quit handlers. The web-UI
+(mission-control) path is separate — it uses `notifySubscribers`, untouched.
+
 ## Development Commands
 
 ```bash

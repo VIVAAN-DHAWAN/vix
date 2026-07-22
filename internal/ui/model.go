@@ -135,6 +135,37 @@ func startSessionEventLoop(client *daemon.SessionClient) tea.Cmd {
 	}
 }
 
+// instanceEventMsg carries a process-level event delivered over the window's
+// instance control channel (sessions_changed, jobs_changed, quit). Unlike
+// sessionEventMsg it is not tied to any chat session — it is delivered once per
+// window, even to a launch-time draft with no session yet.
+type instanceEventMsg struct {
+	event protocol.SessionEvent
+}
+
+// startInstanceEventLoop launches a goroutine that reads process-level events
+// from the window's instance control channel and injects them into the Bubble
+// Tea loop. Mirrors startSessionEventLoop but is session-independent: it runs
+// from launch and delivers sessions_changed/jobs_changed/quit exactly once per
+// window. Returns nil (no message) when there is no control channel.
+func startInstanceEventLoop(ic *daemon.InstanceClient) tea.Cmd {
+	return func() tea.Msg {
+		if teaProgram == nil || ic == nil {
+			return nil
+		}
+		go func() {
+			for {
+				event, err := ic.ReadEvent()
+				if err != nil {
+					return
+				}
+				teaProgram.Send(instanceEventMsg{event: event})
+			}
+		}()
+		return nil
+	}
+}
+
 // draftConnectedMsg is sent when a draft session's deferred connection (opened
 // on its first message) succeeds. The handler wires the client, marks the
 // session live, and flushes the queued first message.
@@ -469,6 +500,25 @@ type Model struct {
 	// restoreSessions holds persisted open sessions (beyond the first, which is
 	// the initial client) to reopen on Init.
 	restoreSessions []protocol.SessionSummary
+
+	// recentDirs holds the working directories used by open user sessions,
+	// ranked by session count (then recency). Fetched from the daemon on Init
+	// and refreshed on event.sessions_changed. Powers the welcome screen's
+	// recent-directories list and the default cwd for new draft sessions.
+	recentDirs []protocol.DirUsage
+
+	// instanceClient is the window's long-lived control channel to the daemon.
+	// Its read loop (startInstanceEventLoop) delivers process-level events
+	// (sessions_changed, jobs_changed, quit) once per window, independent of any
+	// chat session — so a launch-time draft still refreshes live. nil in test
+	// mode and when instance registration failed.
+	instanceClient *daemon.InstanceClient
+}
+
+// SetInstanceClient records the window's daemon control channel. Called once by
+// main before the program starts; Init launches its read loop.
+func (m *Model) SetInstanceClient(ic *daemon.InstanceClient) {
+	m.instanceClient = ic
 }
 
 // SetRestoreSessions records the persisted open sessions the TUI should reopen
@@ -533,6 +583,12 @@ func (m Model) Init() tea.Cmd {
 	}
 	var cmds []tea.Cmd
 	cmds = append(cmds, func() tea.Msg { return startCursorBlinkMsg{} })
+	// Start the window's control-channel read loop unconditionally, before and
+	// independent of any session, so process-level events (sessions_changed,
+	// jobs_changed, quit) are received even while the window is still a draft.
+	if m.instanceClient != nil {
+		cmds = append(cmds, startInstanceEventLoop(m.instanceClient))
+	}
 	if sess := m.currentSession(); sess != nil && sess.client != nil {
 		cmds = append(cmds, startSessionEventLoop(sess.client))
 		// A restored initial session shows the "Restoring conversation…"
@@ -728,7 +784,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					selSess := m.sessions[idx]
 					m.markSessionRead(selSess)
 					selSess.input.SetWidth(m.width - 4)
-					if selSess.client == nil && !selSess.reconnecting {
+					if selSess.client == nil && !selSess.reconnecting && selSess.daemonSessionID != "" {
 						selSess.reconnecting = true
 						cmds = append(cmds, attemptReconnect(m.socketPath, pickCWD(selSess.workDir, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, selSess.daemonSessionID))
 					}
@@ -1281,6 +1337,31 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case instanceEventMsg:
+		// Process-level events delivered once per window over the control
+		// channel, independent of any chat session (so a draft still refreshes).
+		switch msg.event.Type {
+		case "event.sessions_changed":
+			// The persisted sessions list changed outside this window (a job run
+			// was persisted or swept): refresh the Vix-initiated group and the
+			// set of open working directories.
+			cmds = append(cmds, fetchVixSessions(m.socketPath, m.cwd, m.cfg.ConfigDir, m.authToken))
+			cmds = append(cmds, fetchRecentDirs(m.socketPath, m.cwd, m.cfg.ConfigDir, m.authToken))
+		case "event.jobs_changed":
+			// A job/hook started, finished, was enabled/disabled, or the spec
+			// directory was reloaded: refresh the Jobs & Triggers tab when it is
+			// the active view so the running indicator and last-run stay current.
+			if m.activeTab == TabKindJobs {
+				cmds = append(cmds, fetchJobsAndHooks(m.socketPath, m.authToken))
+			}
+		case "event.quit":
+			// Daemon-driven quit-all (post-update restart). Intentionally no
+			// closeSessionsForQuit: the bare disconnect leaves every record in
+			// open/ so all sessions restore on relaunch.
+			cmds = append(cmds, tea.Quit)
+		}
+		return m, tea.Batch(cmds...)
+
 	case loginStatusMsg:
 		// Ignore status updates for a provider the user has navigated away from,
 		// so a pending OAuth callback can't repaint a stale message.
@@ -1352,6 +1433,12 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sess.client = msg.client
 		sess.daemonSessionID = msg.client.SessionID()
 		sess.reconnecting = false
+		// A (re)connected session is live, never a draft. Fork/duplicate creates
+		// the new session as phaseDraft and connects it through this path; without
+		// promoting it here, its first message would fall into the draft-commit
+		// branch and connectDraft a fresh, empty daemon session — discarding the
+		// fork-seeded history.
+		sess.phase = phaseLive
 		if len(sess.chatMessages) > 0 {
 			sess.chatMessages = append(sess.chatMessages, renderSystemSuccessMessage("Reconnected to daemon."))
 		}
@@ -2609,19 +2696,6 @@ func (m *Model) applyEventToSession(idx int, event protocol.SessionEvent) []tea.
 		m.updateURL = ua.URL
 		m.updateMethod = ua.Method
 
-	case "event.sessions_changed":
-		// The persisted sessions list changed outside this client (a job run
-		// was persisted or swept): refresh the Vix-initiated group.
-		cmds = append(cmds, fetchVixSessions(m.socketPath, m.cwd, m.cfg.ConfigDir, m.authToken))
-
-	case "event.jobs_changed":
-		// A job/hook started, finished, was enabled/disabled, or the spec
-		// directory was reloaded: refresh the Jobs & Triggers tab when it is the
-		// active view so the running indicator and last-run stay current.
-		if m.activeTab == TabKindJobs {
-			cmds = append(cmds, fetchJobsAndHooks(m.socketPath, m.authToken))
-		}
-
 	case "event.job_done":
 		data := marshalData(event.Data)
 		var jd protocol.EventJobDone
@@ -2958,12 +3032,6 @@ func (m *Model) applyEventToSession(idx int, event protocol.SessionEvent) []tea.
 		var errEvent protocol.EventError
 		json.Unmarshal(data, &errEvent)
 		sess.chatMessages = append(sess.chatMessages, renderErrorMessage(fmt.Errorf("%s", errEvent.Message)))
-
-	case "event.quit":
-		// Daemon-driven quit-all (post-update restart). Intentionally no
-		// closeSessionsForQuit: the bare disconnect leaves every record in
-		// open/ so all sessions restore on relaunch.
-		cmds = append(cmds, tea.Quit)
 	}
 
 	return cmds
@@ -4136,7 +4204,7 @@ func (m *Model) stepWorkspaceSession(dir int) ([]tea.Cmd, bool) {
 	selSess := m.sessions[m.selectedSession]
 	m.markSessionRead(selSess)
 	selSess.input.SetWidth(m.width - 4)
-	if selSess.client == nil && !selSess.reconnecting {
+	if selSess.client == nil && !selSess.reconnecting && selSess.daemonSessionID != "" {
 		selSess.reconnecting = true
 		cmds = append(cmds, attemptReconnect(m.socketPath, pickCWD(selSess.workDir, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, false, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, selSess.daemonSessionID))
 	}

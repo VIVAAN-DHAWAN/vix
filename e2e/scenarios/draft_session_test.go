@@ -28,8 +28,8 @@ func TestDraftSessionStartsOnFirstMessage(t *testing.T) {
 	if !h.UI.Contains("working directory") {
 		t.Fatalf("welcome should show the working directory; screen:\n%s", h.UI.Snapshot())
 	}
-	if !h.UI.Contains("Ctrl+O") {
-		t.Fatalf("draft welcome should advertise Ctrl+O; screen:\n%s", h.UI.Snapshot())
+	if !h.UI.Contains("Ctrl+o") {
+		t.Fatalf("draft welcome should advertise Ctrl+o; screen:\n%s", h.UI.Snapshot())
 	}
 	if !h.UI.Contains("Draft") {
 		t.Fatalf("status bar should show the Draft state; screen:\n%s", h.UI.Snapshot())
@@ -53,9 +53,12 @@ func TestDraftSessionStartsOnFirstMessage(t *testing.T) {
 	if got := string(h.FS.Read("draft.txt")); got != "committed" {
 		t.Fatalf("draft.txt on disk = %q, want %q", got, "committed")
 	}
-	// Once committed the session is live (connected), not a draft.
-	if !h.UI.Contains("Connected") {
-		t.Fatalf("session should be Connected after the first message; screen:\n%s", h.UI.Snapshot())
+	// Once committed the session is live: the Sessions tab lists it with a real
+	// session id instead of the "connecting…" placeholder shown for drafts.
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	if h.UI.Contains("connecting…") {
+		t.Fatalf("session still shows as connecting after the first message; screen:\n%s", h.UI.Snapshot())
 	}
 }
 

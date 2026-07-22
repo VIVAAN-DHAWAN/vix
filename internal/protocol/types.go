@@ -472,15 +472,16 @@ type EventJobDone struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
-// EventSessionsChanged tells attached clients the persisted sessions list
-// changed outside their own connection (a job run was persisted or swept), so
-// they should re-fetch session.list.
+// EventSessionsChanged tells every attached instance (over the control channel,
+// once per window) the persisted sessions list changed outside their own
+// connection (a job run was persisted or swept), so they should re-fetch
+// session.list.
 type EventSessionsChanged struct{}
 
-// EventJobsChanged tells attached clients the scheduled jobs or lifecycle hooks
-// changed — a run started or finished, a spec was enabled/disabled, or the spec
-// directory was hot-reloaded — so the Jobs & Triggers tab should re-fetch
-// job.list and hook.list.
+// EventJobsChanged tells every attached instance (over the control channel, once
+// per window) the scheduled jobs or lifecycle hooks changed — a run started or
+// finished, a spec was enabled/disabled, or the spec directory was hot-reloaded
+// — so the Jobs & Triggers tab should re-fetch job.list and hook.list.
 type EventJobsChanged struct{}
 
 // JobSummary is the lightweight projection of a scheduled job returned by the

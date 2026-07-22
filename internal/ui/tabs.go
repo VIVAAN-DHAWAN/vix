@@ -34,9 +34,14 @@ func formatRunningTime(d time.Duration) string {
 		s := int(d.Seconds()) % 60
 		return fmt.Sprintf("%dm %ds", m, s)
 	}
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	return fmt.Sprintf("%dh %dm", h, m)
+	if d < 24*time.Hour {
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	days := int(d.Hours()) / 24
+	h := int(d.Hours()) % 24
+	return fmt.Sprintf("%dd %dh", days, h)
 }
 
 // waitingBadge is the "Waiting for input" styled tag shown on sessions that need user attention.

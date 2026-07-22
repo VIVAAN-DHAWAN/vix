@@ -404,21 +404,18 @@ func TestSessionsDuplicateOfDuplicate(t *testing.T) {
 		t.Fatalf("first duplicate never persisted; got %d records in %s", len(readSessionRecords(openDir)), openDir)
 	}
 
-	// Second duplicate: duplicate B (still highlighted) into C. B may still be
-	// attaching, and a `d` before its client is ready is a harmless no-op
-	// warning. Press, then wait for the third record; retry only after that wait
-	// times out — re-checking the count before each press so we never
-	// over-duplicate into a fourth session.
-	duplicated := false
-	for attempt := 0; attempt < 10 && !duplicated; attempt++ {
-		if len(readSessionRecords(openDir)) >= 3 {
-			duplicated = true
-			break
-		}
-		h.UI.Type("d")
-		duplicated = pollUntil(2*time.Second, func() bool { return len(readSessionRecords(openDir)) >= 3 })
-	}
-	if !duplicated {
+	// Second duplicate: duplicate B into C. Rather than blind-press-and-retry
+	// (which can over-duplicate into a fourth session when a `d` lands before the
+	// previous duplicate's record is observed), first prove B's client is live —
+	// a connected session appends "Reconnected to daemon." to its transcript —
+	// then duplicate it exactly once. Opening B, then returning to the list,
+	// re-syncs the cursor onto the active session (B) via syncSessionsSelected.
+	h.UI.Enter() // open the highlighted B
+	h.UI.WaitFor("Reconnected to daemon.")
+	h.UI.Key("f1") // back to the list; the cursor re-syncs onto B
+	h.UI.WaitFor("User-initiated")
+	h.UI.Type("d")
+	if !pollUntil(10*time.Second, func() bool { return len(readSessionRecords(openDir)) >= 3 }) {
 		t.Fatalf("duplicate-of-a-duplicate never persisted; got %d records in %s", len(readSessionRecords(openDir)), openDir)
 	}
 	h.UI.Shot("duplicate-of-duplicate")
@@ -440,6 +437,10 @@ func TestSessionsDuplicateOfDuplicate(t *testing.T) {
 	// symptom the user hit ("starting from an empty discussion").
 	h.UI.Enter()
 	h.UI.WaitFor("ok-to-fork")
+	// Wait until the grandchild's own fork-connection is live before the
+	// follow-up, so the message goes through the seeded client rather than
+	// committing a fresh (empty) draft session.
+	h.UI.WaitFor("Reconnected to daemon.")
 
 	h.Mock.Enqueue(harness.Text("second-fork-reply"))
 	h.UI.Type("continue please")
@@ -777,4 +778,48 @@ func TestSessionsVixInitiatedInlineWorkflow(t *testing.T) {
 		t.Fatalf("Vix-initiated inline-workflow run not listed; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("vix-initiated-inline")
+}
+
+// TestSessionsListRefreshesInDraft proves the instance control channel end to
+// end: a launch-time draft window (no session ever started) is watching the
+// Sessions tab when a job is fired out of band via `vix job run`. The run's
+// persisted Vix-initiated record must appear live — pushed over the window's
+// control connection (event.sessions_changed → fetchVixSessions), never by
+// re-entering the tab or sending a first message. Reuses onDemandJobSpec (a
+// future-dated job the scheduler never fires on its own; see run_trigger_test.go).
+func TestSessionsListRefreshesInDraft(t *testing.T) {
+	h := harness.Start(t, sessionsMeta("a draft window's Sessions tab refreshes live when a job is fired via `vix job run`"),
+		harness.WithEnv("VIX_DISABLE_JOBS", "0"),
+		harness.WithHomeFile(".vix/jobs/e2e-ondemand/job.json", onDemandJobSpec),
+	)
+
+	// Stay a draft (never send a first message). Open the Sessions tab; the
+	// initial fetch runs while no Vix-initiated record exists yet.
+	h.UI.WaitStable(500 * time.Millisecond)
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	h.UI.WaitStable(500 * time.Millisecond)
+	if h.UI.Contains("E2E On-Demand") {
+		t.Fatalf("Vix-initiated run present before the job was fired; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("draft-before-run")
+
+	// Fire the job out of band. Its single turn calls the mock once and persists
+	// a Vix-initiated session, which broadcasts sessions_changed to the window's
+	// control channel.
+	h.Mock.Enqueue(harness.Text("hello on demand"))
+	if out, err := h.RunCLI("job", "run", "e2e-ondemand"); err != nil {
+		t.Fatalf("vix job run failed: %v\n%s", err, out)
+	}
+
+	// The row must appear live while the window is still a draft on the Sessions
+	// tab — no tab re-entry, no first message. This only happens if the control
+	// channel delivered event.sessions_changed.
+	if !pollUntil(20*time.Second, func() bool {
+		s := h.UI.Snapshot()
+		return strings.Contains(s, "Vix-initiated") && strings.Contains(s, "E2E On-Demand")
+	}) {
+		t.Fatalf("draft window did not refresh the Vix-initiated group after `vix job run`; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("draft-refreshed-live")
 }

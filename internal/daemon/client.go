@@ -720,7 +720,8 @@ func (sc *SessionClient) sendCommand(cmd protocol.SessionCommand) error {
 // for the process lifetime; closing it (clean exit or process death) tells the
 // daemon this instance is gone.
 type InstanceClient struct {
-	conn net.Conn
+	conn    net.Conn
+	scanner *bufio.Scanner
 }
 
 // RegisterInstance dials the daemon and registers this process as an attached
@@ -745,7 +746,31 @@ func RegisterInstance(socketPath, authToken, mode string) (*InstanceClient, erro
 		conn.Close()
 		return nil, fmt.Errorf("register instance: %w", err)
 	}
-	return &InstanceClient{conn: conn}, nil
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 64*1024), protocol.MaxMessageSize)
+	return &InstanceClient{conn: conn, scanner: scanner}, nil
+}
+
+// ReadEvent blocks until the daemon pushes the next process-level event
+// (sessions_changed, jobs_changed, quit) on the control channel, decoding one
+// newline-delimited SessionEvent frame. It returns an error when the connection
+// closes, which the caller treats as the end of the control stream.
+func (ic *InstanceClient) ReadEvent() (protocol.SessionEvent, error) {
+	if ic == nil || ic.scanner == nil {
+		return protocol.SessionEvent{}, fmt.Errorf("not connected")
+	}
+	if !ic.scanner.Scan() {
+		err := ic.scanner.Err()
+		if err == nil {
+			err = fmt.Errorf("connection closed")
+		}
+		return protocol.SessionEvent{}, err
+	}
+	var event protocol.SessionEvent
+	if err := json.Unmarshal(ic.scanner.Bytes(), &event); err != nil {
+		return protocol.SessionEvent{}, fmt.Errorf("parse event: %w", err)
+	}
+	return event, nil
 }
 
 // Close ends the instance registration, signalling the daemon that this process

@@ -202,3 +202,175 @@ func TestSessionVersionGate(t *testing.T) {
 		t.Fatalf("dev client: got event %q, want event.error", ev.Type)
 	}
 }
+
+// readInstanceEvent reads one event from ic with a deadline, failing the test on
+// timeout or error.
+func readInstanceEvent(t *testing.T, ic *InstanceClient) protocol.SessionEvent {
+	t.Helper()
+	type res struct {
+		ev  protocol.SessionEvent
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		ev, err := ic.ReadEvent()
+		ch <- res{ev, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatalf("ReadEvent: %v", r.err)
+		}
+		return r.ev
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for instance event")
+		return protocol.SessionEvent{}
+	}
+}
+
+// expectNoInstanceEvent asserts ic delivers no event within a short window.
+func expectNoInstanceEvent(t *testing.T, ic *InstanceClient) {
+	t.Helper()
+	ch := make(chan protocol.SessionEvent, 1)
+	go func() {
+		ev, err := ic.ReadEvent()
+		if err == nil {
+			ch <- ev
+		}
+	}()
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected instance event %q", ev.Type)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// TestBroadcastToInstancesNoSession: a process-level broadcast reaches a
+// registered instance even when no chat session exists (the Group-2 fix).
+func TestBroadcastToInstancesNoSession(t *testing.T) {
+	srv := newInstanceTestServer(t)
+	_, cancel := serve(t, srv)
+	defer cancel()
+
+	ic, err := RegisterInstance(srv.sockPath, "", "tui")
+	if err != nil {
+		t.Fatalf("RegisterInstance: %v", err)
+	}
+	defer ic.Close()
+	waitInstanceCount(t, srv, 1)
+
+	srv.broadcastSessionsChanged()
+
+	ev := readInstanceEvent(t, ic)
+	if ev.Type != "event.sessions_changed" {
+		t.Fatalf("got event %q, want event.sessions_changed", ev.Type)
+	}
+}
+
+// TestBroadcastToInstancesEachOnce: two registered instances each receive a
+// single broadcast exactly once (removing the N-sessions → N-notifications
+// duplication).
+func TestBroadcastToInstancesEachOnce(t *testing.T) {
+	srv := newInstanceTestServer(t)
+	_, cancel := serve(t, srv)
+	defer cancel()
+
+	ic1, err := RegisterInstance(srv.sockPath, "", "tui")
+	if err != nil {
+		t.Fatalf("RegisterInstance 1: %v", err)
+	}
+	defer ic1.Close()
+	ic2, err := RegisterInstance(srv.sockPath, "", "tui")
+	if err != nil {
+		t.Fatalf("RegisterInstance 2: %v", err)
+	}
+	defer ic2.Close()
+	waitInstanceCount(t, srv, 2)
+
+	srv.broadcastJobsChanged()
+
+	for i, ic := range []*InstanceClient{ic1, ic2} {
+		ev := readInstanceEvent(t, ic)
+		if ev.Type != "event.jobs_changed" {
+			t.Fatalf("instance %d: got %q, want event.jobs_changed", i+1, ev.Type)
+		}
+		// No second copy of the same broadcast.
+		expectNoInstanceEvent(t, ic)
+	}
+}
+
+// TestBroadcastToInstancesNotOnSessions: a session-carrying window is not
+// double-notified — process-level broadcasts go to the instance channel only,
+// never onto a live session's event channel.
+func TestBroadcastToInstancesNotOnSessions(t *testing.T) {
+	srv := newInstanceTestServer(t)
+
+	// A live session with a buffered event channel: if the broadcast leaked onto
+	// the session fan-out, this channel would receive it.
+	sess := &Session{eventChan: make(chan protocol.SessionEvent, 8)}
+	srv.sessionMu.Lock()
+	srv.sessions["s1"] = sess
+	srv.sessionMu.Unlock()
+
+	srv.broadcastSessionsChanged()
+
+	select {
+	case ev := <-sess.eventChan:
+		t.Fatalf("session was double-notified with %q", ev.Type)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestBroadcastToInstancesConcurrent: concurrent broadcasts from many goroutines
+// don't garble frames — each instance sees only well-formed, expected events
+// (the per-connection serialized writer holds).
+func TestBroadcastToInstancesConcurrent(t *testing.T) {
+	srv := newInstanceTestServer(t)
+	_, cancel := serve(t, srv)
+	defer cancel()
+
+	ic, err := RegisterInstance(srv.sockPath, "", "tui")
+	if err != nil {
+		t.Fatalf("RegisterInstance: %v", err)
+	}
+	defer ic.Close()
+	waitInstanceCount(t, srv, 1)
+
+	const n = 50
+	go func() {
+		for i := 0; i < n; i++ {
+			go srv.BroadcastToInstances(protocol.SessionEvent{Type: "event.sessions_changed"})
+		}
+	}()
+
+	// Read whatever arrives for a short window; every decoded frame must be a
+	// valid, expected event (a garbled write would fail to decode → ReadEvent
+	// error).
+	deadline := time.Now().Add(1 * time.Second)
+	got := 0
+	for time.Now().Before(deadline) {
+		type res struct {
+			ev  protocol.SessionEvent
+			err error
+		}
+		ch := make(chan res, 1)
+		go func() {
+			ev, err := ic.ReadEvent()
+			ch <- res{ev, err}
+		}()
+		select {
+		case r := <-ch:
+			if r.err != nil {
+				t.Fatalf("ReadEvent after %d frames: %v", got, r.err)
+			}
+			if r.ev.Type != "event.sessions_changed" {
+				t.Fatalf("garbled frame: got %q", r.ev.Type)
+			}
+			got++
+		case <-time.After(150 * time.Millisecond):
+			// No more frames buffered; the non-blocking send may have dropped
+			// some, which is acceptable (best-effort).
+			return
+		}
+	}
+}

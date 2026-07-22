@@ -38,3 +38,15 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(code)
 }
+
+// startSession commits the launch-time draft by sending a first message, which
+// starts the daemon session and fires the SessionStart-class hooks (e.g. the
+// shipped feedback counter). Under the draft-session model no session exists
+// until this first message, so hook scenarios that assert on SessionStart must
+// call it. It enqueues a unique reply and waits for it so the turn has run.
+func startSession(h *harness.Harness) {
+	h.Mock.Enqueue(harness.Text("first-turn-ack"))
+	h.UI.Type("start the session")
+	h.UI.Enter()
+	h.UI.WaitFor("first-turn-ack")
+}
