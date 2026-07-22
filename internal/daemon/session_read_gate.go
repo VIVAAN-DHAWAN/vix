@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"fmt"
+
+	"github.com/get-vix/vix/internal/daemon/llm"
 )
 
 // readGatedEditTools always require the target file to have been read first.
@@ -84,4 +86,50 @@ func (s *Session) maybeMarkRead(name string, params map[string]any, isError bool
 		return
 	}
 	s.markFileRead(resolved)
+}
+
+// rebuildReadFilesFromHistory reconstructs the read-gate set from a restored
+// conversation history. Session persistence carries s.messages but not the
+// in-memory readFiles map, so a resumed session would otherwise treat every
+// previously-read file as unread and block edits on it. We replay the history
+// applying the same rules as the live path (maybeMarkRead): a read/edit/write
+// tool_use marks its target path as read only when its matching tool_result is
+// non-error. A tool_use with no matching result (e.g. an interrupted final
+// turn) is treated conservatively and left unmarked.
+func (s *Session) rebuildReadFilesFromHistory(msgs []llm.MessageParam) {
+	// Collect tool_result outcomes by tool_use ID first, since a tool_use and
+	// its result live in separate (adjacent) messages.
+	resultErr := make(map[string]bool)
+	haveResult := make(map[string]bool)
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type == llm.BlockToolResult && b.ToolUseID != "" {
+				haveResult[b.ToolUseID] = true
+				if b.IsError {
+					resultErr[b.ToolUseID] = true
+				}
+			}
+		}
+	}
+
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type != llm.BlockToolUse || !readTrackingTools[b.Name] {
+				continue
+			}
+			// Conservative: require a non-error result for this call.
+			if !haveResult[b.ID] || resultErr[b.ID] {
+				continue
+			}
+			pathStr, _ := b.Input["path"].(string)
+			if pathStr == "" {
+				continue
+			}
+			resolved, err := resolvePathInAllowed(s.cwd, s.toolAllowedDirs(), pathStr)
+			if err != nil {
+				continue
+			}
+			s.markFileRead(resolved)
+		}
+	}
 }

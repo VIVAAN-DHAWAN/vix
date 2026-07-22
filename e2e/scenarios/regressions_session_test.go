@@ -52,3 +52,61 @@ func TestConversationSurvivesDaemonRestart(t *testing.T) {
 		t.Fatalf("user message not replayed after restart; screen:\n%s", h.UI.Snapshot())
 	}
 }
+
+// TestReadGateSurvivesDaemonRestart guards the read-gate rebuild: the
+// edit_file/edit_minified_file gate is backed by an in-memory "files read this
+// session" set that persistence does not carry. Before the fix, a file read in
+// one session but edited after a daemon restart was wrongly blocked with
+// "has not been read in this session yet", because the restored session started
+// with an empty read set. The daemon now rebuilds that set from the restored
+// message history, so an edit on a previously-read file proceeds.
+//
+// asserts: (1) the edit is NOT blocked (no gate error on the wire) and
+// (2) disk reflects the applied edit.
+func TestReadGateSurvivesDaemonRestart(t *testing.T) {
+	h := harness.Start(t, harness.Meta{
+		Category:    "session",
+		Subcategory: "session.persistence",
+		Description: "an edit on a file read before a daemon restart is not blocked by the read gate",
+		Wire:        harness.WireMessages,
+	})
+	mustSeed(t, h, "gate.txt", "hello world\n")
+	h.UI.WaitStable(400 * time.Millisecond)
+
+	// Turn 1 (before restart): the model reads the file. This marks it read in
+	// the session's in-memory set and the turn is persisted to disk.
+	h.Mock.Enqueue(
+		harness.ToolUse("read_file", `{"path":"gate.txt"}`),
+		harness.Text("Read gate.txt."),
+	)
+	h.UI.Type("read gate.txt")
+	h.UI.Enter()
+	h.UI.ResolveToolPrompts("Read gate.txt.")
+	h.UI.WaitStable(300 * time.Millisecond)
+	h.UI.Shot("before-restart")
+
+	// Restart the whole stack: the in-memory read set is lost and must be
+	// rebuilt from the restored history.
+	h.Daemon.Restart()
+	h.UI.WaitStable(700 * time.Millisecond)
+	h.UI.WaitFor("Read gate.txt.")
+	h.UI.Shot("after-restart")
+
+	// Turn 2 (after restart): edit the file that was only read pre-restart.
+	h.Mock.Enqueue(
+		harness.ToolUse("edit_file", `{"path":"gate.txt","old_string":"world","new_string":"there"}`),
+		harness.Text("Edited gate.txt."),
+	)
+	h.UI.Type("change world to there in gate.txt")
+	h.UI.Enter()
+	h.UI.ResolveToolPrompts("Edited gate.txt.")
+
+	// Wire: the gate must not have blocked the edit.
+	if anyToolResultContains(h, "has not been read in this session yet") {
+		t.Fatalf("edit was blocked by the read gate after restart; screen:\n%s", h.UI.Snapshot())
+	}
+	// Disk: the edit was applied.
+	if got := string(h.FS.Read("gate.txt")); got != "hello there\n" {
+		t.Fatalf("gate.txt = %q, want %q (edit did not apply)", got, "hello there\n")
+	}
+}

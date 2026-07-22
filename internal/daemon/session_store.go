@@ -467,6 +467,10 @@ func (s *Session) persist() {
 // mismatch in emitReplay.
 func (s *Session) seedFromRecord(rec *sessionRecord) {
 	s.messages = append([]llm.MessageParam(nil), rec.Messages...)
+	// Rebuild the read-gate set from history: persistence carries messages but
+	// not the in-memory readFiles map, so without this a resumed session would
+	// block edits on files the prior session had already read.
+	s.rebuildReadFilesFromHistory(s.messages)
 	// Rebuild the per-turn fork snapshots from the restored history so an
 	// attached/restored session can itself be duplicated or trimmed (both read
 	// turnSnapshots, which persistence doesn't carry).
