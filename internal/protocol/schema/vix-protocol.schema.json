@@ -164,6 +164,10 @@
       "properties": {},
       "type": "object"
     },
+    "EventMCPChanged": {
+      "properties": {},
+      "type": "object"
+    },
     "EventPlanComplete": {
       "properties": {
         "plan": {
@@ -849,6 +853,36 @@
       ],
       "type": "object"
     },
+    "MCPServerSummary": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tool_count": {
+          "type": "integer"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "name",
+        "status",
+        "tool_count",
+        "type"
+      ],
+      "type": "object"
+    },
     "Plan": {
       "properties": {
         "architecture": {
@@ -1499,6 +1533,11 @@
         "$ref": "#/$defs/EventJobsChanged"
       }
     },
+    "event.mcp_changed": {
+      "payload": {
+        "$ref": "#/$defs/EventMCPChanged"
+      }
+    },
     "event.plan_complete": {
       "payload": {
         "$ref": "#/$defs/EventPlanComplete"
@@ -1642,6 +1681,9 @@
     },
     "JobSummary": {
       "$ref": "#/$defs/JobSummary"
+    },
+    "MCPServerSummary": {
+      "$ref": "#/$defs/MCPServerSummary"
     },
     "SessionSummary": {
       "$ref": "#/$defs/SessionSummary"

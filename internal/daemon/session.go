@@ -854,6 +854,10 @@ func (s *Session) initBrain() {
 		// Filter out URL servers whose addresses appear in the session deny list.
 		allowedServers := make([]mcp.ServerConfig, 0, len(s.projectConfig.MCPServers))
 		for _, srv := range s.projectConfig.MCPServers {
+			if !srv.IsEnabled() {
+				log.Printf("[session] MCP server %q: disabled, skipping", srv.Name)
+				continue
+			}
 			if srv.URL != "" {
 				if denied, _ := isURLDenied(srv.URL, s.denyURLsSnapshot()); denied {
 					log.Printf("[session] MCP server %q: URL in deny_list, skipping", srv.Name)

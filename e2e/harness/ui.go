@@ -143,10 +143,10 @@ func (u *UI) SendRaw(b []byte) { _ = u.tmux("send-keys", "-t", u.session, "-l", 
 var tmuxKeys = map[string]string{
 	"esc": "Escape", "tab": "Tab", "enter": "Enter", "backspace": "BSpace",
 	"space": "Space",
-	"up": "Up", "down": "Down", "right": "Right", "left": "Left",
+	"up":    "Up", "down": "Down", "right": "Right", "left": "Left",
 	"home": "Home", "end": "End", "pgup": "PageUp", "pgdn": "PageDown",
 	"delete": "DC", "shift-tab": "BTab",
-	// Function keys F1–F12 (tmux uses the same names). F1–F4 switch tabs.
+	// Function keys F1–F12 (tmux uses the same names). F1–F6 switch tabs.
 	"f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f5": "F5", "f6": "F6",
 	"f7": "F7", "f8": "F8", "f9": "F9", "f10": "F10", "f11": "F11", "f12": "F12",
 }

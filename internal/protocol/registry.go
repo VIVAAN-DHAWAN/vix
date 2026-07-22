@@ -46,6 +46,7 @@ var EventTypes = map[string]any{
 	"event.job_done":            EventJobDone{},
 	"event.sessions_changed":    EventSessionsChanged{},
 	"event.jobs_changed":        EventJobsChanged{},
+	"event.mcp_changed":         EventMCPChanged{},
 	"event.workflow_start":      EventWorkflowStart{},
 	"event.workflow_step_start": EventWorkflowStepStart{},
 	"event.workflow_step_done":  EventWorkflowStepDone{},
@@ -86,8 +87,9 @@ var CommandTypes = map[string]any{
 // name — but they are part of the client-facing contract, so they are generated
 // into the schema + Swift models and drift-gated alongside the wire types.
 var RPCTypes = map[string]any{
-	"SessionSummary": SessionSummary{},
-	"DirUsage":       DirUsage{},
-	"JobSummary":     JobSummary{},
-	"HookSummary":    HookSummary{},
+	"SessionSummary":   SessionSummary{},
+	"DirUsage":         DirUsage{},
+	"JobSummary":       JobSummary{},
+	"HookSummary":      HookSummary{},
+	"MCPServerSummary": MCPServerSummary{},
 }

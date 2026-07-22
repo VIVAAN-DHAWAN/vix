@@ -240,4 +240,25 @@ func RegisterBuiltinHandlers(s *Server) {
 		}
 		return map[string]any{"status": "ok"}, nil
 	})
+
+	// mcp.list returns the configured MCP servers (home-only) with their status,
+	// type, and tool count, powering the TUI's MCP tab. Enabled servers are
+	// probed on demand.
+	s.RegisterHandler("mcp.list", func(data map[string]any) (map[string]any, error) {
+		return map[string]any{"status": "ok", "servers": s.MCPServerSummaries()}, nil
+	})
+
+	// mcp.set_enabled toggles an MCP server's `enabled` field (surgical in-place
+	// edit of the home settings.json). Backs the Space toggle in the MCP tab.
+	s.RegisterHandler("mcp.set_enabled", func(data map[string]any) (map[string]any, error) {
+		name, _ := data["name"].(string)
+		if name == "" {
+			return map[string]any{"status": "error", "message": "missing 'name'"}, nil
+		}
+		enabled, _ := data["enabled"].(bool)
+		if err := s.SetMCPEnabled(name, enabled); err != nil {
+			return map[string]any{"status": "error", "message": err.Error()}, nil
+		}
+		return map[string]any{"status": "ok"}, nil
+	})
 }

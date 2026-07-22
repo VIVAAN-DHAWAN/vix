@@ -32,6 +32,79 @@ type serverMeta struct {
 	requireConfirmation bool
 }
 
+// normalizedType returns the canonical transport label ("stdio" or "url") for a
+// server config, used in status reporting and the MCP tab.
+func normalizedType(cfg ServerConfig) string {
+	switch strings.ToLower(cfg.Type) {
+	case "url", "http", "sse":
+		return "url"
+	default:
+		return "stdio"
+	}
+}
+
+// connectClient dials a single MCP server, dispatching on its transport, and
+// runs the initialize + tools/list handshake. Returns a validation error for
+// misconfigured entries (missing url/command) without attempting a connection.
+func connectClient(ctx context.Context, cfg ServerConfig) (client, error) {
+	switch strings.ToLower(cfg.Type) {
+	case "url", "http", "sse":
+		if cfg.URL == "" {
+			return nil, fmt.Errorf("type=%q requires a 'url' field", cfg.Type)
+		}
+		return newHTTPClient(cfg.Name, cfg.URL, cfg.Headers)
+	default: // "stdio" or empty → stdio
+		if cfg.Command == "" {
+			return nil, fmt.Errorf("stdio transport requires a 'command' field")
+		}
+		return newStdioClient(ctx, cfg.Name, cfg.Command, cfg.Args, cfg.Env)
+	}
+}
+
+// allowedToolCount returns how many of c's tools survive cfg's AllowedTools
+// filter (all of them when AllowedTools is empty).
+func allowedToolCount(cfg ServerConfig, c client) int {
+	if len(cfg.AllowedTools) == 0 {
+		return len(c.ListTools())
+	}
+	allow := make(map[string]bool, len(cfg.AllowedTools))
+	for _, t := range cfg.AllowedTools {
+		allow[t] = true
+	}
+	n := 0
+	for _, tool := range c.ListTools() {
+		if allow[tool.Name] {
+			n++
+		}
+	}
+	return n
+}
+
+// ProbeServers connects to each configured server, records whether it came up
+// and how many tools it exposes, then tears the connection down. It is used by
+// the MCP tab to report status without an active chat session. Servers with an
+// empty name are skipped. The probe respects ctx for cancellation/timeout.
+func ProbeServers(ctx context.Context, configs []ServerConfig) []ServerStatus {
+	out := make([]ServerStatus, 0, len(configs))
+	for _, cfg := range configs {
+		if cfg.Name == "" {
+			continue
+		}
+		st := ServerStatus{Name: cfg.Name, Type: normalizedType(cfg)}
+		c, err := connectClient(ctx, cfg)
+		if err != nil {
+			st.Error = err.Error()
+			out = append(out, st)
+			continue
+		}
+		st.Connected = true
+		st.ToolCount = allowedToolCount(cfg, c)
+		c.Close()
+		out = append(out, st)
+	}
+	return out
+}
+
 // NewPool connects to all configured MCP servers, runs the initialize+tools/list
 // handshake for each, and returns a ready pool.
 //
@@ -54,20 +127,7 @@ func NewPool(ctx context.Context, configs []ServerConfig) *Pool {
 		var c client
 		var err error
 
-		switch strings.ToLower(cfg.Type) {
-		case "url", "http", "sse":
-			if cfg.URL == "" {
-				log.Printf("[mcp] server %q: type=%q requires a 'url' field, skipping", cfg.Name, cfg.Type)
-				continue
-			}
-			c, err = newHTTPClient(cfg.Name, cfg.URL, cfg.Headers)
-		default: // "stdio" or empty → stdio
-			if cfg.Command == "" {
-				log.Printf("[mcp] server %q: stdio transport requires a 'command' field, skipping", cfg.Name)
-				continue
-			}
-			c, err = newStdioClient(ctx, cfg.Name, cfg.Command, cfg.Args, cfg.Env)
-		}
+		c, err = connectClient(ctx, cfg)
 
 		if err != nil {
 			log.Printf("[mcp] server %q: failed to connect: %v (skipping)", cfg.Name, err)

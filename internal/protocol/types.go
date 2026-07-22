@@ -519,6 +519,24 @@ type EventSessionsChanged struct{}
 // — so the Jobs & Triggers tab should re-fetch job.list and hook.list.
 type EventJobsChanged struct{}
 
+// EventMCPChanged tells every attached instance (over the control channel, once
+// per window) an MCP server was enabled or disabled, so the MCP tab should
+// re-fetch mcp.list.
+type EventMCPChanged struct{}
+
+// MCPServerSummary is the lightweight projection of a configured MCP server
+// returned by the mcp.list RPC, carrying just enough to populate the MCP tab.
+type MCPServerSummary struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"` // "stdio" or "url"
+	Enabled bool   `json:"enabled"`
+	// Status is "connected", "error", or "disabled". ToolCount and Error are
+	// meaningful only for enabled servers that were probed.
+	Status    string `json:"status"`
+	ToolCount int    `json:"tool_count"`
+	Error     string `json:"error,omitempty"`
+}
+
 // JobSummary is the lightweight projection of a scheduled job returned by the
 // job.list RPC, carrying just enough to populate the Jobs & Triggers tab.
 type JobSummary struct {

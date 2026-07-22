@@ -169,6 +169,12 @@ public struct EventJobsChanged: Codable, Sendable, Equatable {
     }
 }
 
+public struct EventMCPChanged: Codable, Sendable, Equatable {
+
+    public init() {
+    }
+}
+
 public struct EventPlanComplete: Codable, Sendable, Equatable {
     public var plan: Plan
 
@@ -814,6 +820,33 @@ public struct JobSummary: Codable, Sendable, Equatable {
         case running = "running"
         case schedule = "schedule"
         case triggerType = "trigger_type"
+    }
+}
+
+public struct MCPServerSummary: Codable, Sendable, Equatable {
+    public var enabled: Bool
+    public var error: String?
+    public var name: String
+    public var status: String
+    public var toolCount: Int64
+    public var type: String
+
+    public init(enabled: Bool, error: String? = nil, name: String, status: String, toolCount: Int64, type: String) {
+        self.enabled = enabled
+        self.error = error
+        self.name = name
+        self.status = status
+        self.toolCount = toolCount
+        self.type = type
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case enabled = "enabled"
+        case error = "error"
+        case name = "name"
+        case status = "status"
+        case toolCount = "tool_count"
+        case type = "type"
     }
 }
 

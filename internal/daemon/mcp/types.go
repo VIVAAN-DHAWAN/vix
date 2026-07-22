@@ -24,6 +24,16 @@ type ServerConfig struct {
 	// RequireConfirmation makes every tool call from this server require explicit
 	// user approval via the standard confirm_request / session.confirm flow.
 	RequireConfirmation bool `json:"require_confirmation,omitempty"`
+	// Enabled gates whether the server is connected at all. A nil pointer (field
+	// omitted from settings.json) means enabled — the opt-out default — so
+	// existing configs keep working. The MCP tab's Space toggle writes this.
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the server should be connected. A missing `enabled`
+// field (nil pointer) defaults to true.
+func (c ServerConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // ToolDef is a tool discovered from an MCP server via tools/list.
@@ -37,6 +47,16 @@ type ToolDef struct {
 type CallResult struct {
 	Output  string
 	IsError bool
+}
+
+// ServerStatus is a per-server probe result: whether it connected, how many
+// tools it exposed (after the AllowedTools filter), and any connection error.
+type ServerStatus struct {
+	Name      string
+	Type      string // "stdio" or "url"
+	Connected bool
+	ToolCount int
+	Error     string
 }
 
 // client is the interface satisfied by both stdioClient and httpClient.

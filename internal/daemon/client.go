@@ -244,6 +244,42 @@ func (c *Client) SetJobEnabled(id string, enabled bool) error {
 	return nil
 }
 
+// ListMCPServers returns the configured MCP servers (with status, type, and tool
+// count) for the MCP tab. MCP config is home-only, so no cwd filter is applied.
+func (c *Client) ListMCPServers() ([]protocol.MCPServerSummary, error) {
+	resp, err := c.sendRequest(map[string]any{"command": "mcp.list"})
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(resp["servers"])
+	if err != nil {
+		return nil, err
+	}
+	var out []protocol.MCPServerSummary
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetMCPEnabled enables or disables an MCP server by name (Space toggle in the
+// MCP tab).
+func (c *Client) SetMCPEnabled(name string, enabled bool) error {
+	resp, err := c.sendRequest(map[string]any{
+		"command": "mcp.set_enabled",
+		"name":    name,
+		"enabled": enabled,
+	})
+	if err != nil {
+		return err
+	}
+	if resp["status"] != "ok" {
+		msg, _ := resp["message"].(string)
+		return fmt.Errorf("mcp.set_enabled failed: %s", msg)
+	}
+	return nil
+}
+
 // SetHookEnabled enables or disables a lifecycle hook by id (Space toggle in the
 // Jobs & Triggers tab).
 func (c *Client) SetHookEnabled(id string, enabled bool) error {

@@ -25,22 +25,22 @@ const settingsToolsSettings = `{
   }
 }`
 
-// TestSettingsTabShowsToolBackends verifies F5 opens Settings with a Tools
+// TestSettingsTabShowsToolBackends verifies F6 opens Settings with a Tools
 // section listing the effective grep and glob backends reported by the daemon.
 func TestSettingsTabShowsToolBackends(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "ui",
 		Subcategory: "ui.settings",
-		Description: "F5 Settings tab shows the resolved grep/glob search backends (event.tool_backends)",
+		Description: "F6 Settings tab shows the resolved grep/glob search backends (event.tool_backends)",
 		Wire:        harness.WireMessages,
 	},
 		harness.WithHomeFile(".vix/settings.json", settingsToolsSettings),
 	)
 
 	h.UI.WaitStable(500 * time.Millisecond)
-	h.UI.Key("f5")
+	h.UI.Key("f6")
 	// Wait on a Settings-body-only string; the tab bar always contains
-	// "Settings [F5]", so waiting on that would false-positive before the body
+	// "Settings [F6]", so waiting on that would false-positive before the body
 	// paints.
 	h.UI.WaitFor("Auto-compaction")
 	h.UI.WaitFor("Grep backend")
@@ -48,7 +48,7 @@ func TestSettingsTabShowsToolBackends(t *testing.T) {
 	h.UI.Shot("settings-tools")
 
 	for _, want := range []string{
-		"Settings [F5]", // tab bar
+		"Settings [F6]", // tab bar
 		"Tools",         // section header
 		"Grep backend",
 		"Glob backend",

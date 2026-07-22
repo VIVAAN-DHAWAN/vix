@@ -94,6 +94,33 @@ enforce an exact version match (hard gate, no `dev` exemption; two local `dev`
 builds match each other literally) — a mismatch
 means restart the daemon: `vix daemon stop && vix daemon start`.
 
+## MCP servers
+
+MCP (Model Context Protocol) servers are configured **home-only** under
+`mcp_servers` in `~/.vix/settings.json` (never project-local). Each entry is an
+`mcp.ServerConfig` (`internal/daemon/mcp/types.go`): `name`, `type`
+(`stdio`/`url`), transport fields (`command`/`args`/`env` or `url`/`headers`),
+`allowed_tools`, `require_confirmation`, and `enabled` (a `*bool`; omitted =
+enabled, the opt-out default). Their tools are exposed to the agent as
+`mcp__<server>__<tool>`.
+
+Connections are **per-session**: `mcp.Pool` (`internal/daemon/mcp/pool.go`) is
+built in `Session.initBrain`, skipping disabled servers and (for URL servers)
+deny-listed addresses.
+
+The TUI **MCP tab (F4)** lists every configured server with its transport type,
+status (`connected`/`error`/`disabled`), and tool count, and toggles a server's
+`enabled` field with Space. It is daemon-global (MCP is home-only). Data flow
+mirrors the Jobs tab: `mcp.list` / `mcp.set_enabled` handlers (`handlers.go`) →
+`Server.MCPServerSummaries` / `Server.SetMCPEnabled`
+(`internal/daemon/mcp_servers.go`) → `protocol.MCPServerSummary`. `mcp.list`
+probes enabled servers on demand (`mcp.ProbeServers`, bounded timeout);
+`mcp.set_enabled` surgically edits the home `settings.json` and broadcasts
+`event.mcp_changed` so open tabs refresh. TUI wiring lives in
+`internal/ui/mcp.go` (fetch/toggle/render) and `internal/ui/model.go`
+(`TabKindMcp`, F-keys). The F-key order is Sessions F1, Workspace F2, Models F3,
+**MCP F4**, Jobs & Triggers F5, Settings F6.
+
 ## Scheduled jobs
 
 vixd runs a scheduler over `~/.vix/jobs/<id>/job.json` (one subdirectory per job,

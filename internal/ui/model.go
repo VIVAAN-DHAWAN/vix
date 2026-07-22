@@ -524,6 +524,10 @@ type Model struct {
 	jobs         []protocol.JobSummary
 	hooks        []protocol.HookSummary
 	jobsSelected int
+	// MCP tab UI: the configured MCP servers, refreshed on entering the tab and
+	// on event.mcp_changed. mcpSelected is the row cursor.
+	mcpServers  []protocol.MCPServerSummary
+	mcpSelected int
 	// focusRestoredID, when set, names a session the user just opened from
 	// the Sessions tab (enter on a vix-initiated row): the matching
 	// sessionRestoredMsg focuses it instead of restoring in the background.
@@ -855,7 +859,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
-		// --- Tab switching (F1–F5), shared across all tabs/focus ---
+		// --- Tab switching (F1–F6), shared across all tabs/focus ---
 		switch msg.String() {
 		case "f1":
 			return m, m.switchTab(TabKindSessions)
@@ -864,8 +868,10 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f3":
 			return m, m.switchTab(TabKindModels)
 		case "f4":
-			return m, m.switchTab(TabKindJobs)
+			return m, m.switchTab(TabKindMcp)
 		case "f5":
+			return m, m.switchTab(TabKindJobs)
+		case "f6":
 			return m, m.switchTab(TabKindSettings)
 		}
 
@@ -993,6 +999,29 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// --- Models tab key handling ---
 		if m.activeTab == TabKindModels {
 			return m.handleModelsKey(msg)
+		}
+
+		// --- MCP tab key handling ---
+		if m.activeTab == TabKindMcp {
+			switch msg.String() {
+			case "up", "k":
+				if m.mcpSelected > 0 {
+					m.mcpSelected--
+				}
+				return m, nil
+			case "down", "j":
+				if m.mcpSelected < len(m.mcpServers)-1 {
+					m.mcpSelected++
+				}
+				return m, nil
+			case "space", " ":
+				if m.mcpSelected >= 0 && m.mcpSelected < len(m.mcpServers) {
+					srv := m.mcpServers[m.mcpSelected]
+					return m, setMCPEnabled(m.socketPath, m.authToken, srv.Name, !srv.Enabled)
+				}
+				return m, nil
+			}
+			return m, nil
 		}
 
 		// --- Jobs & Triggers tab key handling ---
@@ -1510,6 +1539,12 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activeTab == TabKindJobs {
 				cmds = append(cmds, fetchJobsAndHooks(m.socketPath, m.authToken))
 			}
+		case "event.mcp_changed":
+			// An MCP server was enabled/disabled: refresh the MCP tab when it is
+			// the active view.
+			if m.activeTab == TabKindMcp {
+				cmds = append(cmds, fetchMCPServers(m.socketPath, m.authToken))
+			}
 		case "event.quit":
 			// Daemon-driven quit-all (post-update restart). Intentionally no
 			// closeSessionsForQuit: the bare disconnect leaves every record in
@@ -1808,6 +1843,11 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampJobsSelected()
 		return m, m.maybeStartSessionsSpinner()
 
+	case mcpListMsg:
+		m.mcpServers = msg.servers
+		m.clampMCPSelected()
+		return m, nil
+
 	case tea.PasteMsg:
 		if m.activeTab == TabKindModels && m.modelsInKeyInput {
 			if m.modelsKeyInputBaseURL && m.modelsKeyInputFocus == 1 {
@@ -2013,6 +2053,9 @@ func (m *Model) switchTab(k TabKind) tea.Cmd {
 	case TabKindModels:
 		m.enterModelsTab()
 		return fetchLocalProviders(m.socketPath, m.authToken)
+	case TabKindMcp:
+		m.clampMCPSelected()
+		return fetchMCPServers(m.socketPath, m.authToken)
 	case TabKindJobs:
 		m.clampJobsSelected()
 		return tea.Batch(
@@ -2032,6 +2075,16 @@ func (m *Model) clampJobsSelected() {
 	}
 	if m.jobsSelected < 0 {
 		m.jobsSelected = 0
+	}
+}
+
+// clampMCPSelected keeps the MCP tab cursor within the current server count.
+func (m *Model) clampMCPSelected() {
+	if m.mcpSelected >= len(m.mcpServers) {
+		m.mcpSelected = len(m.mcpServers) - 1
+	}
+	if m.mcpSelected < 0 {
+		m.mcpSelected = 0
 	}
 }
 
@@ -3488,6 +3541,12 @@ func (m Model) View() tea.View {
 			m.modelsFilter, m.activeModelSpec(), m.modelsLoginStatus)
 		uv.NewStyledString(mv).Draw(canvas, image.Rect(0, y, m.width, y+modelsHeight))
 		y += modelsHeight
+
+	case TabKindMcp:
+		mcpHeight := m.height - layout.TabBarHeight - layout.StatusBarHeight
+		mv := renderMCPView(m.mcpServers, m.width, mcpHeight, m.styles, m.mcpSelected)
+		uv.NewStyledString(mv).Draw(canvas, image.Rect(0, y, m.width, y+mcpHeight))
+		y += mcpHeight
 
 	case TabKindJobs:
 		jobsHeight := m.height - layout.TabBarHeight - layout.StatusBarHeight

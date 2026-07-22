@@ -21,6 +21,7 @@ const (
 	TabKindSessions TabKind = iota // sessions list overview
 	TabKindChat                    // chat display for the selected session
 	TabKindModels                  // model + authentication management
+	TabKindMcp                     // configured MCP servers
 	TabKindJobs                    // scheduled jobs + lifecycle triggers
 	TabKindSettings                // global settings
 )
@@ -1388,8 +1389,9 @@ func renderTabBar(activeTab TabKind, width int, s Styles, viewportFocused bool, 
 		{" Sessions [F1] ", TabKindSessions},
 		{" Workspace [F2] ", TabKindChat},
 		{" Models [F3] ", TabKindModels},
-		{" Jobs & Triggers [F4] ", TabKindJobs},
-		{" Settings [F5] ", TabKindSettings},
+		{" MCP [F4] ", TabKindMcp},
+		{" Jobs & Triggers [F5] ", TabKindJobs},
+		{" Settings [F6] ", TabKindSettings},
 	}
 
 	var sepStyle lipgloss.Style
