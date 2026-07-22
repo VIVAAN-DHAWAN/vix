@@ -2573,7 +2573,7 @@ func (m Model) activateAuthButton() (tea.Model, tea.Cmd) {
 		m.clampModelsAuth()
 	case "set_token":
 		if ProviderSupportsLogin(provider) {
-			if auth.CanPersistLogin() && !auth.KeychainAvailable() {
+			if !auth.KeychainAvailable() {
 				m.modelsLoginStatus = "Starting " + provider + " login… (token will be stored in plaintext auth.json)"
 			} else {
 				m.modelsLoginStatus = "Starting " + provider + " login…"

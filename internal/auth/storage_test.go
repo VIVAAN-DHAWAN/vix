@@ -111,9 +111,6 @@ func TestFileBackendRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.json")
 	f := &fileBackend{path: path}
 
-	if !f.Available() {
-		t.Fatal("file backend should always be available")
-	}
 	if _, ok, _ := f.Get("anthropic-oauth"); ok {
 		t.Fatal("expected no value initially")
 	}
@@ -146,26 +143,24 @@ func TestFileBackendRoundTrip(t *testing.T) {
 
 func TestSelectDefaultBackend(t *testing.T) {
 	authFile := filepath.Join(t.TempDir(), "auth.json")
-	t.Cleanup(func() { EnablePlaintextFallback(false, "") })
+	t.Cleanup(func() { SetAuthFilePath("") })
+	SetAuthFilePath(authFile)
 
-	// Keyring usable -> keyring backend, regardless of fallback.
+	// Keyring usable -> keyring backend.
 	keyring.MockInit()
-	EnablePlaintextFallback(true, authFile)
 	if _, ok := selectDefaultBackend().(keyringBackend); !ok {
 		t.Errorf("keyring usable: expected keyringBackend, got %T", selectDefaultBackend())
 	}
 
-	// Keyring unusable + fallback on -> file backend.
+	// Keyring unusable -> plaintext file backend at the configured path (no
+	// opt-in required; mirrors the API-key store).
 	keyring.MockInitWithError(errors.New("no keychain"))
-	EnablePlaintextFallback(true, authFile)
-	if _, ok := selectDefaultBackend().(*fileBackend); !ok {
-		t.Errorf("keyless + fallback on: expected *fileBackend, got %T", selectDefaultBackend())
+	b, ok := selectDefaultBackend().(*fileBackend)
+	if !ok {
+		t.Fatalf("keyless: expected *fileBackend, got %T", selectDefaultBackend())
 	}
-
-	// Keyring unusable + fallback off -> keyring backend (writes then hard-fail).
-	EnablePlaintextFallback(false, "")
-	if _, ok := selectDefaultBackend().(keyringBackend); !ok {
-		t.Errorf("keyless + fallback off: expected keyringBackend, got %T", selectDefaultBackend())
+	if b.path != authFile {
+		t.Errorf("fileBackend path = %q, want %q", b.path, authFile)
 	}
 }
 
@@ -192,36 +187,38 @@ func TestLoginPersistsToFileFallback(t *testing.T) {
 	}
 }
 
-func TestLoginFailsWhenBackendUnavailable(t *testing.T) {
-	p := &fakeProvider{id: "fake-nokeychain"}
+// TestDefaultStorageFallsBackToFileWithoutKeychain is the regression for #56: on
+// a machine with no usable OS keychain, an OAuth login must persist to the
+// plaintext auth.json automatically (no opt-in flag). It also exercises the
+// ordering hazard that broke the old opt-in: DefaultStorage() is used *before*
+// the auth-file path is wired in, and SetAuthFilePath must invalidate the cached
+// backend so the login still lands in the intended auth.json.
+func TestDefaultStorageFallsBackToFileWithoutKeychain(t *testing.T) {
+	p := &fakeProvider{id: "fake-fallback-login"}
 	RegisterProvider(p)
 	defer UnregisterProvider(p.id)
 
 	keyring.MockInitWithError(errors.New("no keychain"))
-	st := NewStorage(keyringBackend{})
-	if err := st.Login(context.Background(), p.id, LoginCallbacks{}); !errors.Is(err, ErrKeychainUnavailable) {
-		t.Fatalf("expected ErrKeychainUnavailable, got %v", err)
+	t.Cleanup(func() { SetAuthFilePath("") })
+
+	// Early use before the path is configured (as via startup credential
+	// resolution): builds a storage over a temp-file backend.
+	SetAuthFilePath("")
+	_ = DefaultStorage()
+
+	// The process then wires in the real path; this must rebuild the storage.
+	authFile := filepath.Join(t.TempDir(), "auth.json")
+	SetAuthFilePath(authFile)
+
+	if err := DefaultStorage().Login(context.Background(), p.id, LoginCallbacks{}); err != nil {
+		t.Fatalf("keyless login should fall back to file, got: %v", err)
 	}
-}
-
-func TestCanPersistLogin(t *testing.T) {
-	t.Cleanup(func() { EnablePlaintextFallback(false, "") })
-
-	keyring.MockInit()
-	EnablePlaintextFallback(false, "")
-	if !CanPersistLogin() {
-		t.Error("keyring usable: expected CanPersistLogin true")
+	creds, ok, err := DefaultStorage().Get(p.id)
+	if err != nil || !ok || creds.Access != "logged-in" {
+		t.Fatalf("expected stored creds after fallback login: ok=%v err=%v creds=%+v", ok, err, creds)
 	}
-
-	keyring.MockInitWithError(errors.New("no keychain"))
-	EnablePlaintextFallback(false, "")
-	if CanPersistLogin() {
-		t.Error("keyless + fallback off: expected CanPersistLogin false")
-	}
-
-	EnablePlaintextFallback(true, filepath.Join(t.TempDir(), "auth.json"))
-	if !CanPersistLogin() {
-		t.Error("keyless + fallback on: expected CanPersistLogin true")
+	if _, err := os.Stat(authFile); err != nil {
+		t.Errorf("expected token persisted to %s: %v", authFile, err)
 	}
 }
 

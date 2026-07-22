@@ -225,12 +225,11 @@ func main() {
 	if *prompt != "" {
 		appMode = "headless"
 	}
-	// Allow interactive OAuth logins to persist their token to the plaintext,
-	// home-global auth.json (shared with API-key credentials) only when the user
-	// has opted in via oauth_plaintext_fallback / VIX_ALLOW_PLAINTEXT_OAUTH, and
-	// only when the OS keychain is unusable. Off by default (keychain-only).
-	auth.EnablePlaintextFallback(config.OAuthPlaintextFallback(),
-		config.NewVixPaths("", config.HomeVixDir(), "").AuthFile())
+	// OAuth logins persist their token to the OS keychain, or to the plaintext,
+	// home-global auth.json (shared with API-key credentials) when the OS
+	// keychain is unusable (headless Linux/WSL/containers). The UI and logs
+	// surface that tokens then live unencrypted on disk.
+	auth.SetAuthFilePath(config.NewVixPaths("", config.HomeVixDir(), "").AuthFile())
 	telemetry.Init(telemetry.Config{Version: Version, Mode: appMode, Enabled: config.TelemetryEnabled()})
 	defer telemetry.Shutdown()
 	// Top-level crash handler: capture the panic as a PostHog exception and

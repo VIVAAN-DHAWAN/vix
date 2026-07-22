@@ -210,20 +210,11 @@ Shortcut: you can also just pick a model in the grid. If that provider has no cr
 
 **Anthropic**, **OpenAI**, and **OpenRouter** support an interactive OAuth login instead of a raw API key — select `[ Create token ]` on the OAuth row and complete the flow in your browser. **MiniMax** and **Xiaomi MiMo** are API-key only and show `OAuth token: (not available)`.
 
-OAuth needs an OS keychain
+OAuth tokens and the OS keychain
 
-OAuth tokens are long-lived, auto-refreshing secrets, so by default vix stores them **only** in the OS keychain (macOS Keychain, or the Linux Secret Service via D-Bus). On a machine with no usable keychain — headless Linux, a minimal container, or WSL without gnome-keyring — `[ Create token ]` reports `OS keychain unavailable` and does not store a token. Either run vix with a working keychain, or authenticate with an API-key environment variable instead.
+OAuth tokens are long-lived, auto-refreshing secrets, so vix prefers to store them in the OS keychain (macOS Keychain, or the Linux Secret Service via D-Bus). On a machine with no usable keychain — headless Linux, a minimal container, or WSL without gnome-keyring — vix falls back to writing the token to `~/.vix/auth.json` (mode `0600`), the same file API keys fall back to. The Models tab and the logs surface that the token is stored unencrypted on disk (`token will be stored in plaintext auth.json`).
 
-If you accept the risk of storing refresh tokens unencrypted on disk, opt in with the `oauth_plaintext_fallback` feature flag (or set `VIX_ALLOW_PLAINTEXT_OAUTH=1`). When enabled and the keychain is unusable, tokens are written to the same `~/.vix/auth.json` (mode `0600`) that API keys fall back to:
-
-```
-// ~/.vix/settings.json — allow on-disk OAuth tokens when no keychain is present
-{
-  "features": {
-    "oauth_plaintext_fallback": true
-  }
-}
-```
+If you would rather not keep refresh tokens on disk, run vix with a working keychain, or authenticate with an API-key environment variable (e.g. `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) instead of an interactive login — env vars are read directly and never written to disk.
 
 Key saved but still reported as missing?
 
@@ -717,7 +708,7 @@ Credentials are resolved per provider in order: environment variable → OS keyc
 
 Three providers support an interactive OAuth login instead of a raw API key — **Anthropic** (Claude subscription), **OpenAI** (Codex), and **OpenRouter**. Start the flow from the Models tab; tokens are stored in the OS keychain and refreshed automatically. When both an API key and an OAuth token exist for a provider, the Models tab lets you choose which one is the default.
 
-Without a usable OS keychain, OAuth login is refused (`OS keychain unavailable`) unless you opt in to on-disk storage with the `oauth_plaintext_fallback` feature flag (or `VIX_ALLOW_PLAINTEXT_OAUTH=1`). See [API Key Setup](/docs#api-key-setup) for details.
+Without a usable OS keychain, the OAuth token falls back to on-disk storage in `~/.vix/auth.json` (mode `0600`) automatically — the same fallback API keys use — and the Models tab notes that the token is stored in plaintext. To avoid on-disk tokens, use a working keychain or an API-key environment variable. See [API Key Setup](/docs#api-key-setup) for details.
 
 ## Effort / reasoning
 
