@@ -459,8 +459,9 @@ func TestSessionsDuplicateOfDuplicate(t *testing.T) {
 }
 
 // unreadSessionRecord is a persisted open session marked unread, seeded into
-// open/ before launch. {{WORKDIR}} is expanded to the per-test cwd so
-// session.list (cwd-scoped) returns it.
+// open/ before launch. {{WORKDIR}} is expanded to the per-test cwd so it is
+// auto-restored on launch (session.list returns all directories; launch attaches
+// the ones rooted at the current cwd).
 const unreadSessionRecord = `{
   "schema_version": 1,
   "id": "22222222-2222-2222-2222-222222222222",
@@ -636,7 +637,7 @@ func TestSessionsVixInitiated(t *testing.T) {
 // the Title column) and a successful one (no marker). They guard the Sessions-tab
 // column alignment fix — the warning marker is exactly one display cell wide, so
 // the Running column must line up across both rows. {{WORKDIR}} is the per-test
-// cwd so session.list returns them.
+// cwd so the seeded records are shown.
 const vixAlignErrorRecord = `{
   "schema_version": 1,
   "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -822,4 +823,83 @@ func TestSessionsListRefreshesInDraft(t *testing.T) {
 		t.Fatalf("draft window did not refresh the Vix-initiated group after `vix job run`; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("draft-refreshed-live")
+}
+
+// groupUserCurrentRecord and groupUserOtherRecord are two persisted, user-initiated
+// open sessions in different working directories: one rooted at the launch cwd
+// (auto-restored as a live session) and one rooted at a sibling directory
+// ({{WORKDIR}}/otherproj), which stays a not-attached record. They prove the
+// Sessions tab now surfaces sessions from every directory (no cwd filter),
+// grouped by working directory with a path subtitle for each.
+const groupUserCurrentRecord = `{
+  "schema_version": 1,
+  "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  "cwd": "{{WORKDIR}}",
+  "session_mode": "chat",
+  "started_at": "2024-01-01T00:00:00Z",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "CURRENT-DIR-SESSION"}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "current dir reply"}]}
+  ]
+}`
+
+const groupUserOtherRecord = `{
+  "schema_version": 1,
+  "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+  "cwd": "{{WORKDIR}}/otherproj",
+  "session_mode": "chat",
+  "started_at": "2024-01-02T00:00:00Z",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "OTHER-DIR-SESSION"}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "other dir reply"}]}
+  ]
+}`
+
+// TestSessionsGroupedByDirectory verifies the User-initiated group lists sessions
+// from every working directory (not just the launch cwd), grouped by directory
+// with a per-directory path subtitle, and that opening a session rooted in
+// another directory attaches it (its conversation replays in the workspace).
+func TestSessionsGroupedByDirectory(t *testing.T) {
+	h := harness.Start(t, sessionsMeta("the Sessions tab groups user sessions from every directory under a path subtitle; opening a cross-directory session attaches it"),
+		// A sibling directory to root the other-directory session at.
+		harness.WithWorkdirFile("otherproj/keep.txt", "seed"),
+		harness.WithHomeFile(".vix/sessions/open/cccccccc-cccc-cccc-cccc-cccccccccccc.json", groupUserCurrentRecord),
+		harness.WithHomeFile(".vix/sessions/open/dddddddd-dddd-dddd-dddd-dddddddddddd.json", groupUserOtherRecord),
+	)
+
+	h.UI.WaitStable(500 * time.Millisecond)
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+
+	// Both directories' sessions must be listed — the cross-directory session is
+	// the behavior the cwd-filter removal enables.
+	if !pollUntil(10*time.Second, func() bool {
+		s := h.UI.Snapshot()
+		return strings.Contains(s, "CURRENT-DIR-SESSION") && strings.Contains(s, "OTHER-DIR-SESSION")
+	}) {
+		t.Fatalf("both directories' sessions not listed; screen:\n%s", h.UI.Snapshot())
+	}
+	// The other directory's path subtitle is shown (always rendered per group).
+	if !h.UI.Contains("otherproj") {
+		t.Fatalf("per-directory path subtitle (otherproj) not shown; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("sessions-grouped-by-dir")
+
+	// The current-cwd session (auto-restored, live) sorts above the other
+	// directory's not-attached record.
+	snap := h.UI.Snapshot()
+	if strings.Index(snap, "CURRENT-DIR-SESSION") > strings.Index(snap, "OTHER-DIR-SESSION") {
+		t.Fatalf("current cwd block should render above the other directory; screen:\n%s", snap)
+	}
+
+	// Opening the cross-directory session attaches it in its own directory: move
+	// to the top, then down onto the other-directory row and open it. Its
+	// conversation must replay in the workspace.
+	h.UI.Key("up")
+	h.UI.Key("down")
+	h.UI.Enter()
+	if !pollUntil(10*time.Second, func() bool { return h.UI.Contains("other dir reply") }) {
+		t.Fatalf("opening the cross-directory session did not replay its conversation; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("cross-dir-session-opened")
 }

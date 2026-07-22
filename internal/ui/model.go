@@ -507,10 +507,16 @@ type Model struct {
 
 	// Sessions tab UI
 	sessionsSelected int
-	// vixSessions are the persisted vix-initiated records (job runs, alerts)
-	// for this cwd, rendered as their own group below the live sessions.
+	// vixSessions are the persisted vix-initiated records (job runs, alerts),
+	// rendered as their own group below the user-initiated sessions.
 	// Refreshed on Init, on entering the tab, and on event.sessions_changed.
 	vixSessions []protocol.SessionSummary
+	// userSessionRecords are the persisted, not-currently-attached
+	// user-initiated sessions across every working directory. The Sessions tab
+	// groups them by directory alongside the live sessions (the current cwd's
+	// sessions are auto-attached on launch, so they appear as live rows and are
+	// excluded here by the Attached filter). Refreshed alongside vixSessions.
+	userSessionRecords []protocol.SessionSummary
 
 	// Jobs & Triggers tab UI: the scheduled jobs and lifecycle hooks, refreshed
 	// on entering the tab and on event.jobs_changed. jobsSelected is a single
@@ -897,7 +903,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "down":
-				if n := m.sessionsVisibleCount() + len(m.vixSessions); m.sessionsSelected < n-1 {
+				if n := len(m.sessionRowTargets()); m.sessionsSelected < n-1 {
 					m.sessionsSelected++
 				}
 				return m, nil
@@ -1754,6 +1760,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case vixSessionsMsg:
 		m.vixSessions = msg.sums
+		m.userSessionRecords = msg.userSums
 		// One-shot launch seeding: unread job runs/alerts that accumulated
 		// while vix was closed tint the Sessions tab. Live arrivals re-latch
 		// via event.job_done; refreshes after the first don't, so a visited
@@ -1769,7 +1776,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if n := m.sessionsVisibleCount() + len(m.vixSessions); m.sessionsSelected >= n && n > 0 {
+		if n := len(m.sessionRowTargets()); m.sessionsSelected >= n && n > 0 {
 			m.sessionsSelected = n - 1
 		}
 		return m, nil
@@ -3281,27 +3288,32 @@ func (m Model) View() tea.View {
 		if m.sessionsSpinnerActive {
 			spinnerFrame = string(animFrames[frozenStep(m.sessionsSpinnerStep)%len(animFrames)])
 		}
-		// User-initiated sessions render in slice (creation) order; the
-		// Vix-initiated group (live attached + persisted records) renders in one
-		// StartedAt-ordered list, derived from the same canonical row order as
-		// the selection index space (sessionRowTargets).
-		var userSessions []*SessionState
-		for _, sess := range m.sessions {
-			if sess.vixSummary == nil {
-				userSessions = append(userSessions, sess)
+		// The User-initiated group renders as per-directory blocks (current cwd
+		// first); the Vix-initiated group renders as one StartedAt-ordered list.
+		// Both derive from the same canonical row order as the selection index
+		// space (sessionRowTargets → userDirBlocks + vixRowTargets).
+		var userGroups []userDirGroupView
+		for _, b := range m.userDirBlocks() {
+			g := userDirGroupView{dir: b.dir}
+			for _, r := range b.rows {
+				if r.sum != nil {
+					g.rows = append(g.rows, userRowView{sum: *r.sum})
+				} else {
+					g.rows = append(g.rows, userRowView{live: m.sessions[r.liveIdx]})
+				}
 			}
+			userGroups = append(userGroups, g)
 		}
 		var vixRows []vixDisplayRow
-		for _, r := range m.sessionRowTargets() {
-			switch {
-			case r.sum != nil:
+		for _, r := range m.vixRowTargets() {
+			if r.sum != nil {
 				vixRows = append(vixRows, vixDisplayRow{sum: *r.sum})
-			case m.sessions[r.liveIdx].vixSummary != nil:
+			} else {
 				live := m.sessions[r.liveIdx]
 				vixRows = append(vixRows, vixDisplayRow{live: live, sum: *live.vixSummary})
 			}
 		}
-		sv := renderSessionsView(userSessions, vixRows, m.width, sessionsHeight, m.styles, m.sessionsSelected, spinnerFrame)
+		sv := renderSessionsView(userGroups, vixRows, m.width, sessionsHeight, m.styles, m.sessionsSelected, spinnerFrame)
 		uv.NewStyledString(sv).Draw(canvas, image.Rect(0, y, m.width, y+sessionsHeight))
 		y += sessionsHeight
 
@@ -4239,10 +4251,10 @@ func (m *Model) doCloseSession(sessionIdx int) (Model, tea.Cmd) {
 
 	// Keep the Sessions-tab cursor on the same row index: the closed row was the
 	// highlighted one, so the next session slides into its place. Clamp against
-	// the full row count (live sessions + persisted vix records). Do NOT call
-	// syncSessionsSelected here — it would snap the highlight onto the active
-	// workspace session's row (usually a user-initiated one).
-	if n := m.sessionsVisibleCount() + len(m.vixSessions); n > 0 && m.sessionsSelected >= n {
+	// the full row count (live sessions + persisted user/vix records). Do NOT
+	// call syncSessionsSelected here — it would snap the highlight onto the
+	// active workspace session's row (usually a user-initiated one).
+	if n := len(m.sessionRowTargets()); n > 0 && m.sessionsSelected >= n {
 		m.sessionsSelected = n - 1
 	}
 
@@ -4327,20 +4339,100 @@ func (m *Model) rowStartedAt(r rowTarget) time.Time {
 	return t
 }
 
-// sessionRowTargets returns one entry per Sessions-tab row in display order:
-// user-initiated live sessions first (slice/creation order), then the
-// Vix-initiated group — live attached records and persisted not-attached
-// records merged into a single list ordered by StartedAt. Ordering the vix
-// group by StartedAt (rather than live-first) keeps a record in place when it
-// becomes attached on read. The slice index is the selection row index
-// (m.sessionsSelected).
-func (m *Model) sessionRowTargets() []rowTarget {
-	var rows, vix []rowTarget
+// userDirBlock is one working directory's block within the User-initiated group:
+// its rows (live sessions and/or persisted not-attached records) plus the most
+// recent activity across them, used to order non-current directories.
+type userDirBlock struct {
+	dir  string
+	rows []rowTarget
+	last time.Time
+}
+
+// recordActivity returns a record's activity time (LastRequestAt, else
+// StartedAt) for ordering directories by recency.
+func recordActivity(sum *protocol.SessionSummary) time.Time {
+	raw := sum.LastRequestAt
+	if raw == "" {
+		raw = sum.StartedAt
+	}
+	t, _ := time.Parse(time.RFC3339, raw)
+	return t
+}
+
+// userDirBlocks groups the User-initiated sessions by working directory: live
+// sessions (auto-attached on launch, so mostly the current cwd) and persisted
+// not-attached records (from every directory). The current cwd sorts first; the
+// remaining directories follow by most-recent activity (desc), tiebroken by path
+// (asc) for determinism. Within a directory, live sessions come first (m.sessions
+// creation order) then records (StartedAt order).
+func (m *Model) userDirBlocks() []userDirBlock {
+	byDir := map[string]*userDirBlock{}
+	var order []string
+	get := func(dir string) *userDirBlock {
+		b := byDir[dir]
+		if b == nil {
+			b = &userDirBlock{dir: dir}
+			byDir[dir] = b
+			order = append(order, dir)
+		}
+		return b
+	}
+	// Live rows first so each block lists them ahead of its records.
+	liveIDs := map[string]bool{}
+	for i, s := range m.sessions {
+		if s.vixSummary != nil {
+			continue
+		}
+		if s.daemonSessionID != "" {
+			liveIDs[s.daemonSessionID] = true
+		}
+		b := get(pickCWD(s.workDir, m.cwd))
+		b.rows = append(b.rows, rowTarget{liveIdx: i})
+	}
+	for idx := range m.userSessionRecords {
+		rec := &m.userSessionRecords[idx]
+		// Skip a record that is already live in this window (it attached but the
+		// list hasn't refreshed yet), so it isn't shown twice.
+		if liveIDs[rec.ID] {
+			continue
+		}
+		dir := rec.CWD
+		if strings.TrimSpace(dir) == "" {
+			dir = m.cwd
+		}
+		b := get(dir)
+		b.rows = append(b.rows, rowTarget{liveIdx: -1, sum: rec})
+		if t := recordActivity(rec); t.After(b.last) {
+			b.last = t
+		}
+	}
+	sort.SliceStable(order, func(a, c int) bool {
+		da, dc := order[a], order[c]
+		if da == m.cwd {
+			return dc != m.cwd
+		}
+		if dc == m.cwd {
+			return false
+		}
+		if la, lc := byDir[da].last, byDir[dc].last; !la.Equal(lc) {
+			return la.After(lc)
+		}
+		return da < dc
+	})
+	out := make([]userDirBlock, 0, len(order))
+	for _, dir := range order {
+		out = append(out, *byDir[dir])
+	}
+	return out
+}
+
+// vixRowTargets returns the Vix-initiated group's rows: live attached records
+// and persisted not-attached records merged into one StartedAt-ordered list.
+func (m *Model) vixRowTargets() []rowTarget {
+	var vix []rowTarget
 	for i, s := range m.sessions {
 		if s.vixSummary != nil {
 			vix = append(vix, rowTarget{liveIdx: i})
-		} else {
-			rows = append(rows, rowTarget{liveIdx: i})
 		}
 	}
 	for idx := range m.vixSessions {
@@ -4349,7 +4441,19 @@ func (m *Model) sessionRowTargets() []rowTarget {
 	sort.SliceStable(vix, func(a, b int) bool {
 		return m.rowStartedAt(vix[a]).Before(m.rowStartedAt(vix[b]))
 	})
-	return append(rows, vix...)
+	return vix
+}
+
+// sessionRowTargets returns one entry per Sessions-tab row in display order: the
+// User-initiated group (live sessions and persisted not-attached records grouped
+// by working directory, current cwd first) followed by the Vix-initiated group.
+// The slice index is the selection row index (m.sessionsSelected).
+func (m *Model) sessionRowTargets() []rowTarget {
+	var rows []rowTarget
+	for _, b := range m.userDirBlocks() {
+		rows = append(rows, b.rows...)
+	}
+	return append(rows, m.vixRowTargets()...)
 }
 
 // visibleSessionIndices returns the indices of all live sessions in Sessions-tab
@@ -4398,14 +4502,17 @@ func (m *Model) stepWorkspaceSession(dir int) ([]tea.Cmd, bool) {
 		return nil, false
 	}
 	if next >= len(order) {
-		// Past the last live session: the rows below are the persisted,
-		// not-yet-attached vix-initiated records. Attach the first one — same
-		// as pressing enter on it in the Sessions tab; the replay's
-		// sessionRestoredMsg focuses it and marks it read.
-		if len(m.vixSessions) > 0 {
-			sum := m.vixSessions[0]
-			m.focusRestoredID = sum.ID
-			return []tea.Cmd{attachRestoreSession(m.socketPath, pickCWD(sum.CWD, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, sum)}, true
+		// Past the last live session: the rows below are persisted,
+		// not-yet-attached records (user-initiated ones grouped by directory,
+		// then vix-initiated). Attach the first — same as pressing enter on it
+		// in the Sessions tab; the replay's sessionRestoredMsg focuses it and
+		// marks it read.
+		for _, r := range m.sessionRowTargets() {
+			if r.sum != nil {
+				sum := *r.sum
+				m.focusRestoredID = sum.ID
+				return []tea.Cmd{attachRestoreSession(m.socketPath, pickCWD(sum.CWD, m.cwd), m.cfg.ConfigDir, m.cfg.Model, m.authToken, m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess, sum)}, true
+			}
 		}
 		return nil, false
 	}
@@ -4425,11 +4532,6 @@ func (m *Model) stepWorkspaceSession(dir int) ([]tea.Cmd, bool) {
 		m.stopTabAlertBlink()
 	}
 	return cmds, true
-}
-
-// sessionsVisibleCount returns the number of visible sessions (after filter).
-func (m *Model) sessionsVisibleCount() int {
-	return len(m.visibleSessionIndices())
 }
 
 // syncSessionsSelected sets sessionsSelected to the visible row that corresponds

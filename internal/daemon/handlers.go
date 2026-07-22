@@ -57,9 +57,10 @@ func RegisterBuiltinHandlers(s *Server) {
 		return handler(map[string]any{"params": map[string]any{"project_path": path}})
 	})
 
-	// session.list returns the persisted open sessions for the requesting cwd,
-	// so a freshly launched TUI can reopen them. Filtering by cwd keeps the
-	// global store (~/.vix/sessions) project-scoped at the UI layer.
+	// session.list returns every persisted open session, regardless of the
+	// requesting cwd. The global store (~/.vix/sessions) is surfaced whole so
+	// the TUI can group sessions by working directory; cwd scoping (for which
+	// sessions to auto-attach on launch) is applied by the client, not here.
 	s.RegisterHandler("session.list", func(data map[string]any) (map[string]any, error) {
 		cwd, _ := data["cwd"].(string)
 		configDir, _ := data["config_dir"].(string)
@@ -67,12 +68,6 @@ func RegisterBuiltinHandlers(s *Server) {
 		recs := listOpenSessionRecords(paths)
 		summaries := make([]protocol.SessionSummary, 0, len(recs))
 		for _, r := range recs {
-			// Vix-initiated records (job runs, alerts) are global: they run
-			// from the job's cwd, not the TUI's, and must surface in every
-			// instance regardless of where it was launched.
-			if cwd != "" && r.CWD != cwd && r.Origin != "vix" {
-				continue
-			}
 			sum := r.summary()
 			// Mark sessions currently live in this daemon so the launching
 			// client can skip the ones another instance already owns.

@@ -345,10 +345,14 @@ func main() {
 			if sums, err := client.ListSessions(cfg.CWD, cfg.ConfigDir); err == nil {
 				var claimable []protocol.SessionSummary
 				for _, sum := range sums {
-					// Skip sessions another instance owns, and vix-initiated
-					// records (job runs / alerts): those are browsed from the
-					// sessions list, never auto-reopened as chat tabs.
-					if !sum.Attached && sum.Origin != "vix" {
+					// Only auto-reopen user sessions rooted at this cwd:
+					// session.list now returns every directory's sessions (so
+					// the TUI can group them), but launch restore stays
+					// project-scoped. Skip sessions another instance owns
+					// (Attached) and vix-initiated records (job runs / alerts),
+					// which are browsed from the sessions list, never
+					// auto-reopened as chat tabs.
+					if !sum.Attached && sum.Origin != "vix" && sum.CWD == cfg.CWD {
 						claimable = append(claimable, sum)
 					}
 				}

@@ -119,11 +119,11 @@ func TestMoveToClosed(t *testing.T) {
 	}
 }
 
-// TestSessionListVixOriginIgnoresCWDFilter: session.list scopes user sessions
-// to the requesting cwd, but vix-initiated records (job runs, alerts) run from
-// the job's cwd and must surface in every instance regardless of where the TUI
-// was launched.
-func TestSessionListVixOriginIgnoresCWDFilter(t *testing.T) {
+// TestSessionListReturnsAllDirs: session.list returns every persisted open
+// session regardless of the requesting cwd, so the TUI can group sessions by
+// working directory. cwd scoping (which sessions to auto-attach on launch) is
+// applied by the client, not by this handler.
+func TestSessionListReturnsAllDirs(t *testing.T) {
 	dir := t.TempDir()
 	paths := config.NewVixPaths(dir, "", "/work")
 
@@ -167,11 +167,11 @@ func TestSessionListVixOriginIgnoresCWDFilter(t *testing.T) {
 	if !got["user-same-cwd"] {
 		t.Error("user session for the requesting cwd missing")
 	}
-	if got["user-other-cwd"] {
-		t.Error("user session for another cwd leaked through the filter")
+	if !got["user-other-cwd"] {
+		t.Error("user session for another cwd missing: session.list must return all directories")
 	}
 	if !got["vix-run"] {
-		t.Error("vix-initiated session filtered out despite global visibility")
+		t.Error("vix-initiated session missing")
 	}
 }
 

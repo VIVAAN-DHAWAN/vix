@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -75,6 +76,11 @@ var sessionRowSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorSec
 // unread dot.
 var sessionsSpinnerStyle = lipgloss.NewStyle().Foreground(colorPrimary)
 
+// sessionDirSubtitleStyle styles the per-directory path subtitle shown above
+// each working directory's rows inside the User-initiated group: a dimmed,
+// italic path so it reads as a sub-section label under the group header.
+var sessionDirSubtitleStyle = lipgloss.NewStyle().Faint(true).Italic(true).Foreground(colorPrimary)
+
 // vixDisplayRow is one row of the Vix-initiated group passed to the renderer:
 // a live attached session (live != nil) or a persisted, not-attached record
 // (live == nil). sum carries the record summary used to format the columns; for
@@ -84,14 +90,48 @@ type vixDisplayRow struct {
 	sum  protocol.SessionSummary
 }
 
+// userRowView is one row of the User-initiated group: a live session (live !=
+// nil) or a persisted, not-attached record (live == nil, sum set).
+type userRowView struct {
+	live *SessionState
+	sum  protocol.SessionSummary
+}
+
+// userDirGroupView is one working directory's block within the User-initiated
+// group: the directory path (rendered as a subtitle) and its rows in display
+// order (live sessions first, then not-attached records).
+type userDirGroupView struct {
+	dir  string
+	rows []userRowView
+}
+
+// abbreviatePath shortens an absolute path for display, replacing the user's
+// home-directory prefix with "~". Empty paths render as "(unknown)".
+func abbreviatePath(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return "(unknown)"
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if p == home {
+			return "~"
+		}
+		if strings.HasPrefix(p, home+string(os.PathSeparator)) {
+			return "~" + p[len(home):]
+		}
+	}
+	return p
+}
+
 // renderSessionsView renders the sessions list overview. spinnerFrame is the
 // current loading-spinner glyph (empty when the spinner is inactive); it is
 // shown in a busy session's leading-indicator slot in place of the unread dot.
-// userSessions are the live user-initiated sessions (the top group). vixRows are
-// the Vix-initiated group: live attached sessions and persisted not-attached
-// records merged into a single StartedAt-ordered list. The selection index
-// space covers user rows first, then the vix rows in that order.
-func renderSessionsView(userSessions []*SessionState, vixRows []vixDisplayRow, width, height int, s Styles, selectedRow int, spinnerFrame string) string {
+// userGroups are the User-initiated sessions grouped by working directory
+// (current cwd first), each block headed by a path subtitle and mixing live
+// sessions with persisted not-attached records. vixRows are the Vix-initiated
+// group: live attached sessions and persisted not-attached records merged into a
+// single StartedAt-ordered list. The selection index space covers the user rows
+// (in block/row order) first, then the vix rows.
+func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, width, height int, s Styles, selectedRow int, spinnerFrame string) string {
 	const colSession = 10
 	const colRunning = 10
 
@@ -121,32 +161,53 @@ func renderSessionsView(userSessions []*SessionState, vixRows []vixDisplayRow, w
 			"",
 		}
 	}
-	rows := []string{}
-
-	rowIdx := 0
-
-	if len(userSessions) > 0 {
-		rows = append(rows, groupHeader("User-initiated")...)
-		rows = append(rows, sessionColumnHeaderStyle.Render(header), headerRule)
+	// shortID trims an id to its first segment for the Session column.
+	shortID := func(id string) string {
+		if dash := strings.Index(id, "-"); dash >= 0 {
+			return id[:dash]
+		}
+		if len(id) > colSession {
+			return id[:colSession]
+		}
+		return id
 	}
 
-	for _, sess := range userSessions {
+	rows := []string{}
+	rowIdx := 0
+
+	// appendRow styles one session row from its precomputed columns and state,
+	// applying the selected/busy/unread leading indicators.
+	appendRow := func(plainCols string, selected, busy, unread bool) {
+		switch {
+		case selected:
+			lead, leadStyle := "  ", sessionRowSelectedStyle
+			if busy {
+				lead = spinnerFrame + " "
+				leadStyle = leadStyle.Foreground(colorPrimary)
+			} else if unread {
+				lead = "● "
+				leadStyle = leadStyle.Foreground(colorSecondary)
+			}
+			rows = append(rows, leadStyle.Render(lead)+sessionRowSelectedStyle.Render(plainCols))
+		case busy:
+			rows = append(rows, sessionsSpinnerStyle.Render(spinnerFrame)+" "+plainCols)
+		case unread:
+			rows = append(rows, unreadDotStyle.Render("●")+" "+plainCols)
+		default:
+			rows = append(rows, "  "+plainCols)
+		}
+	}
+
+	// liveCols formats the three shared columns for a live user session.
+	liveCols := func(sess *SessionState) string {
 		sessionCol := "connecting…"
 		runningCol := "—"
 		if sess.client != nil {
-			id := sess.client.SessionID()
-			if dash := strings.Index(id, "-"); dash >= 0 {
-				sessionCol = id[:dash]
-			} else if len(id) > colSession {
-				sessionCol = id[:colSession]
-			} else {
-				sessionCol = id
-			}
+			sessionCol = shortID(sess.client.SessionID())
 			if !sess.client.StartedAt().IsZero() {
 				runningCol = formatRunningTime(renderSince(sess.client.StartedAt()))
 			}
 		}
-
 		msgCol := "—"
 		if sess.parentID != "" {
 			parentShort := sess.parentID
@@ -190,43 +251,76 @@ func renderSessionsView(userSessions []*SessionState, vixRows []vixDisplayRow, w
 				}
 			}
 		}
-
-		hasUnread := sess.unreadCount > 0
-		busy := spinnerFrame != "" &&
-			(sess.agentState == StateStreaming ||
-				sess.agentState == StateToolExecuting ||
-				sess.agentState == StatePlanExecuting)
-		needsInput := sess.agentState == StateConfirmPending || sess.agentState == StateUserQuestion
-		var badgeSlot string
-		if needsInput {
-			badgeSlot = "  " + waitingBadge
-		} else {
-			badgeSlot = strings.Repeat(" ", badgeVisible)
-		}
-		plainCols := fmt.Sprintf("%-*s  %-*s  %-*s", colSession, sessionCol, colMessage, msgCol, colRunning, runningCol) + badgeSlot
-		if rowIdx == selectedRow {
-			lead, leadStyle := "  ", sessionRowSelectedStyle
-			if busy {
-				lead = spinnerFrame + " "
-				leadStyle = leadStyle.Foreground(colorPrimary)
-			} else if hasUnread {
-				lead = "● "
-				leadStyle = leadStyle.Foreground(colorSecondary)
-			}
-			rows = append(rows, leadStyle.Render(lead)+sessionRowSelectedStyle.Render(plainCols))
-		} else if busy {
-			rows = append(rows, sessionsSpinnerStyle.Render(spinnerFrame)+" "+plainCols)
-		} else if hasUnread {
-			rows = append(rows, unreadDotStyle.Render("●")+" "+plainCols)
-		} else {
-			rows = append(rows, "  "+plainCols)
-		}
-		rowIdx++
+		return fmt.Sprintf("%-*s  %-*s  %-*s", colSession, sessionCol, colMessage, msgCol, colRunning, runningCol)
 	}
 
-	// Vix-initiated group: live attached sessions and persisted job runs/alerts,
-	// merged into one StartedAt-ordered list. Live rows can be opened (enter) or
-	// closed (x); persisted rows opened (enter) or dismissed (x).
+	// recordCols formats the columns for a persisted, not-attached user record:
+	// its short id, title (or first message fallback), and time since last
+	// activity.
+	recordCols := func(sum protocol.SessionSummary) string {
+		msg := sum.Title
+		if msg == "" {
+			msg = sum.FirstMessage
+		}
+		if msg == "" {
+			msg = "—"
+		}
+		msg = truncateLabel(msg, colMessage)
+		if pad := colMessage - lipgloss.Width(msg); pad > 0 {
+			msg += strings.Repeat(" ", pad)
+		}
+		ranCol := "—"
+		raw := sum.LastRequestAt
+		if raw == "" {
+			raw = sum.StartedAt
+		}
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			ranCol = formatRunningTime(renderSince(t)) + " ago"
+		}
+		return fmt.Sprintf("%-*s  %s  %-*s", colSession, shortID(sum.ID), msg, colRunning, ranCol)
+	}
+
+	// --- User-initiated group: per-directory blocks, current cwd first. Each
+	// block is headed by its path subtitle (always shown). Live rows can be
+	// opened (enter) or closed (x); record rows opened (enter) or dismissed (x).
+	userRowCount := 0
+	for _, g := range userGroups {
+		userRowCount += len(g.rows)
+	}
+	if userRowCount > 0 {
+		rows = append(rows, groupHeader("User-initiated")...)
+		rows = append(rows, sessionColumnHeaderStyle.Render(header), headerRule)
+		for _, g := range userGroups {
+			rows = append(rows, "  "+sessionDirSubtitleStyle.Render(abbreviatePath(g.dir)))
+			for _, r := range g.rows {
+				var busy, needsInput, unread bool
+				var plainCols string
+				if r.live != nil {
+					sess := r.live
+					unread = sess.unreadCount > 0
+					busy = spinnerFrame != "" &&
+						(sess.agentState == StateStreaming ||
+							sess.agentState == StateToolExecuting ||
+							sess.agentState == StatePlanExecuting)
+					needsInput = sess.agentState == StateConfirmPending || sess.agentState == StateUserQuestion
+					plainCols = liveCols(sess)
+				} else {
+					unread = r.sum.Unread
+					plainCols = recordCols(r.sum)
+				}
+				badgeSlot := strings.Repeat(" ", badgeVisible)
+				if needsInput {
+					badgeSlot = "  " + waitingBadge
+				}
+				appendRow(plainCols+badgeSlot, rowIdx == selectedRow, busy, unread)
+				rowIdx++
+			}
+		}
+	}
+
+	// --- Vix-initiated group: live attached sessions and persisted job
+	// runs/alerts, merged into one StartedAt-ordered list. Live rows can be
+	// opened (enter) or closed (x); persisted rows opened (enter) or dismissed (x).
 	if len(vixRows) > 0 {
 		if len(rows) > 0 {
 			rows = append(rows, "")
@@ -240,13 +334,6 @@ func renderSessionsView(userSessions []*SessionState, vixRows []vixDisplayRow, w
 		// the run failed; an untitled record (a raw alert) falls back to the
 		// "<job> · <status>  <first message>" form.
 		vixCols := func(sum protocol.SessionSummary) string {
-			idCol := sum.ID
-			if dash := strings.Index(idCol, "-"); dash >= 0 {
-				idCol = idCol[:dash]
-			} else if len(idCol) > colSession {
-				idCol = idCol[:colSession]
-			}
-
 			var msgCol string
 			if sum.Title != "" {
 				msgCol = vixRowTitle(sum)
@@ -275,7 +362,7 @@ func renderSessionsView(userSessions []*SessionState, vixRows []vixDisplayRow, w
 			if t, err := time.Parse(time.RFC3339, sum.StartedAt); err == nil {
 				ranCol = formatRunningTime(renderSince(t)) + " ago"
 			}
-			return fmt.Sprintf("%-*s  %s  %-*s", colSession, idCol, msgCol, colRunning, ranCol)
+			return fmt.Sprintf("%-*s  %s  %-*s", colSession, shortID(sum.ID), msgCol, colRunning, ranCol)
 		}
 
 		for _, row := range vixRows {
@@ -294,25 +381,7 @@ func renderSessionsView(userSessions []*SessionState, vixRows []vixDisplayRow, w
 			if needsInput {
 				badgeSlot = "  " + waitingBadge
 			}
-			plainCols := vixCols(row.sum) + badgeSlot
-			switch {
-			case rowIdx == selectedRow:
-				lead, leadStyle := "  ", sessionRowSelectedStyle
-				if busy {
-					lead = spinnerFrame + " "
-					leadStyle = leadStyle.Foreground(colorPrimary)
-				} else if unread {
-					lead = "● "
-					leadStyle = leadStyle.Foreground(colorSecondary)
-				}
-				rows = append(rows, leadStyle.Render(lead)+sessionRowSelectedStyle.Render(plainCols))
-			case busy:
-				rows = append(rows, sessionsSpinnerStyle.Render(spinnerFrame)+" "+plainCols)
-			case unread:
-				rows = append(rows, unreadDotStyle.Render("●")+" "+plainCols)
-			default:
-				rows = append(rows, "  "+plainCols)
-			}
+			appendRow(vixCols(row.sum)+badgeSlot, rowIdx == selectedRow, busy, unread)
 			rowIdx++
 		}
 	}

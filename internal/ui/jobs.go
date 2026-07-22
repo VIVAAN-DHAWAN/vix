@@ -9,16 +9,19 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-// vixSessionsMsg carries the persisted vix-initiated session records (job
-// runs, synthetic alerts) for this cwd, shown as their own group in the
-// Sessions tab.
+// vixSessionsMsg carries the persisted, not-currently-attached session records
+// shown in the Sessions tab: vix-initiated ones (job runs, synthetic alerts) in
+// their own group, and user-initiated ones from every working directory (userSums),
+// which the tab groups by directory alongside the live sessions.
 type vixSessionsMsg struct {
-	sums []protocol.SessionSummary
+	sums     []protocol.SessionSummary
+	userSums []protocol.SessionSummary
 }
 
-// fetchVixSessions lists the persisted open sessions and keeps the
-// vix-initiated, not-currently-attached ones. Triggered on Init, on entering
-// the Sessions tab, and on event.sessions_changed broadcasts.
+// fetchVixSessions lists the persisted open sessions (across every working
+// directory) and keeps the not-currently-attached ones, split into
+// vix-initiated (sums) and user-initiated (userSums) groups. Triggered on Init,
+// on entering the Sessions tab, and on event.sessions_changed broadcasts.
 func fetchVixSessions(socketPath, cwd, configDir, authToken string) tea.Cmd {
 	return func() tea.Msg {
 		client := daemon.NewClient(socketPath)
@@ -27,13 +30,18 @@ func fetchVixSessions(socketPath, cwd, configDir, authToken string) tea.Cmd {
 		if err != nil {
 			return vixSessionsMsg{}
 		}
-		var out []protocol.SessionSummary
+		var vixOut, userOut []protocol.SessionSummary
 		for _, s := range sums {
-			if s.Origin == "vix" && !s.Attached {
-				out = append(out, s)
+			if s.Attached {
+				continue
+			}
+			if s.Origin == "vix" {
+				vixOut = append(vixOut, s)
+			} else {
+				userOut = append(userOut, s)
 			}
 		}
-		return vixSessionsMsg{sums: out}
+		return vixSessionsMsg{sums: vixOut, userSums: userOut}
 	}
 }
 
