@@ -203,6 +203,14 @@ grep -h '"phase":"error"' ~/.vix/logs/hooks/*.jsonl \
 When the daemon runs with `--config-dir <dir>`, the logs live under
 `<dir>/logs/{jobs,hooks}/` instead of `~/.vix/logs/`.
 
+## Planning
+
+When the user asks for a plan, it must include **unit tests** and **end-to-end
+tests** covering the new or changed behaviour. Author the end-to-end tests with
+the `write-e2e-test` skill (project-local, `./.vix/skills/write-e2e-test/`),
+which drives the real vix TUI and vixd daemon against the mock LLM server; see
+`e2e/README.md` for the harness details.
+
 ## Consent before implementation
 
 **Always ask for explicit user consent before writing or modifying any code.** When a user describes a problem, asks a question, or discusses a potential change, treat it as a conversation — not a request to implement. Present your understanding of the problem and your proposed approach, then wait for the user to confirm they want you to proceed.
