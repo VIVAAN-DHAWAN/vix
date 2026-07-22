@@ -11,15 +11,15 @@ import (
 // control "Plan GitHub issues" job (inline workflow githubIssuePlanWorkflow).
 // It pins the runtime GitHub-access contract the workflow must honour:
 //
-//	detect → deny | fetch → nag | select → detail → plan → mark_done
+//		detect → deny | fetch → nag | select → detail → plan → mark_done
 //
-//   - gh signed in   → fetch via `gh`, then `select`/`detail`/`plan` (the plan
-//     appears in the session; nothing is posted back to GitHub).
-//   - gh missing/unauth but the public API reachable → fetch via `curl`, a `nag`
-//     reminding the user to install + `gh auth login`, then select/detail/plan.
-//   - no access at all (or a missing coreutil: grep/sort/cut/mv) → `deny` prints
-//     a clear error and exits non-zero, so the run is recorded as failed with
-//     that message and no plan is attempted.
+//	  - gh signed in   → fetch via `gh`, then `select`/`detail`/`plan` (the plan
+//	    appears in the session; nothing is posted back to GitHub).
+//	  - gh missing/unauth but the public API reachable → fetch via `curl`, a `nag`
+//	    reminding the user to install + `gh auth login`, then select/detail/plan.
+//	  - no access at all (or a missing coreutil: grep/sort/cut/mv) → `deny` prints
+//	    a clear error and exits non-zero, so the run is recorded as failed with
+//	    that message and no plan is attempted.
 //
 // Item selection is deterministic and lives in bash, NOT in the agent. A
 // line-based tracker file at $(workflow.dir)/tracker.tsv — the run's own job
