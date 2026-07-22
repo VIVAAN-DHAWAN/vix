@@ -77,9 +77,10 @@ var sessionRowSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorSec
 var sessionsSpinnerStyle = lipgloss.NewStyle().Foreground(colorPrimary)
 
 // sessionDirSubtitleStyle styles the per-directory path subtitle shown above
-// each working directory's rows inside the User-initiated group: a dimmed,
-// italic path so it reads as a sub-section label under the group header.
-var sessionDirSubtitleStyle = lipgloss.NewStyle().Faint(true).Italic(true).Foreground(colorPrimary)
+// each working directory's rows inside the User-initiated group: an italic
+// path in the primary color so it reads as a sub-section label under the group
+// header.
+var sessionDirSubtitleStyle = lipgloss.NewStyle().Italic(true).Foreground(colorPrimary)
 
 // vixDisplayRow is one row of the Vix-initiated group passed to the renderer:
 // a live attached session (live != nil) or a persisted, not-attached record
