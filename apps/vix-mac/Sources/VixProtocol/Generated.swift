@@ -430,6 +430,27 @@ public struct EventTodoListUpdated: Codable, Sendable, Equatable {
     }
 }
 
+public struct EventToolBackends: Codable, Sendable, Equatable {
+    public var globConfigured: String
+    public var globEffective: String
+    public var grepConfigured: String
+    public var grepEffective: String
+
+    public init(globConfigured: String, globEffective: String, grepConfigured: String, grepEffective: String) {
+        self.globConfigured = globConfigured
+        self.globEffective = globEffective
+        self.grepConfigured = grepConfigured
+        self.grepEffective = grepEffective
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case globConfigured = "glob_configured"
+        case globEffective = "glob_effective"
+        case grepConfigured = "grep_configured"
+        case grepEffective = "grep_effective"
+    }
+}
+
 public struct EventToolCall: Codable, Sendable, Equatable {
     public var arguments: [String: JSONValue]?
     public var name: String

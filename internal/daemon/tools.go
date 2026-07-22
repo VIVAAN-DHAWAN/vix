@@ -1095,6 +1095,21 @@ func RegisterToolHandlers(s *Server) {
 	grepBackend := newGrepRunner(toolsCfg.Grep.Backend)
 	globBackend := newGlobRunner(toolsCfg.Glob.Backend)
 
+	// Record effective + configured backend names so sessions can report them to
+	// the Settings tab. When a backend isn't explicitly configured, treat the
+	// resolved (effective) name as the configured one so the UI shows no
+	// spurious fallback annotation.
+	s.grepBackendEffective = grepBackend.Name()
+	s.grepBackendConfigured = toolsCfg.Grep.Backend
+	if s.grepBackendConfigured == "" {
+		s.grepBackendConfigured = s.grepBackendEffective
+	}
+	s.globBackendEffective = globBackend.Name()
+	s.globBackendConfigured = toolsCfg.Glob.Backend
+	if s.globBackendConfigured == "" {
+		s.globBackendConfigured = s.globBackendEffective
+	}
+
 	s.RegisterHandler("tool.read_file", func(data map[string]any) (map[string]any, error) {
 		params, _ := data["params"].(map[string]any)
 		if needsConfirmation("read_file", params) {

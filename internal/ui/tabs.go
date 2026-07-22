@@ -635,6 +635,11 @@ type settingsState struct {
 	updateMethod        string
 	updateInstalled     bool
 	updateErr           string
+	// grepBackend/globBackend are display-ready labels for the resolved search
+	// tools (e.g. "rg", or "builtin  (fd configured — not found in PATH)").
+	// Empty until the daemon reports them via event.tool_backends.
+	grepBackend string
+	globBackend string
 }
 
 // toggleSetting flips (or, for the threshold row, leaves unchanged) the setting
@@ -814,6 +819,20 @@ func updateActionLabel(st settingsState) string {
 	}
 }
 
+// backendLabel formats a resolved search-tool backend for the Settings tab.
+// When the effective backend differs from what was configured (a PATH
+// fallback), it appends a note naming the missing tool so the user understands
+// why. Returns "unknown" until the daemon has reported the backends.
+func backendLabel(effective, configured string) string {
+	if effective == "" {
+		return "unknown"
+	}
+	if configured != "" && configured != effective {
+		return fmt.Sprintf("%s  (%s configured — not found in PATH)", effective, configured)
+	}
+	return effective
+}
+
 // renderSettingsView renders the Settings tab content (global preferences).
 func renderSettingsView(width, height int, s Styles, st settingsState) string {
 	// Body text and section titles are white (matching the Sessions/Models
@@ -931,6 +950,10 @@ func renderSettingsView(width, height int, s Styles, st settingsState) string {
 
 	section("Sessions")
 	row(fmt.Sprintf("Closed session retention  ‹ %s ›", retentionLabel(st.closedRetentionMins)))
+
+	section("Tools")
+	infoRow("Grep backend", st.grepBackend)
+	infoRow("Glob backend", st.globBackend)
 
 	lines = append(lines, "", textStyle.Italic(true).Width(innerWidth).Render("↑↓ navigate · Enter toggle/select · ←→ adjust"))
 

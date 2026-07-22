@@ -130,6 +130,16 @@ type Server struct {
 	updateLatest  string // "" when up-to-date / check disabled / unreachable
 	updateURL     string
 	updateMethod  string
+
+	// Tool backends resolved once at daemon start in RegisterToolHandlers.
+	// *Effective names reflect PATH fallback (e.g. configured "fd" resolves to
+	// "builtin" when fd is absent); *Configured records the requested backend
+	// so the Settings tab can flag a fallback. Set once before any session
+	// starts, then read-only.
+	grepBackendEffective  string
+	grepBackendConfigured string
+	globBackendEffective  string
+	globBackendConfigured string
 }
 
 // SetUpdateStatus records the result of the daily release check so it can be

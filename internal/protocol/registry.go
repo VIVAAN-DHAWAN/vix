@@ -40,6 +40,7 @@ var EventTypes = map[string]any{
 	"event.thinking_stall":      EventThinkingStall{},
 	"event.workflows_available": EventWorkflowsAvailable{},
 	"event.skills_available":    EventSkillsAvailable{},
+	"event.tool_backends":       EventToolBackends{},
 	"event.update_available":    EventUpdateAvailable{},
 	"event.job_run":             EventJobRun{},
 	"event.job_done":            EventJobDone{},

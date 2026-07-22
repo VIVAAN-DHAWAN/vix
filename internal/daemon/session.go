@@ -722,6 +722,15 @@ func (s *Session) initBrain() {
 		Skills: s.skillInfoList(),
 	})
 
+	// Report the resolved search-tool backends so the Settings tab can show
+	// which grep/glob implementation is actually in use (and flag a fallback).
+	s.emit("event.tool_backends", protocol.EventToolBackends{
+		GrepEffective:  s.server.grepBackendEffective,
+		GrepConfigured: s.server.grepBackendConfigured,
+		GlobEffective:  s.server.globBackendEffective,
+		GlobConfigured: s.server.globBackendConfigured,
+	})
+
 	// Initialize language map and LSP pool via brain.init
 	handler := s.server.GetHandler("brain.init")
 	if handler != nil {

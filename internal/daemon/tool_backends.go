@@ -21,10 +21,16 @@ import (
 
 type grepRunner interface {
 	Run(ctx context.Context, pattern, path, include, cwd string) (string, error)
+	// Name reports the effective backend actually in use (e.g. "grep", "rg"),
+	// accounting for any PATH fallback done at construction time.
+	Name() string
 }
 
 type globRunner interface {
 	Run(ctx context.Context, patterns, paths []string, cwd, typeFilter string, includeHidden bool, maxResults int) (string, error)
+	// Name reports the effective backend actually in use (e.g. "builtin",
+	// "fd"), accounting for any PATH fallback done at construction time.
+	Name() string
 }
 
 // errGlobMaxReached is returned from the builtin walker callback to stop
@@ -36,6 +42,8 @@ var errGlobMaxReached = fmt.Errorf("glob max_results reached")
 // --- Grep backends ---
 
 type systemGrepBackend struct{}
+
+func (b *systemGrepBackend) Name() string { return "grep" }
 
 func (b *systemGrepBackend) Run(ctx context.Context, pattern, path, include, cwd string) (string, error) {
 	LogInfo("[tool.grep] backend=grep cwd=%s pattern=%s path=%s include=%s", cwd, pattern, path, include)
@@ -69,6 +77,8 @@ func (b *systemGrepBackend) Run(ctx context.Context, pattern, path, include, cwd
 }
 
 type rgBackend struct{}
+
+func (b *rgBackend) Name() string { return "rg" }
 
 func (b *rgBackend) Run(ctx context.Context, pattern, path, include, cwd string) (string, error) {
 	LogInfo("[tool.grep] backend=rg cwd=%s pattern=%s path=%s include=%s", cwd, pattern, path, include)
@@ -136,6 +146,8 @@ func toStringList(v any) []string {
 }
 
 type builtinGlobBackend struct{}
+
+func (b *builtinGlobBackend) Name() string { return "builtin" }
 
 func (b *builtinGlobBackend) Run(ctx context.Context, patterns, paths []string, cwd, typeFilter string, includeHidden bool, maxResults int) (string, error) {
 	LogInfo("[tool.glob] backend=builtin cwd=%s patterns=%v paths=%v type=%s include_hidden=%v max_results=%d", cwd, patterns, paths, typeFilter, includeHidden, maxResults)
@@ -244,6 +256,8 @@ outer:
 }
 
 type fdGlobBackend struct{}
+
+func (b *fdGlobBackend) Name() string { return "fd" }
 
 func (b *fdGlobBackend) Run(ctx context.Context, patterns, paths []string, cwd, typeFilter string, includeHidden bool, maxResults int) (string, error) {
 	LogInfo("[tool.glob] backend=fd cwd=%s patterns=%v paths=%v type=%s include_hidden=%v max_results=%d", cwd, patterns, paths, typeFilter, includeHidden, maxResults)

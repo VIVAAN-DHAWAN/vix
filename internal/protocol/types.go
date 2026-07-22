@@ -456,6 +456,19 @@ type EventSkillsAvailable struct {
 	Skills []SkillInfo `json:"skills"`
 }
 
+// EventToolBackends reports the search-tool backends resolved by the daemon so
+// the Settings tab can display which implementation the grep and glob tools
+// actually use. The *Effective fields reflect PATH fallback (e.g. a configured
+// "fd" resolves to "builtin" when fd is absent); the *Configured fields carry
+// the requested backend so the UI can flag a fallback. Emitted once per session
+// at init.
+type EventToolBackends struct {
+	GrepEffective  string `json:"grep_effective"`
+	GrepConfigured string `json:"grep_configured"`
+	GlobEffective  string `json:"glob_effective"`
+	GlobConfigured string `json:"glob_configured"`
+}
+
 // EventUpdateAvailable informs the UI of the running version versus the latest
 // published GitHub release. Emitted once per session at init. Latest is empty
 // when the daemon is up-to-date, the check is disabled, or it could not reach

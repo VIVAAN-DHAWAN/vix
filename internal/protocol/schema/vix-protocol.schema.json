@@ -438,6 +438,29 @@
       ],
       "type": "object"
     },
+    "EventToolBackends": {
+      "properties": {
+        "glob_configured": {
+          "type": "string"
+        },
+        "glob_effective": {
+          "type": "string"
+        },
+        "grep_configured": {
+          "type": "string"
+        },
+        "grep_effective": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "glob_configured",
+        "glob_effective",
+        "grep_configured",
+        "grep_effective"
+      ],
+      "type": "object"
+    },
     "EventToolCall": {
       "properties": {
         "arguments": {
@@ -1552,6 +1575,11 @@
     "event.todo_list_updated": {
       "payload": {
         "$ref": "#/$defs/EventTodoListUpdated"
+      }
+    },
+    "event.tool_backends": {
+      "payload": {
+        "$ref": "#/$defs/EventToolBackends"
       }
     },
     "event.tool_call": {

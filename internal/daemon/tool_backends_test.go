@@ -53,6 +53,49 @@ func TestNewGlobRunnerFd(t *testing.T) {
 	}
 }
 
+func TestBackendNames(t *testing.T) {
+	if got := (&systemGrepBackend{}).Name(); got != "grep" {
+		t.Errorf("systemGrepBackend.Name() = %q, want grep", got)
+	}
+	if got := (&rgBackend{}).Name(); got != "rg" {
+		t.Errorf("rgBackend.Name() = %q, want rg", got)
+	}
+	if got := (&builtinGlobBackend{}).Name(); got != "builtin" {
+		t.Errorf("builtinGlobBackend.Name() = %q, want builtin", got)
+	}
+	if got := (&fdGlobBackend{}).Name(); got != "fd" {
+		t.Errorf("fdGlobBackend.Name() = %q, want fd", got)
+	}
+}
+
+// TestNewRunnerNameFallback verifies the effective Name() reflects PATH fallback:
+// with an empty PATH, rg/fd are unresolvable, so the runners resolve to the
+// builtin/system defaults.
+func TestNewRunnerNameFallback(t *testing.T) {
+	t.Setenv("PATH", "")
+	if got := newGrepRunner("rg").Name(); got != "grep" {
+		t.Errorf("newGrepRunner(rg).Name() with empty PATH = %q, want grep", got)
+	}
+	if got := newGlobRunner("fd").Name(); got != "builtin" {
+		t.Errorf("newGlobRunner(fd).Name() with empty PATH = %q, want builtin", got)
+	}
+}
+
+// TestNewRunnerNamePresent verifies the effective Name() is the requested
+// backend when the tool is on PATH. Skips the assertion when not installed.
+func TestNewRunnerNamePresent(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err == nil {
+		if got := newGrepRunner("rg").Name(); got != "rg" {
+			t.Errorf("newGrepRunner(rg).Name() = %q, want rg", got)
+		}
+	}
+	if _, err := exec.LookPath("fd"); err == nil {
+		if got := newGlobRunner("fd").Name(); got != "fd" {
+			t.Errorf("newGlobRunner(fd).Name() = %q, want fd", got)
+		}
+	}
+}
+
 func TestLoadToolsConfigMissing(t *testing.T) {
 	cfg := loadToolsConfig([]string{"/nonexistent/path/settings.json"})
 	if cfg.Grep.Backend != "" || cfg.Glob.Backend != "" {

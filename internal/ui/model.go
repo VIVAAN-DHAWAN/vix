@@ -614,6 +614,15 @@ type Model struct {
 	testMode       bool
 	settingsCursor int // selected row in the Settings tab
 
+	// Search-tool backends resolved by the daemon (via event.tool_backends),
+	// shown read-only in the Settings tab. The *Effective values reflect PATH
+	// fallback; the *Configured values flag when the requested backend wasn't
+	// available.
+	grepBackendEffective  string
+	grepBackendConfigured string
+	globBackendEffective  string
+	globBackendConfigured string
+
 	// Update status (from the daemon's daily release check, via
 	// event.update_available) and in-app upgrade flow state.
 	updateCurrent   string // running version
@@ -2887,6 +2896,15 @@ func (m *Model) applyEventToSession(idx int, event protocol.SessionEvent) []tea.
 		json.Unmarshal(data, &sa)
 		sess.skills = sa.Skills
 
+	case "event.tool_backends":
+		data := marshalData(event.Data)
+		var tb protocol.EventToolBackends
+		json.Unmarshal(data, &tb)
+		m.grepBackendEffective = tb.GrepEffective
+		m.grepBackendConfigured = tb.GrepConfigured
+		m.globBackendEffective = tb.GlobEffective
+		m.globBackendConfigured = tb.GlobConfigured
+
 	case "event.update_available":
 		data := marshalData(event.Data)
 		var ua protocol.EventUpdateAvailable
@@ -3498,6 +3516,8 @@ func (m Model) View() tea.View {
 			updateMethod:        m.updateMethod,
 			updateInstalled:     m.updateInstalled,
 			updateErr:           m.updateErr,
+			grepBackend:         backendLabel(m.grepBackendEffective, m.grepBackendConfigured),
+			globBackend:         backendLabel(m.globBackendEffective, m.globBackendConfigured),
 		}
 		if settSess := m.currentSession(); settSess != nil {
 			st.showThinking = settSess.showThinking

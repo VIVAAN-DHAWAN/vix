@@ -110,3 +110,78 @@ func TestTruncateLabel(t *testing.T) {
 		}
 	}
 }
+
+// TestBackendLabel covers the three display states: unreported (empty →
+// "unknown"), a plain effective backend, and the PATH-fallback annotation shown
+// when the configured backend differs from the one that resolved.
+func TestBackendLabel(t *testing.T) {
+	cases := []struct {
+		name       string
+		effective  string
+		configured string
+		want       string
+	}{
+		{"unreported", "", "", "unknown"},
+		{"unreported ignores configured", "", "fd", "unknown"},
+		{"plain effective", "rg", "rg", "rg"},
+		{"default unset treated as no-fallback", "builtin", "builtin", "builtin"},
+		{"fallback annotated", "builtin", "fd", "builtin  (fd configured — not found in PATH)"},
+		{"grep fallback annotated", "grep", "rg", "grep  (rg configured — not found in PATH)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := backendLabel(c.effective, c.configured); got != c.want {
+				t.Errorf("backendLabel(%q, %q) = %q, want %q", c.effective, c.configured, got, c.want)
+			}
+		})
+	}
+}
+
+// TestRenderSettingsViewToolsSection asserts the Settings tab shows the Tools
+// section with both resolved backends, including the fallback annotation.
+func TestRenderSettingsViewToolsSection(t *testing.T) {
+	s := NewStyles(true)
+	st := settingsState{
+		grepBackend: backendLabel("rg", "rg"),
+		globBackend: backendLabel("builtin", "fd"),
+	}
+	out := renderSettingsView(120, 40, s, st)
+
+	for _, want := range []string{
+		"Tools",
+		"Grep backend",
+		"Glob backend",
+		"rg",
+		"builtin  (fd configured — not found in PATH)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("renderSettingsView output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderSettingsViewCursorUnaffectedByTools guards that the non-selectable
+// Tools info rows don't shift the cursor index space: with the cursor on the
+// last selectable row (closed-session retention), the "▸" marker must land on
+// that row, not be swallowed by the Tools section that renders after it.
+func TestRenderSettingsViewCursorUnaffectedByTools(t *testing.T) {
+	s := NewStyles(true)
+	st := settingsState{
+		cursor:              int(settingClosedRetention),
+		closedRetentionMins: 60,
+		grepBackend:         "rg",
+		globBackend:         "fd",
+	}
+	out := renderSettingsView(120, 40, s, st)
+
+	var cursorLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "▸") {
+			cursorLine = line
+			break
+		}
+	}
+	if !strings.Contains(cursorLine, "Closed session retention") {
+		t.Errorf("cursor marker should be on the retention row, got %q", cursorLine)
+	}
+}
