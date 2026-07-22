@@ -36,6 +36,8 @@ func TestMCPTabListsAndToggles(t *testing.T) {
 		Description: "F4 lists MCP servers (type + status); space toggles a server off, persisted to settings.json",
 		Wire:        harness.WireMessages,
 	},
+		// MCP config is home-only. vixd's bootstrap merges (rather than
+		// overwrites) settings.json on refresh, so our seeded mcp_servers survive.
 		harness.WithHomeFile(".vix/settings.json", mcpTabSettings),
 	)
 

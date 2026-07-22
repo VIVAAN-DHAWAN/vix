@@ -200,6 +200,51 @@ func TestSessionsNavigateAndOpen(t *testing.T) {
 	h.UI.Shot("opened-bravo")
 }
 
+// TestSessionsCtrlPNavigatesBetweenSessions verifies the workspace session cycle
+// with two committed (live) sessions: after creating A (send a turn), then B
+// (send a turn), ctrl+p steps from the newer B back to the older A, and ctrl+n
+// steps forward again. Both sessions have real start times, so they sort
+// [A, B] and the previous/next navigation is well-defined — the positive
+// counterpart to the highlight scenario, which uses an uncommitted draft.
+func TestSessionsCtrlPNavigatesBetweenSessions(t *testing.T) {
+	h := harness.Start(t, sessionsMeta("ctrl+p/ctrl+n cycle between two committed workspace sessions"))
+
+	h.UI.WaitStable(500 * time.Millisecond)
+
+	// Session A (the initial one): one completed turn with a distinctive reply.
+	h.Mock.Enqueue(harness.Text("ALPHA-REPLY"))
+	h.UI.Type("alpha prompt")
+	h.UI.Enter()
+	h.UI.WaitFor("ALPHA-REPLY")
+
+	// Session B: created with ctrl+t, then a second committed turn. We are now
+	// viewing B (its transcript shows BRAVO-REPLY, not ALPHA-REPLY).
+	h.UI.Ctrl('t')
+	h.UI.WaitStable(800 * time.Millisecond)
+	h.Mock.Enqueue(harness.Text("BRAVO-REPLY"))
+	h.UI.Type("bravo prompt")
+	h.UI.Enter()
+	h.UI.WaitFor("BRAVO-REPLY")
+
+	// ctrl+p goes from B back to A: the workspace now shows A's transcript.
+	h.UI.Ctrl('p')
+	if !pollUntil(8*time.Second, func() bool {
+		return h.UI.Contains("ALPHA-REPLY") && !h.UI.Contains("BRAVO-REPLY")
+	}) {
+		t.Fatalf("ctrl+p did not navigate from B to A; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("ctrlp-on-a")
+
+	// ctrl+n goes forward from A back to B.
+	h.UI.Ctrl('n')
+	if !pollUntil(8*time.Second, func() bool {
+		return h.UI.Contains("BRAVO-REPLY") && !h.UI.Contains("ALPHA-REPLY")
+	}) {
+		t.Fatalf("ctrl+n did not navigate from A to B; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("ctrln-on-b")
+}
+
 // TestSessionsTabHighlightOnBackgroundMessage verifies that, while the user is
 // in the workspace on one session, a message completing on another session
 // statically highlights (tints) the Sessions tab title — and does not blink.
@@ -213,13 +258,16 @@ func TestSessionsTabHighlightOnBackgroundMessage(t *testing.T) {
 	}
 
 	// Create session B, start a turn on it, then switch back to A (still in the
-	// workspace) and let B's turn complete in the background.
+	// workspace) and let B's turn complete in the background. B has committed
+	// (real start time) while A is still an uncommitted draft, so rows sort
+	// [B, A] (drafts sort last) — the launch draft A is reached with ctrl+n
+	// (next), not ctrl+p.
 	h.UI.Ctrl('t')
 	h.UI.WaitStable(800 * time.Millisecond)
 	h.UI.Type("background work")
 	h.UI.Enter()
 	h.Mock.Next()
-	h.UI.Ctrl('p') // back to session A; still on the Workspace tab.
+	h.UI.Ctrl('n') // to session A (the draft, which sorts last); still on Workspace.
 	h.Mock.Reply(harness.Text("background finished"))
 
 	// The Sessions title should tint (differ from the inactive baseline).

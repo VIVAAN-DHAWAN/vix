@@ -38,6 +38,15 @@ func TestSettingsTabShowsToolBackends(t *testing.T) {
 	)
 
 	h.UI.WaitStable(500 * time.Millisecond)
+
+	// event.tool_backends is emitted when a session initializes (initBrain), so
+	// start one with a quick turn before opening Settings — otherwise the tab
+	// shows "unknown" backends because no session ever reported them.
+	h.Mock.Enqueue(harness.Text("ready"))
+	h.UI.Type("hello")
+	h.UI.Enter()
+	h.UI.WaitFor("ready")
+
 	h.UI.Key("f6")
 	// Wait on a Settings-body-only string; the tab bar always contains
 	// "Settings [F6]", so waiting on that would false-positive before the body
