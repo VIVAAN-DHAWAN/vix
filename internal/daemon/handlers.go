@@ -84,6 +84,18 @@ func RegisterBuiltinHandlers(s *Server) {
 		return map[string]any{"status": "ok", "sessions": summaries}, nil
 	})
 
+	// session.dirs ranks the working directories used by open user sessions
+	// (across all projects, unlike session.list which is cwd-scoped). Powers the
+	// welcome screen's recent-directories list and the default working directory
+	// for new sessions.
+	s.RegisterHandler("session.dirs", func(data map[string]any) (map[string]any, error) {
+		configDir, _ := data["config_dir"].(string)
+		cwd, _ := data["cwd"].(string)
+		paths := config.NewVixPaths(configDir, s.homeVixDir, cwd)
+		dirs := aggregateSessionDirs(listOpenSessionRecords(paths))
+		return map[string]any{"status": "ok", "dirs": dirs}, nil
+	})
+
 	// session.dismiss archives a persisted session record (open/ → closed/)
 	// without attaching it. Used by the TUI to dismiss vix-initiated run
 	// records from the sessions list. Refuses sessions currently live in a

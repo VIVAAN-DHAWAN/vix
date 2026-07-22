@@ -70,9 +70,13 @@ type SessionState struct {
 	// directory: editable on the welcome screen while a draft, then frozen and
 	// used as the cwd for every (re)connect. pendingFirstInput holds the message
 	// that triggered the commit, sent once the connection is established.
-	phase             sessionPhase
-	clientKey         string
-	workDir           string
+	phase     sessionPhase
+	clientKey string
+	workDir   string
+	// recentDirSelected is the highlighted row in the welcome screen's
+	// recent-directories list while this session is a draft and the welcome
+	// area is focused. Navigated with up/down; enter applies it to workDir.
+	recentDirSelected int
 	pendingFirstInput *pendingMsg
 	// closing is set when the TUI itself initiated this session's close (the
 	// quit-time "close all sessions" flow). The daemon tears the connection

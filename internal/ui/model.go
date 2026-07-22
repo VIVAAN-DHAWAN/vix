@@ -270,6 +270,26 @@ func attachRestoreSession(socketPath, cwd, configDir, model, authToken string, e
 	}
 }
 
+// recentDirsMsg carries the ranked working directories fetched from the daemon
+// for the welcome screen's recent-directories list.
+type recentDirsMsg struct {
+	dirs []protocol.DirUsage
+}
+
+// fetchRecentDirs asks the daemon for the working directories used by open user
+// sessions, ranked for the welcome screen. A failure yields an empty list.
+func fetchRecentDirs(socketPath, cwd, configDir, authToken string) tea.Cmd {
+	return func() tea.Msg {
+		client := daemon.NewClient(socketPath)
+		client.SetAuthToken(authToken)
+		dirs, err := client.ListSessionDirs(cwd, configDir)
+		if err != nil {
+			return recentDirsMsg{}
+		}
+		return recentDirsMsg{dirs: dirs}
+	}
+}
+
 // connectFork starts a new forked session seeded from forkSessionID at forkTurnIdx.
 func connectFork(socketPath, cwd, configDir, model, authToken string, enableWrite, enableDir bool, forkSessionID string, forkTurnIdx int, targetDaemonSessionID string) tea.Cmd {
 	return func() tea.Msg {
@@ -319,6 +339,76 @@ func pickCWD(primary, fallback string) string {
 		return primary
 	}
 	return fallback
+}
+
+// maxRecentDirs bounds the recent-directories list rendered on the welcome
+// screen.
+const maxRecentDirs = 5
+
+// topRecentDirs returns the highest-ranked recent working directories, trimmed
+// to maxRecentDirs, for the welcome screen.
+func (m *Model) topRecentDirs() []protocol.DirUsage {
+	if len(m.recentDirs) <= maxRecentDirs {
+		return m.recentDirs
+	}
+	return m.recentDirs[:maxRecentDirs]
+}
+
+// latestWorkDir returns the working directory a fresh draft session should
+// default to: the most-recently-active recorded directory, falling back to the
+// launch cwd when there is no history.
+func (m *Model) latestWorkDir() string {
+	best := ""
+	bestTS := ""
+	for _, d := range m.recentDirs {
+		if d.Path == "" {
+			continue
+		}
+		// recentDirs is ranked by count, so scan for the most recent activity.
+		if best == "" || d.LastRequestAt > bestTS {
+			best = d.Path
+			bestTS = d.LastRequestAt
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return m.cwd
+}
+
+// welcomeDirNav handles up/down/enter for the recent-directories list on a
+// focused draft welcome. A draft with an empty transcript shows the welcome
+// screen; when its area is focused (Tab), up/down move the highlighted
+// directory and enter applies it to the working directory. The guard mirrors
+// the Ctrl+O picker: only before the session starts connecting. It returns true
+// when it consumed the key.
+func (m *Model) welcomeDirNav(sess *SessionState, key string) bool {
+	if sess == nil || sess.focus != FocusChat || sess.phase != phaseDraft ||
+		sess.client != nil || sess.reconnecting || len(sess.chatMessages) != 0 {
+		return false
+	}
+	recent := m.topRecentDirs()
+	if len(recent) == 0 {
+		return false
+	}
+	switch key {
+	case "up", "k":
+		if sess.recentDirSelected > 0 {
+			sess.recentDirSelected--
+		}
+		return true
+	case "down", "j":
+		if sess.recentDirSelected < len(recent)-1 {
+			sess.recentDirSelected++
+		}
+		return true
+	case "enter":
+		if sess.recentDirSelected >= 0 && sess.recentDirSelected < len(recent) {
+			sess.workDir = recent[sess.recentDirSelected].Path
+		}
+		return true
+	}
+	return false
 }
 
 // AppState represents the current state of the application.
@@ -603,6 +693,8 @@ func (m Model) Init() tea.Cmd {
 	}
 	// Populate the Vix-initiated group of the Sessions tab.
 	cmds = append(cmds, fetchVixSessions(m.socketPath, m.cwd, m.cfg.ConfigDir, m.authToken))
+	// Populate the welcome screen's recent-directories list.
+	cmds = append(cmds, fetchRecentDirs(m.socketPath, m.cwd, m.cfg.ConfigDir, m.authToken))
 	cmds = append(cmds, waitForResume, tea.RequestBackgroundColor)
 	return tea.Batch(cmds...)
 }
@@ -745,6 +837,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+t":
 			newSess := newSessionState(m.cfg, nil)
+			newSess.workDir = m.latestWorkDir()
 			newSess.input.SetWidth(m.width - 4)
 			newIdx := len(m.sessions)
 			m.sessions = append(m.sessions, newSess)
@@ -752,6 +845,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = TabKindChat
 			// A ctrl+t tab starts as a draft (no connection) so the user can
 			// pick its working directory before committing on the first message.
+			// It defaults to the most-recently-used working directory.
 			cmds = append(cmds, armCursorBlink(newSess))
 			return m, tea.Batch(cmds...)
 
@@ -798,6 +892,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "t":
 				// Add a new session (draft — connects on first message).
 				newSess := newSessionState(m.cfg, nil)
+				newSess.workDir = m.latestWorkDir()
 				newSess.input.SetWidth(m.width - 4)
 				newIdx := len(m.sessions)
 				m.sessions = append(m.sessions, newSess)
@@ -1000,6 +1095,15 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sess.phase == phaseDraft && sess.client == nil && !sess.reconnecting {
 				sess.dirPicker.OpenDir(sess.workDir)
 			}
+			return m, nil
+		}
+
+		// Recent-directories selection on a focused draft welcome (see
+		// welcomeDirNav). up/down move the highlighted directory; enter applies
+		// it as the session's working directory. Handled here — before the
+		// editor keymap that binds enter to sending a message — so enter on the
+		// recent list switches the directory instead of committing the draft.
+		if m.welcomeDirNav(sess, msg.String()) {
 			return m, nil
 		}
 
@@ -1630,6 +1734,18 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if n := m.sessionsVisibleCount() + len(m.vixSessions); m.sessionsSelected >= n && n > 0 {
 			m.sessionsSelected = n - 1
+		}
+		return m, nil
+
+	case recentDirsMsg:
+		m.recentDirs = msg.dirs
+		// Keep each draft session's welcome selection within bounds as the list
+		// changes underneath it.
+		n := len(m.topRecentDirs())
+		for _, s := range m.sessions {
+			if s.recentDirSelected >= n {
+				s.recentDirSelected = max(0, n-1)
+			}
 		}
 		return m, nil
 
@@ -3138,14 +3254,22 @@ func (m Model) View() tea.View {
 			}
 			lines, rowStart := sess.cachedChatLines(m.styles, innerWidth)
 			if emptyChatLines(lines) && tail == "" && !m.testMode {
-				welcome := renderWelcomeInline(innerWidth, contentHeight, m.styles, sess.workDir, sess.phase == phaseDraft)
+				recentSel := -1
+				var recent []protocol.DirUsage
+				if sess.phase == phaseDraft {
+					recent = m.topRecentDirs()
+					if sess.focus == FocusChat && len(recent) > 0 {
+						recentSel = sess.recentDirSelected
+					}
+				}
+				welcome := renderWelcomeInline(innerWidth, contentHeight, m.styles, sess.workDir, sess.phase == phaseDraft, recent, recentSel)
 				allLines = strings.Split(welcome, "\n")
 				visualRowStart = visualRowPrefix(allLines, innerWidth)
 			} else {
 				allLines, visualRowStart = combineTail(lines, rowStart, tail, innerWidth)
 			}
 		case !m.testMode:
-			welcome := renderWelcomeInline(innerWidth, contentHeight, m.styles, m.cwd, false)
+			welcome := renderWelcomeInline(innerWidth, contentHeight, m.styles, m.cwd, false, nil, -1)
 			allLines = strings.Split(welcome, "\n")
 			visualRowStart = visualRowPrefix(allLines, innerWidth)
 		default:

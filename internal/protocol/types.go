@@ -110,13 +110,29 @@ type SessionSummary struct {
 	Unread bool `json:"unread,omitempty"`
 }
 
+// DirUsage is a working directory ranked by how many open sessions use it,
+// returned by the session.dirs RPC. It powers the welcome screen's
+// recent-directories list and the default working directory for new sessions.
+type DirUsage struct {
+	// Path is the working directory (session CWD).
+	Path string `json:"path"`
+	// Count is the number of open user sessions rooted at Path.
+	Count int `json:"count"`
+	// LastRequestAt is the most recent activity across those sessions,
+	// RFC3339; used to order by recency and to pick the "latest used" dir.
+	LastRequestAt string `json:"last_request_at,omitempty"`
+}
+
 // SessionInputData carries user chat input.
 type SessionInputData struct {
 	Text        string       `json:"text"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
-// Attachment represents a file attachment (e.g., image) sent with user input.
+// Attachment represents a file attachment sent with user input. Two kinds are
+// supported: "image" (carries base64 Data + an image/* MediaType, embedded as a
+// vision block) and "file" (a path-only reference to a text or PDF file that the
+// daemon reads and converts to text at send time).
 type Attachment struct {
 	Type      string `json:"type"`
 	MediaType string `json:"media_type"`

@@ -166,6 +166,57 @@ func listOpenSessionRecords(paths config.VixPaths) []sessionRecord {
 	return out
 }
 
+// aggregateSessionDirs ranks the working directories used by open user
+// sessions. Vix-initiated records (job runs, synthetic alerts) are excluded:
+// they run from the job's cwd, not a directory the user chose. Directories are
+// ranked by session count (desc), tiebroken by most-recent activity (desc) then
+// path (asc) for determinism. The activity time per record is LastRequestAt
+// when set, else StartedAt.
+func aggregateSessionDirs(recs []sessionRecord) []protocol.DirUsage {
+	type agg struct {
+		count int
+		last  time.Time
+	}
+	byDir := map[string]*agg{}
+	for _, r := range recs {
+		if r.Origin == "vix" || strings.TrimSpace(r.CWD) == "" {
+			continue
+		}
+		act := r.LastRequestAt
+		if act.IsZero() {
+			act = r.StartedAt
+		}
+		a := byDir[r.CWD]
+		if a == nil {
+			a = &agg{}
+			byDir[r.CWD] = a
+		}
+		a.count++
+		if act.After(a.last) {
+			a.last = act
+		}
+	}
+
+	out := make([]protocol.DirUsage, 0, len(byDir))
+	for path, a := range byDir {
+		d := protocol.DirUsage{Path: path, Count: a.count}
+		if !a.last.IsZero() {
+			d.LastRequestAt = a.last.Format(time.RFC3339)
+		}
+		out = append(out, d)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		if out[i].LastRequestAt != out[j].LastRequestAt {
+			return out[i].LastRequestAt > out[j].LastRequestAt
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out
+}
+
 // listSessionRecordsIn reads every parseable record in dir. Unreadable or
 // corrupt files are skipped.
 func listSessionRecordsIn(dir string) []sessionRecord {

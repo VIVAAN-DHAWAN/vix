@@ -86,6 +86,7 @@ var CommandTypes = map[string]any{
 // into the schema + Swift models and drift-gated alongside the wire types.
 var RPCTypes = map[string]any{
 	"SessionSummary": SessionSummary{},
+	"DirUsage":       DirUsage{},
 	"JobSummary":     JobSummary{},
 	"HookSummary":    HookSummary{},
 }

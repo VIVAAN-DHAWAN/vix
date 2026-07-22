@@ -285,6 +285,29 @@ func (c *Client) ListSessions(cwd, configDir string) ([]protocol.SessionSummary,
 	return out, nil
 }
 
+// ListSessionDirs returns the working directories used by open user sessions,
+// ranked by session count (then recency), for the welcome screen's recent-
+// directories list. Unlike ListSessions it is not cwd-scoped.
+func (c *Client) ListSessionDirs(cwd, configDir string) ([]protocol.DirUsage, error) {
+	resp, err := c.sendRequest(map[string]any{
+		"command":    "session.dirs",
+		"cwd":        cwd,
+		"config_dir": configDir,
+	})
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(resp["dirs"])
+	if err != nil {
+		return nil, err
+	}
+	var out []protocol.DirUsage
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DismissSession archives a persisted session record (open/ → closed/) without
 // attaching it. Used to dismiss vix-initiated run records from the TUI.
 func (c *Client) DismissSession(cwd, configDir, id string) error {

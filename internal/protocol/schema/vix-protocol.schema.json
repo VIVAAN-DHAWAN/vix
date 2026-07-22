@@ -22,6 +22,24 @@
       ],
       "type": "object"
     },
+    "DirUsage": {
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "last_request_at": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "count",
+        "path"
+      ],
+      "type": "object"
+    },
     "EventCompacted": {
       "properties": {
         "auto": {
@@ -1588,6 +1606,9 @@
     }
   },
   "rpc": {
+    "DirUsage": {
+      "$ref": "#/$defs/DirUsage"
+    },
     "HookSummary": {
       "$ref": "#/$defs/HookSummary"
     },

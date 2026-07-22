@@ -28,6 +28,24 @@ public struct Attachment: Codable, Sendable, Equatable {
     }
 }
 
+public struct DirUsage: Codable, Sendable, Equatable {
+    public var count: Int64
+    public var lastRequestAt: String?
+    public var path: String
+
+    public init(count: Int64, lastRequestAt: String? = nil, path: String) {
+        self.count = count
+        self.lastRequestAt = lastRequestAt
+        self.path = path
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case count = "count"
+        case lastRequestAt = "last_request_at"
+        case path = "path"
+    }
+}
+
 public struct EventCompacted: Codable, Sendable, Equatable {
     public var auto: Bool
     public var fromTokens: Int64
