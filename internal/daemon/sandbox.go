@@ -107,7 +107,13 @@ func seatbeltProfile(cwd string, extraDirs []string) string {
 	// (its crashpad handler does bootstrap_check_in); without it they fail to
 	// start under the sandbox.
 	b.WriteString("(allow mach-register)\n")
-	b.WriteString("(allow ipc-posix-shm*)\n\n")
+	b.WriteString("(allow ipc-posix-shm*)\n")
+	// pseudo-tty allows PTY allocation (grantpt/TIOCPTYGRANT, forkpty).
+	// Without it, tools that need a controlling terminal — tmux, script,
+	// expect, some REPLs — fail with "fork failed: Operation not permitted"
+	// even though process-fork is allowed, because the denial is on the pty
+	// grant, not on fork itself.
+	b.WriteString("(allow pseudo-tty)\n\n")
 
 	b.WriteString(";; cwd: read-write\n")
 	fmt.Fprintf(&b, "(allow file-read* (subpath %q))\n", realCwd)
