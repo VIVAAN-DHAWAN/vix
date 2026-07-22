@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -81,12 +83,12 @@ func TestBootstrap_VersionChangeOverwritesManagedFilesWithBak(t *testing.T) {
 		t.Fatalf("upgrade bootstrap: %v", err)
 	}
 
-	// Managed files replaced with defaults, old content in .bak.
+	// Fully-managed files (workflow, prompts, agents) are replaced with the
+	// defaults, old content preserved in .bak.
 	cases := []struct {
 		rel    string
 		custom string
 	}{
-		{"settings.json", customSettings},
 		{"config/workflow.json", customWorkflow},
 		{"prompts/goal/pursue.md", customPrompt},
 		{"agents/general.md", customAgent},
@@ -99,6 +101,27 @@ func TestBootstrap_VersionChangeOverwritesManagedFilesWithBak(t *testing.T) {
 		if got := readFileT(t, p+".bak"); got != tc.custom {
 			t.Errorf("%s.bak should hold the replaced content, got %q", tc.rel, got)
 		}
+	}
+
+	// settings.json is user-editable: the refresh MERGES the default under the
+	// user's file, so the user's custom key survives and the default keys are
+	// added. The original is preserved as .bak.
+	var merged map[string]any
+	if err := json.Unmarshal([]byte(readFileT(t, filepath.Join(dir, "settings.json"))), &merged); err != nil {
+		t.Fatalf("settings.json is not valid JSON after refresh: %v", err)
+	}
+	if merged["custom"] != "mine" {
+		t.Errorf("user key 'custom' must survive the refresh, got %v", merged["custom"])
+	}
+	var def map[string]any
+	json.Unmarshal([]byte(embeddedDefault(t, "settings.json")), &def)
+	for k := range def {
+		if _, ok := merged[k]; !ok {
+			t.Errorf("default key %q missing after merge", k)
+		}
+	}
+	if got := readFileT(t, filepath.Join(dir, "settings.json.bak")); got != customSettings {
+		t.Errorf("settings.json.bak should hold the replaced content, got %q", got)
 	}
 
 	if got := defaultsVersion(dir); got != "v0.4.3" {
@@ -138,8 +161,13 @@ func TestBootstrap_MissingMarkerOnExistingInstallTriggersRefresh(t *testing.T) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
-	if got, want := readFileT(t, filepath.Join(dir, "settings.json")), embeddedDefault(t, "settings.json"); got != want {
-		t.Error("existing install without marker should receive refreshed defaults")
+	// The merge adds the default keys to the minimal seed. Compare semantically
+	// since the merged output is canonically (alphabetically) ordered.
+	var got, want map[string]any
+	json.Unmarshal([]byte(readFileT(t, filepath.Join(dir, "settings.json"))), &got)
+	json.Unmarshal([]byte(embeddedDefault(t, "settings.json")), &want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("existing install without marker should receive the default keys\n got=%v\nwant=%v", got, want)
 	}
 	if got := readFileT(t, filepath.Join(dir, "settings.json.bak")); got != `{"version":1}` {
 		t.Errorf("old settings should be preserved as .bak, got %q", got)
@@ -153,6 +181,43 @@ func TestBootstrap_MissingMarkerOnExistingInstallTriggersRefresh(t *testing.T) {
 }
 
 // ── same version ──
+
+// TestBootstrap_VersionChangePreservesUserSettingsKeys guards the durability of
+// user-owned settings.json keys (mcp_servers, tools, deny_list, etc.) across a
+// vix upgrade: the managed-defaults refresh must merge, not clobber.
+func TestBootstrap_VersionChangePreservesUserSettingsKeys(t *testing.T) {
+	dir := t.TempDir()
+	if err := BootstrapHomeVixDir(dir, "v0.4.2"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	userSettings := `{
+      "version": 1,
+      "mcp_servers": [{"name": "postgres", "type": "stdio", "command": "npx"}],
+      "tools": {"grep": {"backend": "rg"}},
+      "features": {"telemetry": false}
+    }`
+	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(userSettings), 0o644)
+
+	if err := BootstrapHomeVixDir(dir, "v0.4.3"); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(readFileT(t, filepath.Join(dir, "settings.json"))), &got); err != nil {
+		t.Fatalf("settings.json invalid after upgrade: %v", err)
+	}
+	if _, ok := got["mcp_servers"]; !ok {
+		t.Error("mcp_servers must survive a vix upgrade")
+	}
+	if _, ok := got["tools"]; !ok {
+		t.Error("tools config must survive a vix upgrade")
+	}
+	// A user-overridden managed key wins over the default.
+	feats, _ := got["features"].(map[string]any)
+	if feats == nil || feats["telemetry"] != false {
+		t.Errorf("user's features.telemetry=false must be preserved, got %v", got["features"])
+	}
+}
 
 func TestBootstrap_SameVersionTouchesNothing(t *testing.T) {
 	dir := t.TempDir()

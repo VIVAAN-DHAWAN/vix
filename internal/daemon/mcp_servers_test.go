@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/get-vix/vix/internal/config"
 	"github.com/get-vix/vix/internal/protocol"
 )
 
@@ -128,5 +130,44 @@ func TestMCPHandlers(t *testing.T) {
 	resp, _ = s.GetHandler("mcp.set_enabled")(map[string]any{"enabled": true})
 	if resp["status"] != "error" {
 		t.Fatalf("missing name should error, got %v", resp)
+	}
+}
+
+// TestMCPServersSurviveBootstrap verifies the invariant the e2e MCP tab test
+// relies on: vixd's home bootstrap must not wipe a user's seeded mcp_servers.
+// Because managed-defaults refresh now merges settings.json (rather than
+// clobbering it), mcp_servers survive a version change with no special stamp,
+// and MCPServerSummaries still sees them.
+func TestMCPServersSurviveBootstrap(t *testing.T) {
+	home := t.TempDir()
+	settings := `{
+      "version": 1,
+      "mcp_servers": [
+        {"name": "alpha", "type": "stdio", "command": "vix-nonexistent-mcp"},
+        {"name": "bravo", "type": "url", "url": "http://127.0.0.1:1/mcp", "enabled": false}
+      ]
+    }`
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte(settings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh home has no defaults_version stamp, so bootstrap takes the
+	// version-change (refresh) path — which must MERGE, preserving mcp_servers.
+	if err := config.BootstrapHomeVixDir(home, "dev"); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(home, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"mcp_servers"`) {
+		t.Fatalf("mcp_servers wiped by bootstrap:\n%s", got)
+	}
+
+	s := &Server{handlers: make(map[string]HandlerFunc), homeVixDir: home}
+	sums := s.MCPServerSummaries()
+	if len(sums) != 2 {
+		t.Fatalf("expected 2 servers after bootstrap, got %d: %+v", len(sums), sums)
 	}
 }

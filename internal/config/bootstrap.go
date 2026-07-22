@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"log"
 	"os"
@@ -114,6 +115,12 @@ func seedAllDefaults(homeVixDir string) error {
 // defaults after a version change. Files whose content already matches the
 // default are left untouched; replaced files are first copied to <name>.bak
 // (clobbering any previous .bak).
+//
+// settings.json is special: it is user-editable (mcp_servers, tools backends,
+// deny_list, theme, feature toggles), so instead of clobbering it we deep-merge
+// the embedded default UNDER the user's file — new default keys are added while
+// every existing user key/value is preserved. This keeps a vix upgrade from
+// wiping a user's configuration.
 func refreshManagedDefaults(homeVixDir string) error {
 	files := append([]string(nil), managedDefaultFiles...)
 	trees, err := managedTreeFiles()
@@ -130,6 +137,21 @@ func refreshManagedDefaults(homeVixDir string) error {
 		target := filepath.Join(homeVixDir, filepath.FromSlash(rel))
 
 		current, readErr := os.ReadFile(target)
+
+		// settings.json: preserve user customizations by merging the embedded
+		// default under the existing file rather than replacing it.
+		if rel == "settings.json" && readErr == nil {
+			if merged, ok := mergeSettingsDefaults(data, current); ok {
+				// No-op guard: if the user's file already contains everything in
+				// the merged result (ignoring key order/formatting), leave it
+				// untouched so an unchanged install produces no rewrite or .bak.
+				if canon, cok := canonicalJSON(current); cok && bytes.Equal(canon, merged) {
+					continue
+				}
+				data = merged
+			}
+		}
+
 		if readErr == nil && bytes.Equal(current, data) {
 			continue // already up to date — no write, no .bak churn
 		}
@@ -148,6 +170,63 @@ func refreshManagedDefaults(homeVixDir string) error {
 		log.Printf("[config] bootstrap: refreshed %s (previous saved as .bak)", target)
 	}
 	return nil
+}
+
+// mergeSettingsDefaults deep-merges the embedded default settings.json UNDER the
+// user's current file: the result contains every key from both, and on conflict
+// the user's value wins (recursively for nested objects). It returns the
+// indented merged JSON and ok=true on success; on any parse error it returns
+// ok=false so the caller can fall back to a plain overwrite.
+func mergeSettingsDefaults(defaultData, currentData []byte) ([]byte, bool) {
+	var def, cur map[string]any
+	if err := json.Unmarshal(defaultData, &def); err != nil {
+		return nil, false
+	}
+	if err := json.Unmarshal(currentData, &cur); err != nil {
+		return nil, false
+	}
+	merged := deepMergeMaps(def, cur)
+	out, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return nil, false
+	}
+	return append(out, '\n'), true
+}
+
+// deepMergeMaps returns base overlaid with over: over's values win, and nested
+// maps are merged recursively. base and over are not modified.
+func deepMergeMaps(base, over map[string]any) map[string]any {
+	out := make(map[string]any, len(base)+len(over))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range over {
+		if existing, ok := out[k]; ok {
+			em, eok := existing.(map[string]any)
+			vm, vok := v.(map[string]any)
+			if eok && vok {
+				out[k] = deepMergeMaps(em, vm)
+				continue
+			}
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// canonicalJSON reparses and re-marshals data with the same indentation used for
+// merged output, so two JSON objects can be compared ignoring key order and
+// whitespace. Returns ok=false when data is not a JSON object.
+func canonicalJSON(data []byte) ([]byte, bool) {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, false
+	}
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return nil, false
+	}
+	return append(out, '\n'), true
 }
 
 // managedTreeFiles lists every embedded defaults/prompts/** and
