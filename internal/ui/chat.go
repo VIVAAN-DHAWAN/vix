@@ -116,7 +116,7 @@ func renderUserMessageAt(text string, width int, ts time.Time, attachments ...pr
 		}
 	}
 	for _, att := range attachments {
-		label := attachmentIcon(att) + " " + filepath.Base(att.Path)
+		label := attachmentIcon(att) + "  " + filepath.Base(att.Path)
 		label = lipgloss.NewStyle().MaxWidth(contentWidth).Render(label)
 		sb.WriteString(fmt.Sprintf("%s  %s\n", bar, userAttachmentStyle.Render(label)))
 	}

@@ -98,7 +98,7 @@ func TestAttachmentChipShownInTranscript(t *testing.T) {
 		t.Fatalf("attachment placeholder not rendered; screen:\n%s", h.UI.Snapshot())
 	}
 	// ...and the attachment chip line (icon + filename) shows the file.
-	if !h.UI.Contains("📎 notes.txt") {
+	if !h.UI.Contains("📎  notes.txt") {
 		t.Fatalf("attachment chip line not rendered in transcript; screen:\n%s", h.UI.Snapshot())
 	}
 }
@@ -141,4 +141,3 @@ func TestAttachFileOutsideWorkingDir(t *testing.T) {
 			marker, len(h.Mock.Requests()))
 	}
 }
-

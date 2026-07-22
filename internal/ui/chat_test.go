@@ -60,10 +60,10 @@ func TestRenderUserMessage_ShowsAttachments(t *testing.T) {
 	if !strings.Contains(out, "look at this") {
 		t.Errorf("missing body text; got:\n%s", out)
 	}
-	if !strings.Contains(out, "🖼 shot.png") {
+	if !strings.Contains(out, "🖼  shot.png") {
 		t.Errorf("missing image attachment line; got:\n%s", out)
 	}
-	if !strings.Contains(out, "📎 notes.pdf") {
+	if !strings.Contains(out, "📎  notes.pdf") {
 		t.Errorf("missing file attachment line; got:\n%s", out)
 	}
 	if len(msg.Attachments) != 2 {
@@ -75,7 +75,7 @@ func TestRenderUserMessage_AttachmentOnly(t *testing.T) {
 	strip := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
 	msg := renderUserMessage("", 80, protocol.Attachment{Type: "image", Path: "/tmp/only.png"})
 	out := strip(msg.Rendered)
-	if !strings.Contains(out, "🖼 only.png") {
+	if !strings.Contains(out, "🖼  only.png") {
 		t.Errorf("attachment-only message should show the chip; got:\n%s", out)
 	}
 }
@@ -84,7 +84,7 @@ func TestRerenderUserMessagePreservesAttachments(t *testing.T) {
 	strip := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
 	orig := renderUserMessage("hi", 120, protocol.Attachment{Type: "file", Path: "/tmp/a.txt"})
 	got := orig.rerender(nil, NewStyles(true), 60)
-	if !strings.Contains(strip(got.Rendered), "📎 a.txt") {
+	if !strings.Contains(strip(got.Rendered), "📎  a.txt") {
 		t.Errorf("rerender must keep the attachment line; got:\n%s", strip(got.Rendered))
 	}
 }
