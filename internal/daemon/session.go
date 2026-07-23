@@ -1984,7 +1984,6 @@ func (s *Session) handleInput(text string, attachments []protocol.Attachment) {
 
 	// Inner loop: agent turns
 	todoNudges := 0
-	deferredToolNudges := 0
 	for {
 		s.maybeAutoCompact()
 		system := s.buildSystemPrompt()
@@ -2023,12 +2022,6 @@ func (s *Session) handleInput(text string, attachments []protocol.Attachment) {
 		s.appendMessages(msg.ToParam())
 
 		if msg.StopReason == llm.StopEndTurn {
-			if deferredToolNudges < maxDeferredToolNudges && shouldNudgeDeferredToolUse(msg, s.tools) {
-				deferredToolNudges++
-				log.Printf("\033[33m[session] end_turn after deferred tool plan; nudging (%d/%d)\033[0m", deferredToolNudges, maxDeferredToolNudges)
-				s.appendMessages(deferredToolUseNudge())
-				continue
-			}
 			log.Printf("\033[34m[session] end of turn detected\033[0m")
 			s.endTurnCount++
 			if todoNudges < 3 && s.hasPendingTodos() {

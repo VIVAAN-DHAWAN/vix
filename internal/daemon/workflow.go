@@ -906,7 +906,6 @@ func (a *AgentRunner) Send(
 		llm.NewTextBlock(userPrompt),
 	))
 
-	deferredToolNudges := 0
 	for turn := 0; turn < a.MaxTurns; turn++ {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -1044,11 +1043,6 @@ func (a *AgentRunner) Send(
 		a.Messages = append(a.Messages, msg.ToParam())
 
 		if msg.StopReason == llm.StopEndTurn {
-			if deferredToolNudges < maxDeferredToolNudges && shouldNudgeDeferredToolUse(msg, a.Tools) {
-				deferredToolNudges++
-				a.Messages = append(a.Messages, deferredToolUseNudge())
-				continue
-			}
 			text := extractTextFromMessage(msg)
 			return text, nil
 		}

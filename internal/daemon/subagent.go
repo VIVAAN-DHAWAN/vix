@@ -156,7 +156,6 @@ func RunSubagent(
 
 	var totalInputTokens, totalOutputTokens, totalCacheCreation, totalCacheRead int64
 	var totalElapsed time.Duration
-	deferredToolNudges := 0
 
 	for turn := 0; turn < maxTurns; turn++ {
 		if ctx.Err() != nil {
@@ -207,11 +206,6 @@ func RunSubagent(
 		messages = append(messages, msg.ToParam())
 
 		if msg.StopReason == llm.StopEndTurn {
-			if deferredToolNudges < maxDeferredToolNudges && shouldNudgeDeferredToolUse(msg, tools) {
-				deferredToolNudges++
-				messages = append(messages, deferredToolUseNudge())
-				continue
-			}
 			text := extractTextFromMessage(msg)
 			return &SubagentResult{
 				Output:              text,
