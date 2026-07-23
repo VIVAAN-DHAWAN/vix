@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"strings"
@@ -92,6 +93,48 @@ func (d *Daemon) Restart() {
 	h.stopDaemon()
 	h.startDaemon(h.cfg)
 	h.startTUI(h.cfg)
+}
+
+// StartConflicting launches a second vixd against the SAME socket + env while
+// the primary daemon is still running, and returns its combined stdout+stderr
+// and exit code once it terminates. The socket-ownership guard in
+// ListenAndServe makes the second daemon refuse and exit non-zero without
+// touching the live socket. Without that guard the second daemon would unlink
+// the socket and block forever, so the wait is bounded and fails loudly if the
+// process does not exit (a regression: it hijacked the socket).
+func (d *Daemon) StartConflicting() (output string, exitCode int) {
+	h := d.h
+	bin, err := vixdBinary()
+	if err != nil {
+		h.t.Fatalf("e2e: %v", err)
+	}
+	cmd := exec.Command(bin)
+	cmd.Dir = h.workdir
+	cmd.Env = h.daemonEnv(h.cfg, nil)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Start(); err != nil {
+		h.t.Fatalf("e2e: start conflicting vixd: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case werr := <-done:
+		if werr == nil {
+			return buf.String(), 0
+		}
+		if ee, ok := werr.(*exec.ExitError); ok {
+			return buf.String(), ee.ExitCode()
+		}
+		h.t.Fatalf("e2e: conflicting vixd wait: %v", werr)
+	case <-time.After(15 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+		h.t.Fatalf("e2e: conflicting vixd did not exit within 15s — it may have hijacked the socket\n--- output ---\n%s", buf.String())
+	}
+	return buf.String(), -1
 }
 
 // SandboxMode returns the sandbox backend vixd selected

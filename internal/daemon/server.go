@@ -488,6 +488,20 @@ run leaves no trace. Anything else shows up in the Sessions tab under
 	}
 }
 
+// daemonAlreadyListening reports whether a process is actively accepting
+// connections on sockPath (a live daemon), as opposed to a stale socket file
+// left behind by a crashed one. A successful dial proves a listener is up; a
+// stale file refuses the connection. Auth is irrelevant here — we never send a
+// request, only test connectivity.
+func daemonAlreadyListening(sockPath string) bool {
+	conn, err := net.DialTimeout("unix", sockPath, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // ListenAndServe starts the Unix socket server and blocks until ctx is cancelled.
 func (s *Server) ListenAndServe(ctx context.Context) error {
 	// Wrap the incoming context so internal triggers (QuitAll) can cancel the
@@ -497,7 +511,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	s.cancel = cancel
 	s.serverCtx = ctx
 
-	// Remove stale socket file
+	// Refuse to hijack a socket a live daemon already owns. Unconditionally
+	// removing it would orphan the running daemon's in-flight sessions and
+	// silently point new client dials at this (possibly different-store)
+	// process — the exact failure where sessions vanish from the list and new
+	// sessions report "daemon is not responding".
+	if daemonAlreadyListening(s.sockPath) {
+		return fmt.Errorf("another vixd is already listening on %s — stop it first (vix daemon stop) or use a different --socket-path", s.sockPath)
+	}
+
+	// Remove a stale socket file left by a crashed daemon (no live listener).
 	if _, err := os.Stat(s.sockPath); err == nil {
 		os.Remove(s.sockPath)
 	}
