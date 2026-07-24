@@ -29,7 +29,7 @@ type RunRecord struct {
 	At       time.Time `json:"at"`
 	Status   string    `json:"status"` // ok | error | skipped | timeout
 	Error    string    `json:"error,omitempty"`
-	ThreadID string    `json:"session_id,omitempty"`
+	ThreadID string    `json:"thread_id,omitempty"`
 	Duration string    `json:"duration,omitempty"` // Go duration string
 }
 
@@ -42,7 +42,7 @@ type State struct {
 	LastStatus        string    `json:"last_status,omitempty"` // ok | error | skipped | timeout
 	LastError         string    `json:"last_error,omitempty"`
 	ConsecutiveErrors int       `json:"consecutive_errors,omitempty"`
-	LastThreadID      string    `json:"last_session_id,omitempty"`
+	LastThreadID      string    `json:"last_thread_id,omitempty"`
 	ValidationError   string    `json:"validation_error,omitempty"`
 	// AutoDisabled is set after maxConsecutiveErrors failures in a row. The
 	// job stays on disk for inspection; editing its spec file clears the flag

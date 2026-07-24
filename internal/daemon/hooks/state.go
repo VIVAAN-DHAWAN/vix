@@ -16,7 +16,7 @@ type RunRecord struct {
 	Async    bool      `json:"async"`
 	Event    string    `json:"event,omitempty"`
 	Error    string    `json:"error,omitempty"`
-	ThreadID string    `json:"session_id,omitempty"`
+	ThreadID string    `json:"thread_id,omitempty"`
 	Duration string    `json:"duration,omitempty"` // Go duration string
 }
 

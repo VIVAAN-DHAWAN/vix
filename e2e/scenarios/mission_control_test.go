@@ -67,7 +67,7 @@ type wsSnapshot struct {
 		ID         string `json:"id"`
 		RecentRuns []struct {
 			Status   string `json:"status"`
-			ThreadID string `json:"session_id"`
+			ThreadID string `json:"thread_id"`
 		} `json:"recent_runs"`
 	} `json:"jobs"`
 	Hooks []struct {
@@ -139,7 +139,7 @@ func TestMissionControlSnapshotIsReal(t *testing.T) {
 		ID         string `json:"id"`
 		RecentRuns []struct {
 			Status   string `json:"status"`
-			ThreadID string `json:"session_id"`
+			ThreadID string `json:"thread_id"`
 		} `json:"recent_runs"`
 	}
 	for i := range snap.Jobs {
