@@ -12,7 +12,7 @@ import (
 )
 
 // mcpTabDocURL is the documentation anchor advertised in the MCP tab header.
-const mcpTabDocURL = "https://getvix.dev/docs#guide-mcp"
+const mcpTabDocURL = "https://getvix.dev/docs#mcp"
 
 // mcpListMsg carries the configured MCP servers shown in the MCP tab.
 type mcpListMsg struct {
