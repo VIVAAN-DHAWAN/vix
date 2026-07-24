@@ -108,6 +108,77 @@ func TestIssuePlanTitle(t *testing.T) {
 	}
 }
 
+func TestGitHubItemTitle(t *testing.T) {
+	cases := []struct {
+		name      string
+		spec      jobs.Spec
+		finalText string
+		want      string
+		ok        bool
+	}{
+		{
+			name:      "issue header, short title kept whole",
+			spec:      jobs.Spec{ID: "triage-github-issues-get-vix-vix", Name: "Triage GitHub issues (get-vix/vix)"},
+			finalText: "# [Triage GitHub issues (get-vix/vix)] Triaging issue #53: Fix the flaky retry\n\nHi, I looked at issue #53: Fix the flaky retry. Here is my triage:",
+			want:      "[get-vix/vix] Triage GitHub issues #53 - Fix the flaky retry",
+			ok:        true,
+		},
+		{
+			name:      "issue header, long title trimmed to six words with ellipsis",
+			spec:      jobs.Spec{ID: "triage-github-issues-get-vix-vix", Name: "Triage GitHub issues (get-vix/vix)"},
+			finalText: "# [Triage GitHub issues (get-vix/vix)] Triaging issue #7: Add a configurable backoff to the retry loop please",
+			want:      "[get-vix/vix] Triage GitHub issues #7 - Add a configurable backoff to the…",
+			ok:        true,
+		},
+		{
+			name:      "pull request header",
+			spec:      jobs.Spec{ID: "review-github-prs-get-vix-vix", Name: "Review GitHub PRs (get-vix/vix)"},
+			finalText: "# [Review GitHub PRs (get-vix/vix)] Reviewing pull request #42: Bump the mock server timeout",
+			want:      "[get-vix/vix] Review GitHub PRs #42 - Bump the mock server timeout",
+			ok:        true,
+		},
+		{
+			name:      "job name without a repo suffix drops the bracket prefix",
+			spec:      jobs.Spec{ID: "triage", Name: "Triage GitHub issues"},
+			finalText: "# Triaging issue #9: Something broke",
+			want:      "Triage GitHub issues #9 - Something broke",
+			ok:        true,
+		},
+		{
+			name:      "no header falls back",
+			spec:      jobs.Spec{ID: "triage-github-issues-get-vix-vix", Name: "Triage GitHub issues (get-vix/vix)"},
+			finalText: "Nothing new to triage right now.",
+			ok:        false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := githubItemTitle(c.spec, c.finalText)
+			if ok != c.ok {
+				t.Fatalf("ok = %v, want %v", ok, c.ok)
+			}
+			if ok && got != c.want {
+				t.Errorf("title = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestFirst6Words(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"one two three", "one two three"},
+		{"one two three four five six", "one two three four five six"},
+		{"one two three four five six seven", "one two three four five six…"},
+		{"  spaced   out   words  here ", "spaced out words here"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := first6Words(c.in); got != c.want {
+			t.Errorf("first6Words(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestTitleTranscriptSkipsToolBlocksAndCaps(t *testing.T) {
 	msgs := []llm.MessageParam{
 		llm.NewUserMessage(llm.NewTextBlock("question")),

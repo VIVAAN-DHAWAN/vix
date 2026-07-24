@@ -183,12 +183,17 @@ consume:
 	// Every other finished run lands in open/: visible in the Vix-initiated
 	// sessions group until the user dismisses it (or retention sweeps it).
 	session.jobStatus = res.Status
-	// Successful GitHub-plan runs open their findings with a deterministic
-	// header line naming the item they picked; turn that into a per-item session
-	// title (e.g. "[Plan GitHub issues (get-vix/vix)] Addressing issue #29 — …").
+	// Successful GitHub runs open their findings with a deterministic header line
+	// naming the item they picked; turn that into a per-item session title:
+	// plan runs -> "[Plan GitHub issues (get-vix/vix)] Addressing issue #29 — …";
+	// triage/review runs -> "[get-vix/vix] Triage GitHub issues #53 - <title>…".
 	// Other jobs (and the "nothing new"/error branches) keep the static title.
 	if res.Status == jobs.StatusOK {
 		if title, ok := issuePlanTitle(spec, finalText.String()); ok {
+			session.mu.Lock()
+			session.title = title
+			session.mu.Unlock()
+		} else if title, ok := githubItemTitle(spec, finalText.String()); ok {
 			session.mu.Lock()
 			session.title = title
 			session.mu.Unlock()
@@ -244,6 +249,60 @@ func issuePlanTitle(spec jobs.Spec, finalText string) (string, bool) {
 		name = spec.ID
 	}
 	return fmt.Sprintf("[%s] Addressing %s #%s — %s", name, kind, number, itemTitle), true
+}
+
+// githubItemHeaderRe matches the deterministic H1 header the GitHub watch jobs'
+// act step emits (githubWatchWorkflow in jobWorkflows.ts):
+//
+//	# [Triage GitHub issues (get-vix/vix)] Triaging issue #53: <the issue title>
+//	# [Review GitHub PRs (get-vix/vix)] Reviewing pull request #42: <the PR title>
+//
+// It captures the item number (group 1) and title (group 2). `.` never spans
+// newlines, so the match stays on the header line.
+var githubItemHeaderRe = regexp.MustCompile(`(?:Triaging issue|Reviewing pull request) #(\d+): (.+)`)
+
+// jobNameRepoRe splits a GitHub watch job's name into its action label and the
+// "owner/repo" carried in trailing parentheses, e.g.
+// "Triage GitHub issues (get-vix/vix)" -> ("Triage GitHub issues", "get-vix/vix").
+var jobNameRepoRe = regexp.MustCompile(`^(.*?)\s*\(([^)]+)\)\s*$`)
+
+// githubItemTitle derives a per-item session title for a GitHub triage/review
+// run from its findings, e.g.
+// "[get-vix/vix] Triage GitHub issues #53 - Fix the flaky retry backoff…".
+// The item title is trimmed to its first six words (with an ellipsis only when
+// longer). Returns ok=false when the deterministic header is absent, so the
+// caller keeps the static jobRunTitle.
+func githubItemTitle(spec jobs.Spec, finalText string) (string, bool) {
+	m := githubItemHeaderRe.FindStringSubmatch(finalText)
+	if m == nil {
+		return "", false
+	}
+	number, itemTitle := m[1], strings.TrimSpace(m[2])
+	if itemTitle == "" {
+		return "", false
+	}
+	action, repo := spec.Name, ""
+	if rm := jobNameRepoRe.FindStringSubmatch(spec.Name); rm != nil {
+		action, repo = strings.TrimSpace(rm[1]), strings.TrimSpace(rm[2])
+	}
+	if action == "" {
+		action = spec.ID
+	}
+	prefix := ""
+	if repo != "" {
+		prefix = "[" + repo + "] "
+	}
+	return fmt.Sprintf("%s%s #%s - %s", prefix, action, number, first6Words(itemTitle)), true
+}
+
+// first6Words returns s trimmed to its first six whitespace-separated words,
+// appending an ellipsis only when words were dropped.
+func first6Words(s string) string {
+	fields := strings.Fields(s)
+	if len(fields) <= 6 {
+		return strings.Join(fields, " ")
+	}
+	return strings.Join(fields[:6], " ") + "…"
 }
 
 // pushCommand feeds a command to the session loop, giving up when either
