@@ -2,7 +2,7 @@ package ui
 
 import "strings"
 
-// chatCache caches the expensive full-transcript render of a session's chat:
+// chatCache caches the expensive full-transcript render of a thread's chat:
 // the buildRenderedChat output split into lines plus a visual-row prefix sum.
 // Rebuilding is O(transcript) and previously ran on every frame (30 fps while
 // the spinner ticks); with the cache it runs only when the transcript, the
@@ -30,7 +30,7 @@ func (c *chatCache) invalidate() { c.gen++ }
 // the total visual rows occupied by lines[:i]. The result is rebuilt only when
 // the transcript length, width, or cache generation changed. Callers must not
 // mutate the returned slices.
-func (sess *SessionState) cachedChatLines(s Styles, innerWidth int) ([]string, []int) {
+func (sess *ThreadState) cachedChatLines(s Styles, innerWidth int) ([]string, []int) {
 	c := &sess.chatCache
 	if c.built && c.builtGen == c.gen && c.msgCount == len(sess.chatMessages) && c.width == innerWidth {
 		return c.lines, c.rowStart

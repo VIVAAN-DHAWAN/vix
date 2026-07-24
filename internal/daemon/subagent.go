@@ -52,7 +52,7 @@ type TurnHooks struct {
 	OnToolResult    func(toolID, name string, input map[string]any, output string, isError bool)
 	OnBeforeStream  func(cancel context.CancelFunc)
 	// OnRetry is called when a retryable API error is about to be retried.
-	// Mirrors session.streamWithRetry's event.retry emission so workflow-agent
+	// Mirrors thread.streamWithRetry's event.retry emission so workflow-agent
 	// retries become visible in the trajectory instead of only vixd.log.
 	OnRetry func(attempt, maxRetries, waitSecs int, reason string)
 	// OnThinkingStall is called when a thinking block exceeded its stall
@@ -79,9 +79,9 @@ func nextTaskID() string {
 
 // buildRunnerClient constructs the LLM client for a workflow step or subagent.
 // cfgModel/cfgEffort come from the agent definition; an empty model inherits
-// parentModel (the parent session's model). plugins is the daemon's plugin
+// parentModel (the parent thread's model). plugins is the daemon's plugin
 // source so runner clients get the same request overrides (headers, system
-// prefix) as session-level clients. When the configured model's
+// prefix) as thread-level clients. When the configured model's
 // provider has no credential — e.g. a shipped or stale agent file pins a
 // provider the user never set up — it falls back to parentModel instead of
 // failing the whole run. Returns the client and the model spec actually used.
@@ -96,7 +96,7 @@ func buildRunnerClient(cfgModel, cfgEffort, parentModel string, plugins PluginSo
 	}
 	client, err := llm.NewFromModel(model, plugins, effort, maxTokens)
 	if err != nil && errors.Is(err, llm.ErrNoCredential) && parentModel != "" && model != parentModel {
-		log.Printf("[agent] model %s unusable (%v) — falling back to session model %s", model, err, parentModel)
+		log.Printf("[agent] model %s unusable (%v) — falling back to thread model %s", model, err, parentModel)
 		model = parentModel
 		if cfgEffort == "" {
 			effort = llm.DefaultEffortFromSpec(model)
@@ -112,9 +112,9 @@ func buildRunnerClient(cfgModel, cfgEffort, parentModel string, plugins PluginSo
 // searchDirs is the ordered set of .vix root directories to resolve system
 // prompt includes from, in precedence order (highest first).
 //
-// toolTimeoutDefault and toolTimeoutMax propagate the parent session's
+// toolTimeoutDefault and toolTimeoutMax propagate the parent thread's
 // tool_timeouts bounds so tool calls made by the subagent honour the same
-// floor/cap as the rest of the session. Passing zero for either falls back
+// floor/cap as the rest of the thread. Passing zero for either falls back
 // to package-level defaults (defaultToolTimeoutDefault / defaultToolTimeoutMax).
 func RunSubagent(
 	ctx context.Context,
@@ -174,7 +174,7 @@ func RunSubagent(
 		msg, elapsed, err := client.StreamMessage(ctx, system, messages, tools, onDelta, onThinkingDelta)
 		if err != nil {
 			// Thinking stall: append the nudge and continue the turn loop.
-			// Unlike session/workflow this has no outer retry budget — it's
+			// Unlike thread/workflow this has no outer retry budget — it's
 			// bounded by maxTurns, so a pathological stall still terminates.
 			// finalNext=false: subagent doesn't have a "final retry with
 			// thinking disabled" concept; turns are semantically distinct
@@ -271,7 +271,7 @@ func RunSubagent(
 // using the unified dispatcher. No confirmation prompts, no interactive tool
 // handlers — tools run directly with confirmed=true.
 //
-// toolTimeoutDefault and toolTimeoutMax propagate the session-configured
+// toolTimeoutDefault and toolTimeoutMax propagate the thread-configured
 // tool_timeouts bounds from settings.json into the dispatcher so workflow
 // agent tool calls honour the same floor/cap as the main agent. Passing zero
 // for either value falls back to the package-level defaults

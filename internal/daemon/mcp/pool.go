@@ -17,8 +17,8 @@ type toolEntry struct {
 	def           ToolDef
 }
 
-// Pool manages MCP server connections for a single session.
-// It is created in session.initBrain and torn down when the session context
+// Pool manages MCP server connections for a single thread.
+// It is created in thread.initBrain and torn down when the thread context
 // is cancelled (stdio child processes are killed via their exec.CommandContext).
 type Pool struct {
 	clients map[string]client // server name → client
@@ -82,7 +82,7 @@ func allowedToolCount(cfg ServerConfig, c client) int {
 
 // ProbeServers connects to each configured server, records whether it came up
 // and how many tools it exposes, then tears the connection down. It is used by
-// the MCP tab to report status without an active chat session. Servers with an
+// the MCP tab to report status without an active chat thread. Servers with an
 // empty name are skipped. The probe respects ctx for cancellation/timeout.
 func ProbeServers(ctx context.Context, configs []ServerConfig) []ServerStatus {
 	out := make([]ServerStatus, 0, len(configs))
@@ -112,7 +112,7 @@ func ProbeServers(ctx context.Context, configs []ServerConfig) []ServerStatus {
 // does not prevent the rest from working.
 //
 // The caller is responsible for deny-list URL filtering before passing configs;
-// see session.initBrain which calls isURLDenied before adding an entry.
+// see thread.initBrain which calls isURLDenied before adding an entry.
 func NewPool(ctx context.Context, configs []ServerConfig) *Pool {
 	p := &Pool{
 		clients: make(map[string]client, len(configs)),
@@ -212,7 +212,7 @@ func (p *Pool) ToolSchemas() []llm.ToolParam {
 
 // Call dispatches a tool call to the appropriate MCP server and returns the
 // result. qualifiedName must be of the form "mcp__<server>__<tool>".
-// Internal vix params (cwd, allowed_dirs, headless, _session, confirmed) are
+// Internal vix params (cwd, allowed_dirs, headless, _thread, confirmed) are
 // stripped before forwarding to the server.
 func (p *Pool) Call(qualifiedName string, args map[string]any) (string, bool, error) {
 	serverName := serverNameFrom(qualifiedName)
@@ -271,7 +271,7 @@ var internalParams = map[string]bool{
 	"cwd":          true,
 	"allowed_dirs": true,
 	"headless":     true,
-	"_session":     true,
+	"_thread":      true,
 	"confirmed":    true,
 }
 

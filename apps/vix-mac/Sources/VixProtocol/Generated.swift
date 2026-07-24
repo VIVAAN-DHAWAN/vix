@@ -2,8 +2,8 @@
 // Regenerate with `make mac-models` after changing internal/protocol.
 //
 // These types mirror the vix daemon⇄client wire protocol
-// (internal/protocol). They decode the `data` payload of a SessionEvent
-// and encode the `data` of a SessionCommand.
+// (internal/protocol). They decode the `data` payload of a ThreadEvent
+// and encode the `data` of a ThreadCommand.
 
 import Foundation
 
@@ -122,23 +122,23 @@ public struct EventJobDone: Codable, Sendable, Equatable {
     public var error: String?
     public var jobId: String
     public var name: String?
-    public var sessionId: String?
     public var status: String
+    public var threadId: String?
 
-    public init(error: String? = nil, jobId: String, name: String? = nil, sessionId: String? = nil, status: String) {
+    public init(error: String? = nil, jobId: String, name: String? = nil, status: String, threadId: String? = nil) {
         self.error = error
         self.jobId = jobId
         self.name = name
-        self.sessionId = sessionId
         self.status = status
+        self.threadId = threadId
     }
 
     enum CodingKeys: String, CodingKey {
         case error = "error"
         case jobId = "job_id"
         case name = "name"
-        case sessionId = "session_id"
         case status = "status"
+        case threadId = "thread_id"
     }
 }
 
@@ -261,17 +261,17 @@ public struct EventReplay: Codable, Sendable, Equatable {
     public var activeWorkflow: String?
     public var messages: [ReplayMessage]
     public var model: String?
-    public var sessionMode: String?
+    public var threadMode: String?
     public var title: String?
     public var todos: [TodoItem]?
     public var warnings: [String]?
 
-    public init(activePlan: Plan? = nil, activeWorkflow: String? = nil, messages: [ReplayMessage], model: String? = nil, sessionMode: String? = nil, title: String? = nil, todos: [TodoItem]? = nil, warnings: [String]? = nil) {
+    public init(activePlan: Plan? = nil, activeWorkflow: String? = nil, messages: [ReplayMessage], model: String? = nil, threadMode: String? = nil, title: String? = nil, todos: [TodoItem]? = nil, warnings: [String]? = nil) {
         self.activePlan = activePlan
         self.activeWorkflow = activeWorkflow
         self.messages = messages
         self.model = model
-        self.sessionMode = sessionMode
+        self.threadMode = threadMode
         self.title = title
         self.todos = todos
         self.warnings = warnings
@@ -282,7 +282,7 @@ public struct EventReplay: Codable, Sendable, Equatable {
         case activeWorkflow = "active_workflow"
         case messages = "messages"
         case model = "model"
-        case sessionMode = "session_mode"
+        case threadMode = "thread_mode"
         case title = "title"
         case todos = "todos"
         case warnings = "warnings"
@@ -307,33 +307,6 @@ public struct EventRetry: Codable, Sendable, Equatable {
         case maxRetries = "max_retries"
         case reason = "reason"
         case waitSecs = "wait_secs"
-    }
-}
-
-public struct EventSessionStarted: Codable, Sendable, Equatable {
-    public var forkTurnIdx: Int64?
-    public var parentId: String?
-    public var sessionId: String
-    public var startedAt: String
-
-    public init(forkTurnIdx: Int64? = nil, parentId: String? = nil, sessionId: String, startedAt: String) {
-        self.forkTurnIdx = forkTurnIdx
-        self.parentId = parentId
-        self.sessionId = sessionId
-        self.startedAt = startedAt
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case forkTurnIdx = "fork_turn_idx"
-        case parentId = "parent_id"
-        case sessionId = "session_id"
-        case startedAt = "started_at"
-    }
-}
-
-public struct EventSessionsChanged: Codable, Sendable, Equatable {
-
-    public init() {
     }
 }
 
@@ -409,6 +382,33 @@ public struct EventThinkingStall: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case elapsedMs = "elapsed_ms"
         case summaryChars = "summary_chars"
+    }
+}
+
+public struct EventThreadStarted: Codable, Sendable, Equatable {
+    public var forkTurnIdx: Int64?
+    public var parentId: String?
+    public var startedAt: String
+    public var threadId: String
+
+    public init(forkTurnIdx: Int64? = nil, parentId: String? = nil, startedAt: String, threadId: String) {
+        self.forkTurnIdx = forkTurnIdx
+        self.parentId = parentId
+        self.startedAt = startedAt
+        self.threadId = threadId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case forkTurnIdx = "fork_turn_idx"
+        case parentId = "parent_id"
+        case startedAt = "started_at"
+        case threadId = "thread_id"
+    }
+}
+
+public struct EventThreadsChanged: Codable, Sendable, Equatable {
+
+    public init() {
     }
 }
 
@@ -988,243 +988,6 @@ public struct ReplayMessage: Codable, Sendable, Equatable {
     }
 }
 
-public struct SessionCommand: Codable, Sendable, Equatable {
-    public var authToken: String?
-    public var data: JSONValue
-    public var type: String
-
-    public init(authToken: String? = nil, data: JSONValue, type: String) {
-        self.authToken = authToken
-        self.data = data
-        self.type = type
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case authToken = "auth_token"
-        case data = "data"
-        case type = "type"
-    }
-}
-
-public struct SessionConfirmData: Codable, Sendable, Equatable {
-    public var approved: Bool
-    public var persistDirs: Bool?
-
-    public init(approved: Bool, persistDirs: Bool? = nil) {
-        self.approved = approved
-        self.persistDirs = persistDirs
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case approved = "approved"
-        case persistDirs = "persist_dirs"
-    }
-}
-
-public struct SessionEvent: Codable, Sendable, Equatable {
-    public var data: JSONValue
-    public var type: String
-
-    public init(data: JSONValue, type: String) {
-        self.data = data
-        self.type = type
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case data = "data"
-        case type = "type"
-    }
-}
-
-public struct SessionInputData: Codable, Sendable, Equatable {
-    public var attachments: [Attachment]?
-    public var text: String
-
-    public init(attachments: [Attachment]? = nil, text: String) {
-        self.attachments = attachments
-        self.text = text
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case attachments = "attachments"
-        case text = "text"
-    }
-}
-
-public struct SessionPlanActionData: Codable, Sendable, Equatable {
-    public var action: String
-    public var text: String?
-
-    public init(action: String, text: String? = nil) {
-        self.action = action
-        self.text = text
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case action = "action"
-        case text = "text"
-    }
-}
-
-public struct SessionSetModelData: Codable, Sendable, Equatable {
-    public var model: String
-
-    public init(model: String) {
-        self.model = model
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case model = "model"
-    }
-}
-
-public struct SessionStartData: Codable, Sendable, Equatable {
-    public var attachSessionId: String?
-    public var clientVersion: String?
-    public var configDir: String?
-    public var cwd: String
-    public var enableAutomaticDirectoryAccess: Bool
-    public var enableAutomaticWritePermission: Bool
-    public var forceInit: Bool
-    public var forkSessionId: String?
-    public var forkTurnIdx: Int64?
-    public var headless: Bool
-    public var model: String
-
-    public init(attachSessionId: String? = nil, clientVersion: String? = nil, configDir: String? = nil, cwd: String, enableAutomaticDirectoryAccess: Bool, enableAutomaticWritePermission: Bool, forceInit: Bool, forkSessionId: String? = nil, forkTurnIdx: Int64? = nil, headless: Bool, model: String) {
-        self.attachSessionId = attachSessionId
-        self.clientVersion = clientVersion
-        self.configDir = configDir
-        self.cwd = cwd
-        self.enableAutomaticDirectoryAccess = enableAutomaticDirectoryAccess
-        self.enableAutomaticWritePermission = enableAutomaticWritePermission
-        self.forceInit = forceInit
-        self.forkSessionId = forkSessionId
-        self.forkTurnIdx = forkTurnIdx
-        self.headless = headless
-        self.model = model
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case attachSessionId = "attach_session_id"
-        case clientVersion = "client_version"
-        case configDir = "config_dir"
-        case cwd = "cwd"
-        case enableAutomaticDirectoryAccess = "enable_automatic_directory_access"
-        case enableAutomaticWritePermission = "enable_automatic_write_permission"
-        case forceInit = "force_init"
-        case forkSessionId = "fork_session_id"
-        case forkTurnIdx = "fork_turn_idx"
-        case headless = "headless"
-        case model = "model"
-    }
-}
-
-public struct SessionSummary: Codable, Sendable, Equatable {
-    public var attached: Bool?
-    public var cwd: String
-    public var firstMessage: String?
-    public var id: String
-    public var jobStatus: String?
-    public var lastRequestAt: String?
-    public var model: String
-    public var origin: String?
-    public var startedAt: String?
-    public var title: String?
-    public var trigger: TriggerInfo?
-    public var unread: Bool?
-
-    public init(attached: Bool? = nil, cwd: String, firstMessage: String? = nil, id: String, jobStatus: String? = nil, lastRequestAt: String? = nil, model: String, origin: String? = nil, startedAt: String? = nil, title: String? = nil, trigger: TriggerInfo? = nil, unread: Bool? = nil) {
-        self.attached = attached
-        self.cwd = cwd
-        self.firstMessage = firstMessage
-        self.id = id
-        self.jobStatus = jobStatus
-        self.lastRequestAt = lastRequestAt
-        self.model = model
-        self.origin = origin
-        self.startedAt = startedAt
-        self.title = title
-        self.trigger = trigger
-        self.unread = unread
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case attached = "attached"
-        case cwd = "cwd"
-        case firstMessage = "first_message"
-        case id = "id"
-        case jobStatus = "job_status"
-        case lastRequestAt = "last_request_at"
-        case model = "model"
-        case origin = "origin"
-        case startedAt = "started_at"
-        case title = "title"
-        case trigger = "trigger"
-        case unread = "unread"
-    }
-}
-
-public struct SessionTrimData: Codable, Sendable, Equatable {
-    public var turnIdx: Int64
-
-    public init(turnIdx: Int64) {
-        self.turnIdx = turnIdx
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case turnIdx = "turn_idx"
-    }
-}
-
-public struct SessionUserAnswerData: Codable, Sendable, Equatable {
-    public var answer: String
-    public var answers: [String: String]?
-    public var text: String?
-
-    public init(answer: String, answers: [String: String]? = nil, text: String? = nil) {
-        self.answer = answer
-        self.answers = answers
-        self.text = text
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case answer = "answer"
-        case answers = "answers"
-        case text = "text"
-    }
-}
-
-public struct SessionWorkflowData: Codable, Sendable, Equatable {
-    public var name: String
-    public var text: String
-    public var workflow: JSONValue?
-
-    public init(name: String, text: String, workflow: JSONValue? = nil) {
-        self.name = name
-        self.text = text
-        self.workflow = workflow
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case name = "name"
-        case text = "text"
-        case workflow = "workflow"
-    }
-}
-
-public struct SessionWorkflowMessageData: Codable, Sendable, Equatable {
-    public var text: String
-
-    public init(text: String) {
-        self.text = text
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case text = "text"
-    }
-}
-
 public struct SkillInfo: Codable, Sendable, Equatable {
     public var description: String
     public var name: String
@@ -1273,6 +1036,243 @@ public struct StepCost: Codable, Sendable, Equatable {
         case model = "model"
         case outputTokens = "output_tokens"
         case stepId = "step_id"
+    }
+}
+
+public struct ThreadCommand: Codable, Sendable, Equatable {
+    public var authToken: String?
+    public var data: JSONValue
+    public var type: String
+
+    public init(authToken: String? = nil, data: JSONValue, type: String) {
+        self.authToken = authToken
+        self.data = data
+        self.type = type
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case authToken = "auth_token"
+        case data = "data"
+        case type = "type"
+    }
+}
+
+public struct ThreadConfirmData: Codable, Sendable, Equatable {
+    public var approved: Bool
+    public var persistDirs: Bool?
+
+    public init(approved: Bool, persistDirs: Bool? = nil) {
+        self.approved = approved
+        self.persistDirs = persistDirs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case approved = "approved"
+        case persistDirs = "persist_dirs"
+    }
+}
+
+public struct ThreadEvent: Codable, Sendable, Equatable {
+    public var data: JSONValue
+    public var type: String
+
+    public init(data: JSONValue, type: String) {
+        self.data = data
+        self.type = type
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case data = "data"
+        case type = "type"
+    }
+}
+
+public struct ThreadInputData: Codable, Sendable, Equatable {
+    public var attachments: [Attachment]?
+    public var text: String
+
+    public init(attachments: [Attachment]? = nil, text: String) {
+        self.attachments = attachments
+        self.text = text
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case attachments = "attachments"
+        case text = "text"
+    }
+}
+
+public struct ThreadPlanActionData: Codable, Sendable, Equatable {
+    public var action: String
+    public var text: String?
+
+    public init(action: String, text: String? = nil) {
+        self.action = action
+        self.text = text
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case action = "action"
+        case text = "text"
+    }
+}
+
+public struct ThreadSetModelData: Codable, Sendable, Equatable {
+    public var model: String
+
+    public init(model: String) {
+        self.model = model
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case model = "model"
+    }
+}
+
+public struct ThreadStartData: Codable, Sendable, Equatable {
+    public var attachThreadId: String?
+    public var clientVersion: String?
+    public var configDir: String?
+    public var cwd: String
+    public var enableAutomaticDirectoryAccess: Bool
+    public var enableAutomaticWritePermission: Bool
+    public var forceInit: Bool
+    public var forkThreadId: String?
+    public var forkTurnIdx: Int64?
+    public var headless: Bool
+    public var model: String
+
+    public init(attachThreadId: String? = nil, clientVersion: String? = nil, configDir: String? = nil, cwd: String, enableAutomaticDirectoryAccess: Bool, enableAutomaticWritePermission: Bool, forceInit: Bool, forkThreadId: String? = nil, forkTurnIdx: Int64? = nil, headless: Bool, model: String) {
+        self.attachThreadId = attachThreadId
+        self.clientVersion = clientVersion
+        self.configDir = configDir
+        self.cwd = cwd
+        self.enableAutomaticDirectoryAccess = enableAutomaticDirectoryAccess
+        self.enableAutomaticWritePermission = enableAutomaticWritePermission
+        self.forceInit = forceInit
+        self.forkThreadId = forkThreadId
+        self.forkTurnIdx = forkTurnIdx
+        self.headless = headless
+        self.model = model
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case attachThreadId = "attach_thread_id"
+        case clientVersion = "client_version"
+        case configDir = "config_dir"
+        case cwd = "cwd"
+        case enableAutomaticDirectoryAccess = "enable_automatic_directory_access"
+        case enableAutomaticWritePermission = "enable_automatic_write_permission"
+        case forceInit = "force_init"
+        case forkThreadId = "fork_thread_id"
+        case forkTurnIdx = "fork_turn_idx"
+        case headless = "headless"
+        case model = "model"
+    }
+}
+
+public struct ThreadSummary: Codable, Sendable, Equatable {
+    public var attached: Bool?
+    public var cwd: String
+    public var firstMessage: String?
+    public var id: String
+    public var jobStatus: String?
+    public var lastRequestAt: String?
+    public var model: String
+    public var origin: String?
+    public var startedAt: String?
+    public var title: String?
+    public var trigger: TriggerInfo?
+    public var unread: Bool?
+
+    public init(attached: Bool? = nil, cwd: String, firstMessage: String? = nil, id: String, jobStatus: String? = nil, lastRequestAt: String? = nil, model: String, origin: String? = nil, startedAt: String? = nil, title: String? = nil, trigger: TriggerInfo? = nil, unread: Bool? = nil) {
+        self.attached = attached
+        self.cwd = cwd
+        self.firstMessage = firstMessage
+        self.id = id
+        self.jobStatus = jobStatus
+        self.lastRequestAt = lastRequestAt
+        self.model = model
+        self.origin = origin
+        self.startedAt = startedAt
+        self.title = title
+        self.trigger = trigger
+        self.unread = unread
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case attached = "attached"
+        case cwd = "cwd"
+        case firstMessage = "first_message"
+        case id = "id"
+        case jobStatus = "job_status"
+        case lastRequestAt = "last_request_at"
+        case model = "model"
+        case origin = "origin"
+        case startedAt = "started_at"
+        case title = "title"
+        case trigger = "trigger"
+        case unread = "unread"
+    }
+}
+
+public struct ThreadTrimData: Codable, Sendable, Equatable {
+    public var turnIdx: Int64
+
+    public init(turnIdx: Int64) {
+        self.turnIdx = turnIdx
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case turnIdx = "turn_idx"
+    }
+}
+
+public struct ThreadUserAnswerData: Codable, Sendable, Equatable {
+    public var answer: String
+    public var answers: [String: String]?
+    public var text: String?
+
+    public init(answer: String, answers: [String: String]? = nil, text: String? = nil) {
+        self.answer = answer
+        self.answers = answers
+        self.text = text
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case answer = "answer"
+        case answers = "answers"
+        case text = "text"
+    }
+}
+
+public struct ThreadWorkflowData: Codable, Sendable, Equatable {
+    public var name: String
+    public var text: String
+    public var workflow: JSONValue?
+
+    public init(name: String, text: String, workflow: JSONValue? = nil) {
+        self.name = name
+        self.text = text
+        self.workflow = workflow
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name = "name"
+        case text = "text"
+        case workflow = "workflow"
+    }
+}
+
+public struct ThreadWorkflowMessageData: Codable, Sendable, Equatable {
+    public var text: String
+
+    public init(text: String) {
+        self.text = text
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case text = "text"
     }
 }
 

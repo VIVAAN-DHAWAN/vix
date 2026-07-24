@@ -58,7 +58,7 @@ type FileCompleter struct {
 	entries    []os.DirEntry
 	selected   int
 	// dirsOnly restricts the listing to directories. Used by the welcome-screen
-	// working-directory picker (Ctrl+O on a draft session).
+	// working-directory picker (Ctrl+O on a draft thread).
 	dirsOnly bool
 	// title overrides the popup's border title. Empty renders the default
 	// " Files " label.
@@ -67,7 +67,7 @@ type FileCompleter struct {
 
 // OpenDir shows the completer in directory-only mode, rooted at dir. Used by the
 // draft welcome screen to let the user pick a working directory before the
-// session starts.
+// thread starts.
 func (f *FileCompleter) OpenDir(dir string) {
 	f.dirsOnly = true
 	f.title = " Select working directory "

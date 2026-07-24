@@ -8,9 +8,9 @@ import (
 
 // TestHandleWorkflowCommand_InlineRegistersAndRuns drives the inline-workflow
 // dispatch path: a self-contained definition (no entry in config/workflow.json)
-// is registered transiently into the session's workflow set and executed.
+// is registered transiently into the thread's workflow set and executed.
 func TestHandleWorkflowCommand_InlineRegistersAndRuns(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	def := &WorkflowDef{
 		Name:       "inline-watch",
 		EntryPoint: StepRef{ID: "poll"},
@@ -27,7 +27,7 @@ func TestHandleWorkflowCommand_InlineRegistersAndRuns(t *testing.T) {
 		t.Fatalf("expected no workflows preloaded, got %d", len(s.snapshotWorkflows()))
 	}
 
-	// Name is empty: the session must resolve the run from the inline definition.
+	// Name is empty: the thread must resolve the run from the inline definition.
 	s.handleWorkflowCommand("", "objective", raw)
 
 	found := false
@@ -37,7 +37,7 @@ func TestHandleWorkflowCommand_InlineRegistersAndRuns(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("inline workflow was not registered into the session set")
+		t.Errorf("inline workflow was not registered into the thread set")
 	}
 
 	out := streamedText(drainEvents(s))
@@ -51,7 +51,7 @@ func TestHandleWorkflowCommand_InlineRegistersAndRuns(t *testing.T) {
 // workflow, so reopening the persisted run never warns that the unpersisted
 // workflow "no longer exists".
 func TestHandleWorkflowCommand_FinishedInlineRunResetsToChat(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	def := &WorkflowDef{
 		Name:       "plan-issues-get-vix-vix",
 		EntryPoint: StepRef{ID: "poll"},
@@ -66,8 +66,8 @@ func TestHandleWorkflowCommand_FinishedInlineRunResetsToChat(t *testing.T) {
 
 	s.handleWorkflowCommand("", "objective", raw)
 
-	if s.sessionMode != "chat" {
-		t.Errorf("sessionMode = %q, want %q after a finished inline run", s.sessionMode, "chat")
+	if s.threadMode != "chat" {
+		t.Errorf("threadMode = %q, want %q after a finished inline run", s.threadMode, "chat")
 	}
 	if s.activeWorkflow != "" {
 		t.Errorf("activeWorkflow = %q, want empty after a finished inline run", s.activeWorkflow)
@@ -79,7 +79,7 @@ func TestHandleWorkflowCommand_FinishedInlineRunResetsToChat(t *testing.T) {
 // to chat mode and clears its run state — so reopening a failed scheduled run
 // replays its transcript instead of warning the workflow "no longer exists".
 func TestHandleWorkflowCommand_FailedInlineRunResetsToChat(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	def := &WorkflowDef{
 		Name:       "plan-issues-get-vix-vix",
 		EntryPoint: StepRef{ID: "boom"},
@@ -94,8 +94,8 @@ func TestHandleWorkflowCommand_FailedInlineRunResetsToChat(t *testing.T) {
 
 	s.handleWorkflowCommand("", "objective", raw)
 
-	if s.sessionMode != "chat" {
-		t.Errorf("sessionMode = %q, want %q after a failed inline run", s.sessionMode, "chat")
+	if s.threadMode != "chat" {
+		t.Errorf("threadMode = %q, want %q after a failed inline run", s.threadMode, "chat")
 	}
 	if s.activeWorkflow != "" {
 		t.Errorf("activeWorkflow = %q, want empty after a failed inline run", s.activeWorkflow)
@@ -108,7 +108,7 @@ func TestHandleWorkflowCommand_FailedInlineRunResetsToChat(t *testing.T) {
 // TestHandleWorkflowCommand_InvalidInlineErrors verifies a structurally invalid
 // inline definition is rejected before any registration or execution.
 func TestHandleWorkflowCommand_InvalidInlineErrors(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	raw, _ := json.Marshal(&WorkflowDef{Name: "broken"}) // no steps → invalid
 
 	s.handleWorkflowCommand("", "objective", raw)

@@ -13,7 +13,7 @@ import (
 // "paused" when interrupted (user cancel or daemon death — both resume the
 // same way), "blocked" when a step error was routed or aborted the run,
 // "budget_limited" once the budget tripped, and "complete" on normal end
-// (completed runs are cleared from the session rather than kept around).
+// (completed runs are cleared from the thread rather than kept around).
 const (
 	WorkflowStatusRunning       = "running"
 	WorkflowStatusPaused        = "paused"
@@ -175,13 +175,13 @@ func appendSkillTool(tools []llm.ToolParam) []llm.ToolParam {
 }
 
 // ensureWorkflowAgentContext augments a workflow step's agent, exactly once,
-// with the session's project-context system blocks (CLAUDE.md/AGENTS.md + skills
+// with the thread's project-context system blocks (CLAUDE.md/AGENTS.md + skills
 // metadata) and — when skills are loaded — the `skill` tool. This gives
 // workflow and scheduled-job runs the same project instructions and skill
 // catalog a chat turn gets, instead of only the bare sub-agent system prompt.
 // The contextInjected guard keeps a step's repeated Send calls from duplicating
 // the blocks; Clone preserves the flag so forks aren't re-injected.
-func (s *Session) ensureWorkflowAgentContext(a *AgentRunner) {
+func (s *Thread) ensureWorkflowAgentContext(a *AgentRunner) {
 	if a == nil || a.contextInjected {
 		return
 	}
@@ -192,18 +192,18 @@ func (s *Session) ensureWorkflowAgentContext(a *AgentRunner) {
 	}
 }
 
-// setWorkflowRunState publishes (or clears, with nil) the session's persisted
+// setWorkflowRunState publishes (or clears, with nil) the thread's persisted
 // workflow run snapshot. Snapshots are immutable after publication: the
 // engine mutates its own live state and re-publishes copies, so buildRecord
 // can marshal the pointer it reads without racing the engine.
-func (s *Session) setWorkflowRunState(st *WorkflowRunState) {
+func (s *Thread) setWorkflowRunState(st *WorkflowRunState) {
 	s.mu.Lock()
 	s.workflowRunState = st
 	s.mu.Unlock()
 }
 
 // snapshotWorkflowRunState returns the last published run snapshot.
-func (s *Session) snapshotWorkflowRunState() *WorkflowRunState {
+func (s *Thread) snapshotWorkflowRunState() *WorkflowRunState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.workflowRunState
@@ -211,10 +211,10 @@ func (s *Session) snapshotWorkflowRunState() *WorkflowRunState {
 
 // saveWorkflowProgress publishes an immutable snapshot of the run's live
 // state — cursor, step results, per-step agent conversations, accounting —
-// and persists the session record. Called once per engine loop iteration and
+// and persists the thread record. Called once per engine loop iteration and
 // from the run finalizer, always from the engine goroutine while no parallel
 // steps are in flight.
-func (s *Session) saveWorkflowProgress(exec *WorkflowRun, currentRef *StepRef) {
+func (s *Thread) saveWorkflowProgress(exec *WorkflowRun, currentRef *StepRef) {
 	st := exec.State
 	if st == nil {
 		return
@@ -251,7 +251,7 @@ func (s *Session) saveWorkflowProgress(exec *WorkflowRun, currentRef *StepRef) {
 }
 
 // emitWorkflowStatus surfaces a run status transition to clients.
-func (s *Session) emitWorkflowStatus(pf *WorkflowDef, st *WorkflowRunState, currentRef *StepRef) {
+func (s *Thread) emitWorkflowStatus(pf *WorkflowDef, st *WorkflowRunState, currentRef *StepRef) {
 	ev := protocol.EventWorkflowStatus{
 		WorkflowName:   pf.Name,
 		Status:         st.Status,
@@ -272,7 +272,7 @@ func (s *Session) emitWorkflowStatus(pf *WorkflowDef, st *WorkflowRunState, curr
 // handleWorkflowSignal services a workflow_signal tool call from an agent
 // step: it records the declared outcome on the run's live state, where the
 // engine's next routing decision picks it up as $(workflow.signal.status).
-func (s *Session) handleWorkflowSignal(pf *WorkflowDef, st *WorkflowRunState, stepID string, params map[string]any) *ToolResult {
+func (s *Thread) handleWorkflowSignal(pf *WorkflowDef, st *WorkflowRunState, stepID string, params map[string]any) *ToolResult {
 	status, _ := params["status"].(string)
 	note, _ := params["note"].(string)
 	if status != "complete" && status != "blocked" {

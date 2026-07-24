@@ -22,7 +22,7 @@ type ServerConfig struct {
 	// exposed to the LLM. Unlisted tools are silently dropped after tools/list.
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 	// RequireConfirmation makes every tool call from this server require explicit
-	// user approval via the standard confirm_request / session.confirm flow.
+	// user approval via the standard confirm_request / thread.confirm flow.
 	RequireConfirmation bool `json:"require_confirmation,omitempty"`
 	// Enabled gates whether the server is connected at all. A nil pointer (field
 	// omitted from settings.json) means enabled — the opt-out default — so

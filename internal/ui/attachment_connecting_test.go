@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// While a session is still connecting (client == nil), a dropped text/PDF file
+// While a thread is still connecting (client == nil), a dropped text/PDF file
 // can't be validated by the daemon, so it's added to the attachment panel
 // optimistically and re-validated at send time.
 func TestPaste_OptimisticChipWhileConnecting(t *testing.T) {
@@ -19,22 +19,22 @@ func TestPaste_OptimisticChipWhileConnecting(t *testing.T) {
 	}
 
 	s := NewStyles(true)
-	sess := &SessionState{
+	sess := &ThreadState{
 		agentState: StateWaitingForInput,
 		input:      newInput(),
 		history:    NewHistory(t.TempDir()),
 		phase:      phaseDraft,
-		// client stays nil: the session hasn't connected yet.
+		// client stays nil: the thread hasn't connected yet.
 	}
 	sess.input.SetWidth(76)
 	m := Model{
-		activeTab:       TabKindChat,
-		selectedSession: 0,
-		sessions:        []*SessionState{sess},
-		styles:          s,
-		mdRenderer:      NewMarkdownRenderer(80, true, s.CodeBoxBorderStyle),
-		width:           80,
-		height:          24,
+		activeTab:      TabKindChat,
+		selectedThread: 0,
+		threads:        []*ThreadState{sess},
+		styles:         s,
+		mdRenderer:     NewMarkdownRenderer(80, true, s.CodeBoxBorderStyle),
+		width:          80,
+		height:         24,
 	}
 
 	model, _ := m.updateInner(tea.PasteMsg{Content: pdf})
@@ -42,7 +42,7 @@ func TestPaste_OptimisticChipWhileConnecting(t *testing.T) {
 	if !ok {
 		t.Fatalf("updateInner returned %T, want Model", model)
 	}
-	dropped := got.sessions[0]
+	dropped := got.threads[0]
 	if dropped.attachmentPanel.Count() != 1 {
 		t.Fatalf("expected 1 optimistic chip, got %d", dropped.attachmentPanel.Count())
 	}

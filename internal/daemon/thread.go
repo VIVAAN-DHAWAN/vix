@@ -28,10 +28,10 @@ import (
 	"github.com/get-vix/vix/internal/telemetry"
 )
 
-// Session manages a single agent session over a persistent socket connection.
-type Session struct {
+// Thread manages a single agent thread over a persistent socket connection.
+type Thread struct {
 	id                             string
-	parentID                       string // non-empty if this session was forked; set once at creation
+	parentID                       string // non-empty if this thread was forked; set once at creation
 	forkTurnIdx                    int    // which turn it was forked at (0-based); meaningful only when parentID != ""
 	server                         *Server
 	llm                            LLM
@@ -42,8 +42,8 @@ type Session struct {
 	enableAutomaticWritePermission bool
 	enableAutomaticDirectoryAccess bool
 	headless                       bool
-	eventChan                      chan protocol.SessionEvent
-	commandChan                    chan protocol.SessionCommand
+	eventChan                      chan protocol.ThreadEvent
+	commandChan                    chan protocol.ThreadCommand
 	ctx                            context.Context
 	cancel                         context.CancelFunc
 
@@ -52,20 +52,20 @@ type Session struct {
 	tools    []llm.ToolParam
 
 	// retryNotices holds transient-error retry notices captured during a
-	// workflow run (overload, rate limit, …), persisted with the session and
+	// workflow run (overload, rate limit, …), persisted with the thread and
 	// projected into event.replay so a reopened run shows the same retry lines
 	// an interactive run renders live. Protected by mu.
 	retryNotices []retryNoticeRecord
 
 	// failureNotices holds terminal-failure notices captured when a workflow
 	// run aborts (e.g. a preflight bash step exiting non-zero), persisted with
-	// the session and projected into event.replay so a reopened run — a
+	// the thread and projected into event.replay so a reopened run — a
 	// scheduled job in particular — shows why it failed instead of a blank
 	// transcript. Protected by mu.
 	failureNotices []failureNoticeRecord
 
 	// Fork snapshots: a copy of messages after each completed normal turn,
-	// protected by mu. Used by snapshotMessagesForFork to seed forked sessions.
+	// protected by mu. Used by snapshotMessagesForFork to seed forked threads.
 	mu            sync.Mutex
 	turnSnapshots [][]llm.MessageParam
 	// lastInputTokens is the true prompt size (input + cache read + cache
@@ -79,10 +79,10 @@ type Session struct {
 
 	// Workflows loaded from config/workflow.json. Guarded by workflowsMu
 	// because the daemon's config watcher can swap the slice from a separate
-	// goroutine (hot reload) while the session loop reads it.
+	// goroutine (hot reload) while the thread loop reads it.
 	workflowsMu sync.RWMutex
 	workflows   []*WorkflowDef
-	// inlineWorkflows names workflows registered transiently for this session
+	// inlineWorkflows names workflows registered transiently for this thread
 	// (job/hook runs carrying a self-contained def), not loaded from config.
 	// A finished inline run drops back to chat mode so reopening it doesn't
 	// warn that the (unpersisted) workflow "no longer exists". Guarded by
@@ -114,20 +114,20 @@ type Session struct {
 	denyList   []string
 	denyURLs   []string
 
-	// Files approved for write-class operations (session-scoped, not persisted).
+	// Files approved for write-class operations (thread-scoped, not persisted).
 	approvedWriteFilesMu sync.RWMutex
 	approvedWriteFiles   map[string]bool
 
-	// Files that have been successfully read (or written) in this session.
+	// Files that have been successfully read (or written) in this thread.
 	// Consulted by the read-before-edit gate to reject hallucinated patches.
 	readFilesMu sync.RWMutex
 	readFiles   map[string]bool
 
-	// Session-scoped TODO list (not persisted).
+	// Thread-scoped TODO list (not persisted).
 	todoMu   sync.RWMutex
 	todoList []protocol.TodoItem
 
-	// Per-session thinking log (debug output written to TmpLogDir).
+	// Per-thread thinking log (debug output written to TmpLogDir).
 	thinkingLogMu   sync.Mutex
 	thinkingLogFile *os.File
 	thinkingInTurn  bool
@@ -135,9 +135,9 @@ type Session struct {
 	// Active LLM call cancellation
 	cancelStream context.CancelFunc
 
-	// configErr is non-nil when the session has no usable LLM client (e.g. no
+	// configErr is non-nil when the thread has no usable LLM client (e.g. no
 	// credential for the selected model's provider). While set, s.llm is nil
-	// and the session refuses to stream; the error surfaces to the UI on the
+	// and the thread refuses to stream; the error surfaces to the UI on the
 	// next input attempt.
 	configErr error
 
@@ -157,29 +157,29 @@ type Session struct {
 	totalCacheRead    int64
 	totalCacheWrite   int64
 	totalAPIWaitMs    int64
-	sessionMode       string // "chat" or "workflow"
-	activeWorkflow    string // name of the active workflow when sessionMode=="workflow"
+	threadMode        string // "chat" or "workflow"
+	activeWorkflow    string // name of the active workflow when threadMode=="workflow"
 
 	// workflowRunState is the last published snapshot of an in-flight (or
 	// interrupted) workflow run — its resume cursor, step results, per-step
 	// agent conversations, and budget accounting. Guarded by s.mu; snapshots
 	// are immutable once published (see saveWorkflowProgress). Persisted in
-	// the session record so interrupted runs survive a daemon restart.
+	// the thread record so interrupted runs survive a daemon restart.
 	workflowRunState *WorkflowRunState
 
 	// Persistence/attach state.
-	// attachRecord is non-nil when this session is resuming a persisted record;
+	// attachRecord is non-nil when this thread is resuming a persisted record;
 	// Run() emits event.replay (with restore validation) after initBrain.
-	attachRecord *sessionRecord
-	// closedByUser is set when a session.close command is received (the TUI "x"
+	attachRecord *threadRecord
+	// closedByUser is set when a thread.close command is received (the TUI "x"
 	// action), distinguishing an explicit close (move record open->closed) from
 	// a bare disconnect (record stays open for next-run reopen).
 	closedByUser bool
 
-	// Provenance: empty origin means user-started; "vix" marks sessions the
-	// daemon initiated itself (scheduled job runs, synthetic alert sessions).
+	// Provenance: empty origin means user-started; "vix" marks threads the
+	// daemon initiated itself (scheduled job runs, synthetic alert threads).
 	// trigger then records what fired it. Set at construction time by the job
-	// runner, persisted in the session record, surfaced in session.list.
+	// runner, persisted in the thread record, surfaced in thread.list.
 	origin  string
 	trigger *protocol.TriggerInfo
 	// jobStatus is the finished run's status (ok | error | timeout), set by
@@ -189,16 +189,16 @@ type Session struct {
 	// jobDir is the absolute job directory (~/.vix/jobs/<id>) for scheduled
 	// runs, set by the job runner. It surfaces to workflow templates as
 	// $(workflow.dir) so a run can keep persistent state (e.g. a memory file)
-	// alongside its spec. Empty for non-job sessions.
+	// alongside its spec. Empty for non-job threads.
 	jobDir string
-	// unread is the session-global "has content the user hasn't seen" flag.
+	// unread is the thread-global "has content the user hasn't seen" flag.
 	// Set whenever a turn or workflow run completes (new content), cleared by
-	// the session.mark_read command the TUI sends when the user views the
-	// session. Persisted in the record so the indicator survives restarts;
+	// the thread.mark_read command the TUI sends when the user views the
+	// thread. Persisted in the record so the indicator survives restarts;
 	// absent on legacy records, which therefore read as seen.
 	unread bool
 
-	// title is the display title shown in the Sessions list. Empty until the
+	// title is the display title shown in the Threads list. Empty until the
 	// auto-titling pass runs (after titleEndTurnThreshold end_turn stops) or,
 	// for job runs, set at creation time by the job runner. Guarded by s.mu
 	// because the generation goroutine writes it off the turn loop.
@@ -210,10 +210,10 @@ type Session struct {
 	titleGenInFlight bool
 }
 
-// NewSession creates a new agent session.
-func NewSession(id string, server *Server, llmClient LLM, model, cwd, configDir string, forceInit bool, enableAutomaticWritePermission bool, enableAutomaticDirectoryAccess bool, headless bool, parentCtx context.Context) *Session {
+// NewThread creates a new agent thread.
+func NewThread(id string, server *Server, llmClient LLM, model, cwd, configDir string, forceInit bool, enableAutomaticWritePermission bool, enableAutomaticDirectoryAccess bool, headless bool, parentCtx context.Context) *Thread {
 	ctx, cancel := context.WithCancel(parentCtx)
-	return &Session{
+	return &Thread{
 		id:                             id,
 		server:                         server,
 		llm:                            llmClient,
@@ -224,15 +224,15 @@ func NewSession(id string, server *Server, llmClient LLM, model, cwd, configDir 
 		enableAutomaticWritePermission: enableAutomaticWritePermission,
 		enableAutomaticDirectoryAccess: enableAutomaticDirectoryAccess,
 		headless:                       headless,
-		eventChan:                      make(chan protocol.SessionEvent, 256),
-		commandChan:                    make(chan protocol.SessionCommand, 16),
+		eventChan:                      make(chan protocol.ThreadEvent, 256),
+		commandChan:                    make(chan protocol.ThreadCommand, 16),
 		workflowMsgChan:                make(chan string, 1),
 		ctx:                            ctx,
 		cancel:                         cancel,
 		tools:                          ToolSchemas(),
 		todoList:                       make([]protocol.TodoItem, 0),
 		startTime:                      time.Now(),
-		sessionMode:                    "chat",
+		threadMode:                     "chat",
 	}
 }
 
@@ -240,7 +240,7 @@ func NewSession(id string, server *Server, llmClient LLM, model, cwd, configDir 
 // system dirs, or any runtime-approved directory). It delegates to
 // isAccessibleByDefault so the gate used by all file tools is consistent with
 // the one used by the bash tool's detectOutsidePaths heuristic.
-func (s *Session) isPathAllowed(absPath string) bool {
+func (s *Thread) isPathAllowed(absPath string) bool {
 	return isAccessibleByDefault(absPath, s.cwd, s.getAllowedDirs())
 }
 
@@ -258,8 +258,8 @@ func pathHasAncestor(path, ancestor string) bool {
 	return strings.HasPrefix(path, ancestor+sep)
 }
 
-// addAllowedDir adds a directory to the session's runtime allowed set.
-func (s *Session) addAllowedDir(absPath string) {
+// addAllowedDir adds a directory to the thread's runtime allowed set.
+func (s *Thread) addAllowedDir(absPath string) {
 	s.allowedDirsMu.Lock()
 	defer s.allowedDirsMu.Unlock()
 	if s.allowedDirs == nil {
@@ -269,7 +269,7 @@ func (s *Session) addAllowedDir(absPath string) {
 }
 
 // getAllowedDirs returns a snapshot of all allowed directories.
-func (s *Session) getAllowedDirs() []string {
+func (s *Thread) getAllowedDirs() []string {
 	s.allowedDirsMu.RLock()
 	defer s.allowedDirsMu.RUnlock()
 	dirs := make([]string, 0, len(s.allowedDirs))
@@ -279,9 +279,9 @@ func (s *Session) getAllowedDirs() []string {
 	return dirs
 }
 
-// denyListSnapshot returns a copy of the session's deny_list path entries.
+// denyListSnapshot returns a copy of the thread's deny_list path entries.
 // The returned slice is safe to read without holding the mutex.
-func (s *Session) denyListSnapshot() []string {
+func (s *Thread) denyListSnapshot() []string {
 	s.denyListMu.RLock()
 	defer s.denyListMu.RUnlock()
 	if len(s.denyList) == 0 {
@@ -292,8 +292,8 @@ func (s *Session) denyListSnapshot() []string {
 	return out
 }
 
-// denyURLsSnapshot returns a copy of the session's deny_list URL entries.
-func (s *Session) denyURLsSnapshot() []string {
+// denyURLsSnapshot returns a copy of the thread's deny_list URL entries.
+func (s *Thread) denyURLsSnapshot() []string {
 	s.denyListMu.RLock()
 	defer s.denyListMu.RUnlock()
 	if len(s.denyURLs) == 0 {
@@ -309,10 +309,10 @@ func (s *Session) denyURLsSnapshot() []string {
 // --disable-automatic-directory-access is not set, we override the configured list
 // with ["/"] so the isUnderAny/pathHasAncestor check trivially passes for any
 // absolute path — matching the user-facing semantics of "the flag really does
-// mean access anywhere, no questions, no per-tool rejection". The session-
+// mean access anywhere, no questions, no per-tool rejection". The thread-
 // level gate in detectOutsideDirs is already bypassed by the flag; this is
 // the second (per-handler) layer.
-func (s *Session) toolAllowedDirs() []string {
+func (s *Thread) toolAllowedDirs() []string {
 	if s.enableAutomaticDirectoryAccess {
 		return []string{"/"}
 	}
@@ -324,7 +324,7 @@ func (s *Session) toolAllowedDirs() []string {
 }
 
 // addApprovedWriteFile records a file path as approved for write-class operations.
-func (s *Session) addApprovedWriteFile(absPath string) {
+func (s *Thread) addApprovedWriteFile(absPath string) {
 	s.approvedWriteFilesMu.Lock()
 	defer s.approvedWriteFilesMu.Unlock()
 	if s.approvedWriteFiles == nil {
@@ -334,24 +334,24 @@ func (s *Session) addApprovedWriteFile(absPath string) {
 }
 
 // isWriteApproved reports whether the given absolute path has been approved for writes.
-func (s *Session) isWriteApproved(absPath string) bool {
+func (s *Thread) isWriteApproved(absPath string) bool {
 	s.approvedWriteFilesMu.RLock()
 	defer s.approvedWriteFilesMu.RUnlock()
 	return s.approvedWriteFiles[absPath]
 }
 
 // persistAllowedDirs saves directories to the project settings.json.
-func (s *Session) persistAllowedDirs(dirs []string) {
+func (s *Thread) persistAllowedDirs(dirs []string) {
 	configPath := s.paths.ProjectSettingsWrite()
 	if err := PersistAllowedDirectory(configPath, dirs); err != nil {
-		log.Printf("[session] failed to persist allowed directories: %v", err)
+		log.Printf("[thread] failed to persist allowed directories: %v", err)
 	}
 }
 
 // emit sends an event to the client.
-func (s *Session) emit(eventType string, data any) {
+func (s *Thread) emit(eventType string, data any) {
 	select {
-	case s.eventChan <- protocol.SessionEvent{Type: eventType, Data: data}:
+	case s.eventChan <- protocol.ThreadEvent{Type: eventType, Data: data}:
 	case <-s.ctx.Done():
 	}
 }
@@ -361,8 +361,8 @@ func (s *Session) emit(eventType string, data any) {
 // error, retry, and confirmation events always pass through regardless of
 // silent. Used by workflow-step code paths to honour per-step `silent: true`
 // without bleeding into concurrent non-silent steps (hence step-scoped, not
-// session-scoped).
-func (s *Session) emitIfVisible(silent bool, eventType string, data any) {
+// thread-scoped).
+func (s *Thread) emitIfVisible(silent bool, eventType string, data any) {
 	if silent && isUserFacingEvent(eventType) {
 		return
 	}
@@ -387,7 +387,7 @@ func isUserFacingEvent(t string) bool {
 
 // silentCtxKey scopes the silent flag to a context, so package-level code
 // paths (tool dispatcher, bash streamer) can suppress developer-facing
-// log.Printf noise during a silent step without a reference to *Session.
+// log.Printf noise during a silent step without a reference to *Thread.
 type silentCtxKey struct{}
 
 func withSilentCtx(ctx context.Context) context.Context {
@@ -401,7 +401,7 @@ func isSilentCtx(ctx context.Context) bool {
 
 // silentHooks wraps s.emitHooks() so that user-facing events are dropped.
 // Errors, token accounting (stream_done), and cancellation hooks still fire.
-func (s *Session) silentHooks() *TurnHooks {
+func (s *Thread) silentHooks() *TurnHooks {
 	base := s.emitHooks()
 	return &TurnHooks{
 		OnStreamDelta:   func(string) {},
@@ -424,7 +424,7 @@ func (s *Session) silentHooks() *TurnHooks {
 }
 
 // hooksForStep returns emitHooks() or silentHooks() depending on silent.
-func (s *Session) hooksForStep(silent bool) *TurnHooks {
+func (s *Thread) hooksForStep(silent bool) *TurnHooks {
 	if silent {
 		return s.silentHooks()
 	}
@@ -432,7 +432,7 @@ func (s *Session) hooksForStep(silent bool) *TurnHooks {
 }
 
 // emitHooks returns a TurnHooks wired to s.emit() for streaming events to the UI.
-func (s *Session) emitHooks() *TurnHooks {
+func (s *Thread) emitHooks() *TurnHooks {
 	return &TurnHooks{
 		OnStreamDelta: func(delta string) {
 			s.emit("event.stream_chunk", protocol.EventStreamChunk{Text: delta})
@@ -478,7 +478,7 @@ func (s *Session) emitHooks() *TurnHooks {
 }
 
 // emitToolResult emits an event.tool_result, enriching it with diff detail for edit_file.
-func (s *Session) emitToolResult(toolID, name string, input map[string]any, output string, isError bool, lineOffset int) {
+func (s *Thread) emitToolResult(toolID, name string, input map[string]any, output string, isError bool, lineOffset int) {
 	ev := protocol.EventToolResult{
 		ToolID: toolID, Name: name, Output: output, IsError: isError,
 	}
@@ -551,8 +551,8 @@ func buildConfirmDetail(cwd, name string, input map[string]any) string {
 }
 
 // drainWorkflowMsg returns a pending user message if one has been enqueued via
-// session.workflow_message, or "" if there is none. Non-blocking.
-func (s *Session) drainWorkflowMsg() string {
+// thread.workflow_message, or "" if there is none. Non-blocking.
+func (s *Thread) drainWorkflowMsg() string {
 	select {
 	case msg := <-s.workflowMsgChan:
 		return msg
@@ -562,7 +562,7 @@ func (s *Session) drainWorkflowMsg() string {
 }
 
 // waitForCommand blocks until a command of the specified type is received, or ctx is cancelled.
-func (s *Session) waitForCommand(ctx context.Context, types ...string) (protocol.SessionCommand, bool) {
+func (s *Thread) waitForCommand(ctx context.Context, types ...string) (protocol.ThreadCommand, bool) {
 	typeSet := make(map[string]bool, len(types))
 	for _, t := range types {
 		typeSet[t] = true
@@ -575,24 +575,24 @@ func (s *Session) waitForCommand(ctx context.Context, types ...string) (protocol
 				return cmd, true
 			}
 			// Handle cancel at any time
-			if cmd.Type == "session.cancel" {
+			if cmd.Type == "thread.cancel" {
 				return cmd, false
 			}
 			// Ignore unmatched commands
 		case <-ctx.Done():
-			return protocol.SessionCommand{}, false
+			return protocol.ThreadCommand{}, false
 		}
 	}
 }
 
-// Run is the main session loop. It initializes the brain, then waits for input.
-func (s *Session) Run() {
+// Run is the main thread loop. It initializes the brain, then waits for input.
+func (s *Thread) Run() {
 	defer func() {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
-			LogError("Session %s panic: %v\n%s", s.id, r, stack)
-			telemetry.TrackPanic("session.Run", r, stack)
-			s.emit("event.error", protocol.EventError{Message: fmt.Sprintf("session panic: %v", r)})
+			LogError("Thread %s panic: %v\n%s", s.id, r, stack)
+			telemetry.TrackPanic("thread.Run", r, stack)
+			s.emit("event.error", protocol.EventError{Message: fmt.Sprintf("thread panic: %v", r)})
 		}
 		s.cancel()
 		s.closeThinkingLog()
@@ -603,7 +603,7 @@ func (s *Session) Run() {
 
 	s.initBrain()
 
-	// Rebuild the client's viewport (for resumes) and fire the SessionStart
+	// Rebuild the client's viewport (for resumes) and fire the ThreadStart
 	// hooks, classified as startup vs resume. Must run as one unit: emitReplay
 	// clears attachRecord, so the resume check has to be captured before it.
 	s.announceStart()
@@ -614,18 +614,18 @@ func (s *Session) Run() {
 			return
 		case cmd := <-s.commandChan:
 			switch cmd.Type {
-			case "session.input":
+			case "thread.input":
 				s.lastRequestAt = time.Now()
-				var data protocol.SessionInputData
+				var data protocol.ThreadInputData
 				json.Unmarshal(cmd.Data, &data)
 				s.handleInput(data.Text, data.Attachments)
-			case "session.workflow":
+			case "thread.workflow":
 				s.lastRequestAt = time.Now()
-				var data protocol.SessionWorkflowData
+				var data protocol.ThreadWorkflowData
 				json.Unmarshal(cmd.Data, &data)
 				s.handleWorkflowCommand(data.Name, data.Text, data.Workflow)
-			case "session.set_model":
-				var data protocol.SessionSetModelData
+			case "thread.set_model":
+				var data protocol.ThreadSetModelData
 				json.Unmarshal(cmd.Data, &data)
 				if data.Model != "" {
 					// Every model spec must carry an explicit provider
@@ -635,16 +635,16 @@ func (s *Session) Run() {
 					// llm.NewFromModel with a clear error.
 					spec := data.Model
 					// applyModel commits only on success, so a failed switch
-					// leaves a previously-working session untouched.
+					// leaves a previously-working thread untouched.
 					if err := s.applyModel(spec, 0); err != nil {
 						s.emit("event.error", protocol.EventError{Message: fmt.Sprintf("Cannot switch to model %q: %v", spec, err)})
-						log.Printf("[session] set_model failed for %s: %v", spec, err)
+						log.Printf("[thread] set_model failed for %s: %v", spec, err)
 						continue
 					}
 
-					log.Printf("[session] model switched to %s (provider=%s)", spec, s.llm.Provider())
+					log.Printf("[thread] model switched to %s (provider=%s)", spec, s.llm.Provider())
 
-					// Persist the choice to state.json so future sessions
+					// Persist the choice to state.json so future threads
 					// start with the same model. Best-effort: log on failure
 					// rather than fail the (already-successful) in-memory
 					// switch.
@@ -652,17 +652,17 @@ func (s *Session) Run() {
 					st := config.ReadState(statePath)
 					st.Model = spec
 					if err := config.WriteState(statePath, st); err != nil {
-						log.Printf("[session] WARN: failed to persist model choice to state.json: %v", err)
+						log.Printf("[thread] WARN: failed to persist model choice to state.json: %v", err)
 					}
 					s.persist()
 				}
-			case "session.trim":
-				var data protocol.SessionTrimData
+			case "thread.trim":
+				var data protocol.ThreadTrimData
 				json.Unmarshal(cmd.Data, &data)
 				s.trimHistory(data.TurnIdx)
 				s.persist()
-			case "session.mark_read":
-				// The user is looking at this session: clear the persisted
+			case "thread.mark_read":
+				// The user is looking at this thread: clear the persisted
 				// unread flag. Queued commands land between turns, so a
 				// mark_read sent mid-turn applies before the turn's own
 				// unread=true — the TUI re-sends on agent_done when focused.
@@ -670,7 +670,7 @@ func (s *Session) Run() {
 					s.unread = false
 					s.persist()
 				}
-			case "session.close":
+			case "thread.close":
 				s.closedByUser = true
 				return
 			}
@@ -679,11 +679,11 @@ func (s *Session) Run() {
 }
 
 // applyModel resolves spec → LLM client and, on success, swaps in the client,
-// updates s.model, and clears configErr. On failure it mutates no session state
+// updates s.model, and clears configErr. On failure it mutates no thread state
 // and returns the error for the caller to handle (initBrain records it as the
 // unconfigured state; set_model keeps the prior working client). It never
 // fabricates a client, so a missing credential can't leak into an LLM request.
-func (s *Session) applyModel(spec string, maxTokens int64) error {
+func (s *Thread) applyModel(spec string, maxTokens int64) error {
 	client, err := llm.NewFromModel(spec, s.server.plugins, llm.DefaultEffortFromSpec(spec), maxTokens)
 	if err != nil {
 		return err
@@ -694,10 +694,10 @@ func (s *Session) applyModel(spec string, maxTokens int64) error {
 	return nil
 }
 
-// unconfiguredMessage renders the user-facing error for the session's current
+// unconfiguredMessage renders the user-facing error for the thread's current
 // configErr. Missing credentials get a friendly, actionable message keyed by
 // the model's display name; any other construction failure shows the raw error.
-func (s *Session) unconfiguredMessage() string {
+func (s *Thread) unconfiguredMessage() string {
 	if errors.Is(s.configErr, llm.ErrNoCredential) {
 		name := providers.Default().DisplayName(s.model)
 		return fmt.Sprintf("There are no credentials set to access %s. Go to Models (F3) to set your credentials.", name)
@@ -707,7 +707,7 @@ func (s *Session) unconfiguredMessage() string {
 
 // initBrain ensures the brain index exists (running brain.init if needed),
 // then loads memory, custom agents, and workflows.
-func (s *Session) initBrain() {
+func (s *Thread) initBrain() {
 	s.emit("event.init_state", protocol.EventInitState{State: int(protocol.InitInProgress)})
 
 	// Load skills and advertise them to the UI up front, before the
@@ -724,7 +724,7 @@ func (s *Session) initBrain() {
 	}
 	s.skills = agent.LoadSkills(reversed...)
 	if s.skills.Count() > 0 {
-		log.Printf("[session] loaded %d skill(s)", s.skills.Count())
+		log.Printf("[thread] loaded %d skill(s)", s.skills.Count())
 	}
 	s.emit("event.skills_available", protocol.EventSkillsAvailable{
 		Skills: s.skillInfoList(),
@@ -750,7 +750,7 @@ func (s *Session) initBrain() {
 			},
 		})
 		if err != nil || resp["status"] != "ok" {
-			log.Printf("[session] brain.init failed, continuing without LSP")
+			log.Printf("[thread] brain.init failed, continuing without LSP")
 		}
 	}
 
@@ -763,7 +763,7 @@ func (s *Session) initBrain() {
 	}
 
 	if len(s.customAgents) > 0 {
-		log.Printf("[session] loaded %d custom agent(s) from .vix/agents/", len(s.customAgents))
+		log.Printf("[thread] loaded %d custom agent(s) from .vix/agents/", len(s.customAgents))
 	}
 
 	projectConfig := LoadProjectConfig(s.paths.Settings()...)
@@ -771,9 +771,9 @@ func (s *Session) initBrain() {
 	s.chatAgent = projectConfig.Agent
 	s.setWorkflows(LoadWorkflowsFile(s.paths.WorkflowsFile()))
 
-	// Rebuild the tool schema slice with the session-configured timeout
+	// Rebuild the tool schema slice with the thread-configured timeout
 	// bounds so the LLM reads the real floor/cap in the bash and glob_files
-	// descriptions instead of the package defaults wired in at NewSession
+	// descriptions instead of the package defaults wired in at NewThread
 	// time (which ran before projectConfig was loaded).
 	tDef, tMax := s.toolTimeoutBounds()
 	s.tools = ToolSchemasWithBounds(tDef, tMax)
@@ -801,7 +801,7 @@ func (s *Session) initBrain() {
 	}
 
 	// Apply tool filtering AND model selection. Resolution order for the
-	// session's model: the chat agent's frontmatter `model:` (explicit pin,
+	// thread's model: the chat agent's frontmatter `model:` (explicit pin,
 	// used by custom agents) → the user's saved choice in state.json (written
 	// by the model picker) → the daemon default (s.model). Shipped agents
 	// carry no `model:` line.
@@ -814,7 +814,7 @@ func (s *Session) initBrain() {
 	if agentCfg, err := parseAgentFile(agentFilePath); err == nil {
 		if len(agentCfg.Tools) > 0 {
 			s.tools = FilterToolSchemasWithBounds(agentCfg.Tools, tDef, tMax)
-			log.Printf("[session] chat agent tools from frontmatter: %v", agentCfg.Tools)
+			log.Printf("[thread] chat agent tools from frontmatter: %v", agentCfg.Tools)
 		}
 		if agentCfg.Model != "" {
 			modelSpec = agentCfg.Model
@@ -822,8 +822,8 @@ func (s *Session) initBrain() {
 		}
 	}
 
-	// Resolve the session's LLM client from the authoritative model spec. On
-	// failure (e.g. no credential for the provider) the session enters the
+	// Resolve the thread's LLM client from the authoritative model spec. On
+	// failure (e.g. no credential for the provider) the thread enters the
 	// unconfigured state: s.llm stays nil and the error surfaces to the UI on
 	// the next input attempt, rather than fabricating a client that would leak
 	// the missing credential into a doomed LLM request.
@@ -831,9 +831,9 @@ func (s *Session) initBrain() {
 		s.configErr = err
 		s.model = modelSpec
 		s.llm = nil
-		log.Printf("[session] WARN: no usable LLM client for %q (model=%q): %v — session unconfigured", s.chatAgent, modelSpec, err)
+		log.Printf("[thread] WARN: no usable LLM client for %q (model=%q): %v — thread unconfigured", s.chatAgent, modelSpec, err)
 	} else {
-		log.Printf("[session] chat agent model: %s (provider=%s)", s.model, s.llm.Provider())
+		log.Printf("[thread] chat agent model: %s (provider=%s)", s.model, s.llm.Provider())
 	}
 
 	if projectConfig.HasFeature(FeatureToolOrchestrator) {
@@ -843,11 +843,11 @@ func (s *Session) initBrain() {
 			"spawn_agent",
 			"task_output",
 		}, tDef, tMax)
-		log.Printf("[session] tool_orchestrator feature enabled: %d tools exposed", len(s.tools))
+		log.Printf("[thread] tool_orchestrator feature enabled: %d tools exposed", len(s.tools))
 	}
 	if s.headless {
 		s.tools = ExcludeTools(s.tools, "ask_question_to_user")
-		log.Printf("[session] headless mode: removed ask_question_to_user from tools")
+		log.Printf("[thread] headless mode: removed ask_question_to_user from tools")
 	}
 
 	// Patch spawn_agent's description with the dynamically loaded agent list.
@@ -859,16 +859,16 @@ func (s *Session) initBrain() {
 	// MCP tools are appended on top of whatever built-in set was selected for
 	// this agent and are not wiped by FilterToolSchemas rebuilds above.
 	if len(s.projectConfig.MCPServers) > 0 {
-		// Filter out URL servers whose addresses appear in the session deny list.
+		// Filter out URL servers whose addresses appear in the thread deny list.
 		allowedServers := make([]mcp.ServerConfig, 0, len(s.projectConfig.MCPServers))
 		for _, srv := range s.projectConfig.MCPServers {
 			if !srv.IsEnabled() {
-				log.Printf("[session] MCP server %q: disabled, skipping", srv.Name)
+				log.Printf("[thread] MCP server %q: disabled, skipping", srv.Name)
 				continue
 			}
 			if srv.URL != "" {
 				if denied, _ := isURLDenied(srv.URL, s.denyURLsSnapshot()); denied {
-					log.Printf("[session] MCP server %q: URL in deny_list, skipping", srv.Name)
+					log.Printf("[thread] MCP server %q: URL in deny_list, skipping", srv.Name)
 					continue
 				}
 			}
@@ -878,13 +878,13 @@ func (s *Session) initBrain() {
 			pool := mcp.NewPool(s.ctx, allowedServers)
 			s.mcpPool = pool
 			s.tools = append(s.tools, pool.ToolSchemas()...)
-			log.Printf("[session] MCP: %d server(s), %d tool(s) loaded",
+			log.Printf("[thread] MCP: %d server(s), %d tool(s) loaded",
 				pool.ServerCount(), pool.ToolCount())
 		}
 	}
 
 	if n := len(s.snapshotWorkflows()); n > 0 {
-		log.Printf("[session] loaded %d workflow(s) from config", n)
+		log.Printf("[thread] loaded %d workflow(s) from config", n)
 	}
 
 	// Expose the `skill` tool only when skills are loaded. Appended after all
@@ -892,7 +892,7 @@ func (s *Session) initBrain() {
 	if s.skills != nil && s.skills.Count() > 0 {
 		s.tools = append(s.tools, SkillToolSchema())
 	}
-	log.Printf("[session] chat agent: %s", s.chatAgent)
+	log.Printf("[thread] chat agent: %s", s.chatAgent)
 	s.emit("event.init_state", protocol.EventInitState{State: int(protocol.InitDone), Model: s.model})
 	s.emit("event.workflows_available", protocol.EventWorkflowsAvailable{
 		Workflows: s.workflowInfoList(),
@@ -909,7 +909,7 @@ func (s *Session) initBrain() {
 
 // skillInfoList returns the loaded skills as name/description pairs, sorted by
 // name, for slash-command autocomplete in the UI.
-func (s *Session) skillInfoList() []protocol.SkillInfo {
+func (s *Thread) skillInfoList() []protocol.SkillInfo {
 	if s.skills == nil {
 		return nil
 	}
@@ -925,7 +925,7 @@ func (s *Session) skillInfoList() []protocol.SkillInfo {
 // workflowInfoList returns the list of WorkflowInfo in config order, omitting
 // workflows that opted out of the TUI (display_in_tui: false) — they remain
 // runnable by name (scheduled jobs), just not listed in the switcher.
-func (s *Session) workflowInfoList() []protocol.WorkflowInfo {
+func (s *Thread) workflowInfoList() []protocol.WorkflowInfo {
 	wfs := s.snapshotWorkflows()
 	if len(wfs) == 0 {
 		return nil
@@ -941,26 +941,26 @@ func (s *Session) workflowInfoList() []protocol.WorkflowInfo {
 }
 
 // snapshotWorkflows returns the current workflow slice under the read lock.
-func (s *Session) snapshotWorkflows() []*WorkflowDef {
+func (s *Thread) snapshotWorkflows() []*WorkflowDef {
 	s.workflowsMu.RLock()
 	defer s.workflowsMu.RUnlock()
 	return s.workflows
 }
 
 // setWorkflows swaps the workflow slice under the write lock.
-func (s *Session) setWorkflows(wfs []*WorkflowDef) {
+func (s *Thread) setWorkflows(wfs []*WorkflowDef) {
 	s.workflowsMu.Lock()
 	s.workflows = wfs
 	s.workflowsMu.Unlock()
 }
 
-// registerInlineWorkflow adds an inline workflow definition to the session's
+// registerInlineWorkflow adds an inline workflow definition to the thread's
 // workflow set, replacing any existing entry of the same name. Used by job and
 // hook runs that carry a self-contained workflow rather than referencing one
 // loaded from config/workflow.json, so the normal name-lookup path can resolve
-// it. Called from inside the session goroutine (handleWorkflowCommand), so it
+// it. Called from inside the thread goroutine (handleWorkflowCommand), so it
 // is race-free with Run()'s initial workflow load.
-func (s *Session) registerInlineWorkflow(def *WorkflowDef) {
+func (s *Thread) registerInlineWorkflow(def *WorkflowDef) {
 	s.workflowsMu.Lock()
 	defer s.workflowsMu.Unlock()
 	if s.inlineWorkflows == nil {
@@ -977,8 +977,8 @@ func (s *Session) registerInlineWorkflow(def *WorkflowDef) {
 }
 
 // isInlineWorkflow reports whether name was registered transiently for this
-// session (via registerInlineWorkflow) rather than loaded from config.
-func (s *Session) isInlineWorkflow(name string) bool {
+// thread (via registerInlineWorkflow) rather than loaded from config.
+func (s *Thread) isInlineWorkflow(name string) bool {
 	s.workflowsMu.RLock()
 	defer s.workflowsMu.RUnlock()
 	return s.inlineWorkflows[name]
@@ -989,7 +989,7 @@ func (s *Session) isInlineWorkflow(name string) bool {
 // cycle live. Called by the daemon config watcher when config/workflow.json
 // changes on disk. A workflow already mid-execution holds its own definition,
 // so this only affects the list of *available* workflows.
-func (s *Session) ReloadWorkflows(wfs []*WorkflowDef) {
+func (s *Thread) ReloadWorkflows(wfs []*WorkflowDef) {
 	s.setWorkflows(wfs)
 	s.emit("event.workflows_available", protocol.EventWorkflowsAvailable{
 		Workflows: s.workflowInfoList(),
@@ -997,13 +997,13 @@ func (s *Session) ReloadWorkflows(wfs []*WorkflowDef) {
 }
 
 // brainDir returns the path to the brain index directory.
-func (s *Session) brainDir() string {
+func (s *Thread) brainDir() string {
 	return s.paths.Brain()
 }
 
 // searchDirsSlice returns the layered search directories in precedence order
 // (highest first) for use by prompt resolvers.
-func (s *Session) searchDirsSlice() []string {
+func (s *Thread) searchDirsSlice() []string {
 	layers := s.paths.Layers()
 	out := make([]string, len(layers))
 	for i, d := range layers {
@@ -1014,13 +1014,13 @@ func (s *Session) searchDirsSlice() []string {
 
 // searchDirs returns the layered search directories as a single
 // prompt.JoinSearchDirs string (highest precedence first).
-func (s *Session) searchDirs() string {
+func (s *Thread) searchDirs() string {
 	return prompt.JoinSearchDirs(s.searchDirsSlice()...)
 }
 
 // resolveAgentPath searches the agent directories in reverse precedence order
 // so that higher-precedence layers (project, or override) are checked first.
-func (s *Session) resolveAgentPath(filename string) string {
+func (s *Thread) resolveAgentPath(filename string) string {
 	dirs := s.paths.Agents()
 	// Search from highest precedence (last entry) to lowest.
 	for i := len(dirs) - 1; i >= 0; i-- {
@@ -1043,7 +1043,7 @@ type instructionFile struct {
 }
 
 // discoverInstructionFiles finds CLAUDE.md and AGENTS.md files based on feature flags.
-func (s *Session) discoverInstructionFiles() []instructionFile {
+func (s *Thread) discoverInstructionFiles() []instructionFile {
 	var files []instructionFile
 
 	if s.projectConfig.HasFeature(FeatureReadClaudeMD) {
@@ -1065,7 +1065,7 @@ func (s *Session) discoverInstructionFiles() []instructionFile {
 	return files
 }
 
-func (s *Session) buildSystemPrompt() []llm.SystemBlock {
+func (s *Thread) buildSystemPrompt() []llm.SystemBlock {
 	var blocks []llm.SystemBlock
 
 	// Load base system prompt from template
@@ -1097,7 +1097,7 @@ func (s *Session) buildSystemPrompt() []llm.SystemBlock {
 // (CLAUDE.md/AGENTS.md, each gated by its feature flag) and the available-skills
 // metadata (level 1 of progressive disclosure — names + descriptions only).
 // Empty when none apply.
-func (s *Session) contextSystemBlocks() []llm.SystemBlock {
+func (s *Thread) contextSystemBlocks() []llm.SystemBlock {
 	var blocks []llm.SystemBlock
 
 	// Project instruction files (CLAUDE.md, AGENTS.md).
@@ -1106,7 +1106,7 @@ func (s *Session) contextSystemBlocks() []llm.SystemBlock {
 			text := fmt.Sprintf("<system-reminder>\nContents of %s (project instructions):\n\n%s\n</system-reminder>", f.Path, f.Content)
 			blocks = append(blocks, llm.SystemBlock{Text: text})
 		}
-		log.Printf("[session] loaded %d instruction file(s)", len(instrFiles))
+		log.Printf("[thread] loaded %d instruction file(s)", len(instrFiles))
 	}
 
 	// Available-skills metadata, so the model knows what it can load via the
@@ -1124,7 +1124,7 @@ func (s *Session) contextSystemBlocks() []llm.SystemBlock {
 // attachments. "image" attachments become vision blocks; "file" attachments
 // (their extracted text already stashed in Data by handleInput) become text
 // blocks delimited with a filename header.
-func (s *Session) AddUserMessage(text string, attachments ...protocol.Attachment) {
+func (s *Thread) AddUserMessage(text string, attachments ...protocol.Attachment) {
 	var contentBlocks []llm.ContentBlock
 
 	// Build the main text block with a reference line per attachment.
@@ -1167,9 +1167,9 @@ func (s *Session) AddUserMessage(text string, attachments ...protocol.Attachment
 // appendMessages stamps each message with the current time (when not already
 // set) and appends it to the conversation history. Routing every append
 // through here keeps MessageParam.Timestamp in lockstep across all message
-// kinds (user, assistant, tool results, nudges) so a restored session replays
+// kinds (user, assistant, tool results, nudges) so a restored thread replays
 // with original send times rather than the relaunch time.
-func (s *Session) appendMessages(msgs ...llm.MessageParam) {
+func (s *Thread) appendMessages(msgs ...llm.MessageParam) {
 	now := time.Now()
 	for i := range msgs {
 		if msgs[i].Timestamp.IsZero() {
@@ -1182,7 +1182,7 @@ func (s *Session) appendMessages(msgs ...llm.MessageParam) {
 // snapshotMessagesForFork returns a copy of the conversation history at the
 // end of the turn identified by turnIdx (0-based). Returns nil if turnIdx is
 // out of range. Safe to call from any goroutine.
-func (s *Session) snapshotMessagesForFork(turnIdx int) []llm.MessageParam {
+func (s *Thread) snapshotMessagesForFork(turnIdx int) []llm.MessageParam {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if turnIdx < 0 || turnIdx >= len(s.turnSnapshots) {
@@ -1199,7 +1199,7 @@ func (s *Session) snapshotMessagesForFork(turnIdx int) []llm.MessageParam {
 // (no closing end_turn assistant message) contributes no snapshot, just as a
 // live in-progress turn wouldn't.
 //
-// This is what makes a session that was seeded from a fork or restored from disk
+// This is what makes a thread that was seeded from a fork or restored from disk
 // itself forkable/trimmable: those paths set s.messages directly and would
 // otherwise leave s.turnSnapshots empty, so a subsequent fork would find no
 // history to copy.
@@ -1229,7 +1229,7 @@ func rebuildTurnSnapshots(msgs []llm.MessageParam) [][]llm.MessageParam {
 // trimHistory replaces s.messages with the snapshot at turnIdx and discards
 // all later snapshots. Out-of-range turnIdx is a no-op. Safe to call from any
 // goroutine.
-func (s *Session) trimHistory(turnIdx int) {
+func (s *Thread) trimHistory(turnIdx int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if turnIdx < 0 || turnIdx >= len(s.turnSnapshots) {
@@ -1239,12 +1239,12 @@ func (s *Session) trimHistory(turnIdx int) {
 	s.messages = make([]llm.MessageParam, len(snap))
 	copy(s.messages, snap)
 	s.turnSnapshots = s.turnSnapshots[:turnIdx+1]
-	log.Printf("[session] history trimmed to turn %d (%d messages)", turnIdx, len(s.messages))
+	log.Printf("[thread] history trimmed to turn %d (%d messages)", turnIdx, len(s.messages))
 }
 
 // frequentlyAccessedFilesText returns a markdown-formatted string of the top 10
 // frequently accessed files, or an empty string if none are available.
-func (s *Session) frequentlyAccessedFilesText() string {
+func (s *Thread) frequentlyAccessedFilesText() string {
 	resp, err := doGetTopFiles(s.server, map[string]any{"count": 10})
 	if err != nil {
 		return ""
@@ -1314,7 +1314,7 @@ func isOutsideWorkdir(cwd, resolvedPath string) bool {
 }
 
 // detectOutsideDirs returns the directories a tool call wants to touch that
-// lie outside cwd and the session's allowed set. Returns nil when access is
+// lie outside cwd and the thread's allowed set. Returns nil when access is
 // permitted. The returned slice is suitable for use as `_requested_dirs`.
 //
 // The bash tool intentionally has no pre-flight: parsing a shell command
@@ -1325,7 +1325,7 @@ func isOutsideWorkdir(cwd, resolvedPath string) bool {
 // security floor. File-IO tools (read_file, write_file, edit_file,
 // grep, glob_files) still need the check because they execute inside
 // vixd, which is not Landlock-sandboxed.
-func (s *Session) detectOutsideDirs(name string, params map[string]any) []string {
+func (s *Thread) detectOutsideDirs(name string, params map[string]any) []string {
 	if filePathTools[name] {
 		path, _ := params["path"].(string)
 		if path != "" && filepath.IsAbs(path) {
@@ -1348,20 +1348,20 @@ func denyOutsideDirsError(name string, dirs []string) *ToolResult {
 }
 
 // promptDirAccess emits a confirm_request for directory access and waits for
-// the user's response. On approval, it adds the dirs to the session's allowed
+// the user's response. On approval, it adds the dirs to the thread's allowed
 // set (and persists them if the user chose "remember").
-func (s *Session) promptDirAccess(ctx context.Context, name string, params map[string]any, dirs []string) (approved, cancelled bool) {
+func (s *Thread) promptDirAccess(ctx context.Context, name string, params map[string]any, dirs []string) (approved, cancelled bool) {
 	s.emit("event.confirm_request", protocol.EventConfirmRequest{
 		ToolName:      name,
 		Params:        snapshotInput(params),
 		RequestedDirs: dirs,
 		Detail:        buildConfirmDetail(s.cwd, name, params),
 	})
-	cmd, ok := s.waitForCommand(ctx, "session.confirm")
+	cmd, ok := s.waitForCommand(ctx, "thread.confirm")
 	if !ok {
 		return false, true
 	}
-	var confirmData protocol.SessionConfirmData
+	var confirmData protocol.ThreadConfirmData
 	json.Unmarshal(cmd.Data, &confirmData)
 	if confirmData.Approved {
 		for _, dir := range dirs {
@@ -1375,7 +1375,7 @@ func (s *Session) promptDirAccess(ctx context.Context, name string, params map[s
 }
 
 // executeToolDirect calls a tool handler directly (in-process, no socket).
-func (s *Session) executeToolDirect(ctx context.Context, name string, params map[string]any) *ToolResult {
+func (s *Thread) executeToolDirect(ctx context.Context, name string, params map[string]any) *ToolResult {
 	// Deny list: reject any tool call that targets a path or URL listed in
 	// deny_list (or bash commands that reference such a path/URL). Runs
 	// before every other gate so denials never surface as confirmation
@@ -1383,7 +1383,7 @@ func (s *Session) executeToolDirect(ctx context.Context, name string, params map
 	if blocked := checkDenyList(name, params, s.cwd, s.denyListSnapshot(), s.denyURLsSnapshot()); blocked != nil {
 		return blocked
 	}
-	// Read-before-edit gate: reject patches to files the session has never
+	// Read-before-edit gate: reject patches to files the thread has never
 	// read. Runs before the confirmation check so the user is never asked
 	// to approve a call that is about to be rejected anyway.
 	if blocked := s.enforceReadGate(name, params); blocked != nil {
@@ -1397,7 +1397,7 @@ func (s *Session) executeToolDirect(ctx context.Context, name string, params map
 		return &ToolResult{Output: err.Error(), IsError: true}
 	}
 
-	// If the session has automatic write permission disabled, intercept write-class
+	// If the thread has automatic write permission disabled, intercept write-class
 	// tools and request user confirmation before executing them.
 	if !s.enableAutomaticWritePermission && writeClassTools[name] {
 		confirmed, _ := params["confirmed"].(bool)
@@ -1414,7 +1414,7 @@ func (s *Session) executeToolDirect(ctx context.Context, name string, params map
 		}
 	}
 
-	// Clone params and add session context
+	// Clone params and add thread context
 	p := make(map[string]any, len(params)+2)
 	for k, v := range params {
 		p[k] = v
@@ -1422,10 +1422,10 @@ func (s *Session) executeToolDirect(ctx context.Context, name string, params map
 	p["cwd"] = s.cwd
 	p["allowed_dirs"] = s.toolAllowedDirs()
 	p["headless"] = s.headless
-	// Internal: typed pointer to the Session, consumed by the bash handler to
+	// Internal: typed pointer to the Thread, consumed by the bash handler to
 	// reach bashJobs for `background: true`. Underscore-prefixed so it's
 	// obviously not a model-provided field; never serialized back to the LLM.
-	p["_session"] = s
+	p["_thread"] = s
 
 	// Directory access pre-check: if the tool wants to touch paths outside cwd,
 	// either auto-approve (when --disable-automatic-directory-access is not set),
@@ -1438,7 +1438,7 @@ func (s *Session) executeToolDirect(ctx context.Context, name string, params map
 		return &ToolResult{NeedsConfirmation: true, ToolName: name, Params: params}
 	}
 
-	// Route the `skill` tool inline: it needs the session's skill registry,
+	// Route the `skill` tool inline: it needs the thread's skill registry,
 	// which server-level handlers can't reach. Returns the skill body plus a
 	// listing of bundled files (progressive disclosure levels 2 and 3).
 	if name == "skill" {
@@ -1454,10 +1454,10 @@ func (s *Session) executeToolDirect(ctx context.Context, name string, params map
 		return &ToolResult{Output: sk.LoadForTool(args)}
 	}
 
-	// Route MCP tools directly to the session's MCP pool.
+	// Route MCP tools directly to the thread's MCP pool.
 	if strings.HasPrefix(name, "mcp__") {
 		if s.mcpPool == nil {
-			return &ToolResult{Output: "MCP is not initialised for this session (no mcp_servers configured)", IsError: true}
+			return &ToolResult{Output: "MCP is not initialised for this thread (no mcp_servers configured)", IsError: true}
 		}
 		// Honour require_confirmation: true on the server config.
 		if s.mcpPool.RequiresConfirmation(name) {
@@ -1567,12 +1567,12 @@ func resolveToolTimeout(name string, params map[string]any, defaultTimeout, maxT
 	return d
 }
 
-// toolTimeoutBounds returns the session's configured (default, max) tool
+// toolTimeoutBounds returns the thread's configured (default, max) tool
 // timeouts as time.Duration, reading live from s.projectConfig on every call
-// so a mid-session projectConfig mutation (if ever introduced) would not be
+// so a mid-thread projectConfig mutation (if ever introduced) would not be
 // silently cached. The bounds come from the `tool_timeouts` block in
 // settings.json, with fallback to the package-level defaults.
-func (s *Session) toolTimeoutBounds() (time.Duration, time.Duration) {
+func (s *Thread) toolTimeoutBounds() (time.Duration, time.Duration) {
 	return s.projectConfig.ToolTimeouts.Default, s.projectConfig.ToolTimeouts.Max
 }
 
@@ -1580,12 +1580,12 @@ func (s *Session) toolTimeoutBounds() (time.Duration, time.Duration) {
 // Directory-access confirmation is still enforced: workflow and subagent tools
 // must ask the user before touching paths outside cwd (unless headless, where
 // we reject with an error).
-func (s *Session) executeToolConfirmed(ctx context.Context, name string, params map[string]any) *ToolResult {
-	// Session-level tools (todo list) live as Session methods, not registered
+func (s *Thread) executeToolConfirmed(ctx context.Context, name string, params map[string]any) *ToolResult {
+	// Thread-level tools (todo list) live as Thread methods, not registered
 	// tool handlers. Subagents and workflow steps route through here, so
 	// intercept before the GetHandler lookup — otherwise they'd get
 	// "unknown tool: todo_read". The main-agent path handles these via
-	// sessionDispatchToolCalls.handleSpecial and never reaches this function.
+	// threadDispatchToolCalls.handleSpecial and never reaches this function.
 	switch name {
 	case "todo_read":
 		output, isErr := s.handleTodoRead(ctx, params)
@@ -1596,7 +1596,7 @@ func (s *Session) executeToolConfirmed(ctx context.Context, name string, params 
 	}
 
 	// Read-before-edit gate: subagents and workflow agents share the parent
-	// session's read set, so a subagent must also have read a file before
+	// thread's read set, so a subagent must also have read a file before
 	// editing it (either directly, or inheriting from the parent's reads).
 	if blocked := s.enforceReadGate(name, params); blocked != nil {
 		return blocked
@@ -1630,12 +1630,12 @@ func (s *Session) executeToolConfirmed(ctx context.Context, name string, params 
 	p["cwd"] = s.cwd
 	p["allowed_dirs"] = s.toolAllowedDirs()
 	p["headless"] = s.headless
-	p["_session"] = s // see executeToolDirect for rationale
+	p["_thread"] = s // see executeToolDirect for rationale
 
-	// Route MCP tools directly to the session's MCP pool.
+	// Route MCP tools directly to the thread's MCP pool.
 	if strings.HasPrefix(name, "mcp__") {
 		if s.mcpPool == nil {
-			return &ToolResult{Output: "MCP is not initialised for this session (no mcp_servers configured)", IsError: true}
+			return &ToolResult{Output: "MCP is not initialised for this thread (no mcp_servers configured)", IsError: true}
 		}
 		output, isError, err := s.mcpPool.Call(name, p)
 		if err != nil {
@@ -1690,13 +1690,13 @@ const maxRetries = 10
 // streamWithRetry calls StreamMessage with automatic retry and exponential
 // backoff for transient errors (rate limits, server errors, network issues).
 // Non-retryable errors (auth, bad request) fail immediately with a friendly message.
-func (s *Session) streamWithRetry(
+func (s *Thread) streamWithRetry(
 	system []llm.SystemBlock,
 	onDelta func(string),
 	onThinkingDelta func(string),
 ) (*llm.Message, time.Duration, error) {
 	// Retry-scoped context: covers the whole loop including backoff sleeps.
-	// `session.cancel` (from Escape) calls s.cancelStream → cancels retryCtx,
+	// `thread.cancel` (from Escape) calls s.cancelStream → cancels retryCtx,
 	// which (a) cancels the in-flight StreamMessage via the derived streamCtx
 	// and (b) wakes the backoff select so we don't keep retrying after Escape.
 	retryCtx, retryCancel := context.WithCancel(s.ctx)
@@ -1719,7 +1719,7 @@ func (s *Session) streamWithRetry(
 		if attempt == maxRetries-1 && sawAnyStall {
 			empty := ""
 			streamOpts.EffortOverride = &empty
-			log.Printf("\033[33m[session req=%s] final attempt — disabling extended thinking for this call\033[0m", turnID)
+			log.Printf("\033[33m[thread req=%s] final attempt — disabling extended thinking for this call\033[0m", turnID)
 		}
 		msg, elapsed, err := s.llm.StreamMessageWith(streamCtx, system, s.messages, s.tools, onDelta, onThinkingDelta, streamOpts)
 		streamCancel()
@@ -1743,7 +1743,7 @@ func (s *Session) streamWithRetry(
 				SummaryChars: len(stallErr.Summary),
 			})
 			s.appendMessages(nudge)
-			log.Printf("\033[31m[session req=%s] thinking stall after %s (attempt %d/%d, nudging and retrying)\033[0m",
+			log.Printf("\033[31m[thread req=%s] thinking stall after %s (attempt %d/%d, nudging and retrying)\033[0m",
 				turnID, stallErr.Elapsed, attempt+1, maxRetries)
 			lastReason = "Thinking stall — nudging model"
 			s.emit("event.stream_done", protocol.EventStreamDone{})
@@ -1762,10 +1762,10 @@ func (s *Session) streamWithRetry(
 		retryable, reason := classifyError(err)
 		lastReason = reason
 		if !retryable {
-			log.Printf("\033[31m[session req=%s] API error: %s — %v\033[0m", turnID, reason, err)
+			log.Printf("\033[31m[thread req=%s] API error: %s — %v\033[0m", turnID, reason, err)
 			return nil, 0, fmt.Errorf("%s", reason)
 		}
-		log.Printf("\033[31m[session req=%s] API error (attempt %d/%d, retrying): %s — %v\033[0m", turnID, attempt+1, maxRetries, reason, err)
+		log.Printf("\033[31m[thread req=%s] API error (attempt %d/%d, retrying): %s — %v\033[0m", turnID, attempt+1, maxRetries, reason, err)
 
 		// Flush any partial streaming content in the UI
 		s.emit("event.stream_done", protocol.EventStreamDone{})
@@ -1857,7 +1857,7 @@ func buildStallNudge(elapsed time.Duration, summary string, attempt, max int, fi
 // — the nudge wording reflects that so the model doesn't reopen a thinking
 // block it cannot use.
 //
-// Shared by session streamWithRetry, workflow step runner, and subagent
+// Shared by thread streamWithRetry, workflow step runner, and subagent
 // turn loop so all three surfaces react to stalls the same way.
 func asThinkingStall(err error, attempt, max int, finalNext bool) (*ThinkingStallError, llm.MessageParam, bool) {
 	var stallErr *ThinkingStallError
@@ -1870,7 +1870,7 @@ func asThinkingStall(err error, attempt, max int, finalNext bool) (*ThinkingStal
 	return stallErr, nudge, true
 }
 
-func (s *Session) handleInput(text string, attachments []protocol.Attachment) {
+func (s *Thread) handleInput(text string, attachments []protocol.Attachment) {
 	if text == "/exit" {
 		s.emit("event.quit", nil)
 		return
@@ -1897,7 +1897,7 @@ func (s *Session) handleInput(text string, attachments []protocol.Attachment) {
 		return
 	}
 
-	// Unconfigured session: no usable LLM client (e.g. no credential for the
+	// Unconfigured thread: no usable LLM client (e.g. no credential for the
 	// selected model's provider). Surface the error to the UI without ever
 	// contacting the LLM. Placed before /compact, which also needs the client.
 	if s.configErr != nil {
@@ -2030,7 +2030,7 @@ func (s *Session) handleInput(text string, attachments []protocol.Attachment) {
 		s.appendMessages(msg.ToParam())
 
 		if msg.StopReason == llm.StopEndTurn {
-			log.Printf("\033[34m[session] end of turn detected\033[0m")
+			log.Printf("\033[34m[thread] end of turn detected\033[0m")
 			s.endTurnCount++
 			if todoNudges < 3 && s.hasPendingTodos() {
 				todoNudges++
@@ -2045,7 +2045,7 @@ func (s *Session) handleInput(text string, attachments []protocol.Attachment) {
 		if msg.StopReason == "tool_use" {
 			streamCtx, streamCancel := context.WithCancel(s.ctx)
 			s.cancelStream = streamCancel
-			toolResults := s.sessionDispatchToolCalls(streamCtx, msg)
+			toolResults := s.threadDispatchToolCalls(streamCtx, msg)
 			cancelled := streamCtx.Err() != nil
 			streamCancel()
 			// Always append tool results — the API requires every tool_use
@@ -2068,7 +2068,7 @@ func (s *Session) handleInput(text string, attachments []protocol.Attachment) {
 	copy(snapshot, s.messages)
 	s.turnSnapshots = append(s.turnSnapshots, snapshot)
 	s.mu.Unlock()
-	s.unread = true // new content; cleared by session.mark_read when viewed
+	s.unread = true // new content; cleared by thread.mark_read when viewed
 	s.persist()
 	s.maybeGenerateTitle()
 	s.fireStop()
@@ -2105,7 +2105,7 @@ const compactionRequestPrompt = "Summarize the conversation above following the 
 // (keepFromMsgIdx) and the count of turns being summarized. explicitN > 0 means
 // /compact N (keep turns after N); otherwise the configured policy applies.
 // Returns ok=false when there is nothing to compact. Must be called under s.mu.
-func (s *Session) resolveCompactionKeep(explicitN int) (keepFromMsgIdx, summarizedTurns int, ok bool) {
+func (s *Thread) resolveCompactionKeep(explicitN int) (keepFromMsgIdx, summarizedTurns int, ok bool) {
 	total := len(s.turnSnapshots)
 	if total == 0 {
 		return 0, 0, false
@@ -2145,7 +2145,7 @@ func (s *Session) resolveCompactionKeep(explicitN int) (keepFromMsgIdx, summariz
 // maybeAutoCompact compacts the conversation when automatic compaction is
 // enabled, the model's context window is known, and the last turn's prompt
 // exceeded the configured threshold. Called at the top of the turn loop.
-func (s *Session) maybeAutoCompact() {
+func (s *Thread) maybeAutoCompact() {
 	cfg := s.projectConfig.Compaction
 	if !cfg.Auto {
 		return
@@ -2165,7 +2165,7 @@ func (s *Session) maybeAutoCompact() {
 	if !ok {
 		// Threshold breached but a single trailing turn already fills the
 		// window — nothing safe to compact. Warn once and continue.
-		log.Printf("\033[33m[session] auto-compaction skipped: nothing to compact below threshold\033[0m")
+		log.Printf("\033[33m[thread] auto-compaction skipped: nothing to compact below threshold\033[0m")
 		return
 	}
 	s.compactMessages(keepFromMsgIdx, summarizedTurns, true)
@@ -2175,7 +2175,7 @@ func (s *Session) maybeAutoCompact() {
 // history with [summary, ...tail], rebuilding turnSnapshots to keep the
 // retained turns' boundaries consistent. summarizedTurns is the number of turns
 // folded into the summary. auto distinguishes the trigger source for the event.
-func (s *Session) compactMessages(keepFromMsgIdx, summarizedTurns int, auto bool) {
+func (s *Thread) compactMessages(keepFromMsgIdx, summarizedTurns int, auto bool) {
 	s.mu.Lock()
 	if keepFromMsgIdx <= 0 || keepFromMsgIdx >= len(s.messages) {
 		s.mu.Unlock()
@@ -2247,7 +2247,7 @@ func (s *Session) compactMessages(keepFromMsgIdx, summarizedTurns int, auto bool
 
 // summarizeMessages runs a one-shot, tool-free LLM call to summarize the given
 // messages. Streaming deltas are discarded (no UI side-effects).
-func (s *Session) summarizeMessages(msgs []llm.MessageParam) (string, error) {
+func (s *Thread) summarizeMessages(msgs []llm.MessageParam) (string, error) {
 	system := []llm.SystemBlock{{Text: compactionSystemPrompt}}
 	// Ensure the conversation ends on a user message: the dropped prefix ends on
 	// an assistant turn, which the API would otherwise treat as a prefill.
@@ -2306,7 +2306,7 @@ type dispatchOptions struct {
 	// executeTool runs the named tool with the given input. It must be non-nil.
 	// The implementation is responsible for setting confirmed=true when needed.
 	executeTool func(name string, input map[string]any) *ToolResult
-	// handleSpecial handles tools that need session-level logic (ask_question_to_user,
+	// handleSpecial handles tools that need thread-level logic (ask_question_to_user,
 	// spawn_agent, task_output). Returns (result, true) when it handles the tool,
 	// (nil, false) when it doesn't recognise it.
 	handleSpecial func(ctx context.Context, name string, input map[string]any) (*ToolResult, bool)
@@ -2320,14 +2320,14 @@ type dispatchOptions struct {
 	emitToolResult func(toolID, name string, input map[string]any, output string, isError bool, lineOffset int)
 	// beforeTool, when set, fires PreToolUse hooks before a tool executes. It
 	// returns rewritten input (modify), a deny reason, and a denied flag. Only
-	// wired for the main session dispatcher; nil for subagents.
+	// wired for the main thread dispatcher; nil for subagents.
 	beforeTool func(ctx context.Context, name string, input map[string]any) (newInput map[string]any, denyReason string, denied bool)
 	// afterTool, when set, fires PostToolUse hooks after a tool completes,
 	// possibly appending context to the result. Nil for subagents.
 	afterTool func(ctx context.Context, name string, input map[string]any, result *ToolResult)
 	// permissionRequest, when set, fires PermissionRequest hooks just before the
 	// user is asked to confirm a tool call. A deny short-circuits the prompt and
-	// rejects the tool with the returned reason. Only wired for the main session
+	// rejects the tool with the returned reason. Only wired for the main thread
 	// dispatcher; nil for subagents.
 	permissionRequest func(ctx context.Context, name string, input map[string]any) (denyReason string, denied bool)
 	// toolTimeoutDefault is the floor for tool-call timeouts used by the
@@ -2363,7 +2363,7 @@ func snapshotInput(m map[string]any) map[string]any {
 }
 
 // dispatchToolCalls is the single, unified tool dispatcher for both the main agent
-// and subagents/workflow agents. Session-specific behaviour (confirmation prompts,
+// and subagents/workflow agents. Thread-specific behaviour (confirmation prompts,
 // interactive tools, UI events) is injected via dispatchOptions.
 func dispatchToolCalls(ctx context.Context, msg *llm.Message, opts dispatchOptions) []llm.ContentBlock {
 	// --- Stage 1: Parse & classify ---
@@ -2579,7 +2579,7 @@ func executeToolsSequential(ctx context.Context, tasks []*toolTask, opts dispatc
 			break
 		}
 
-		// Delegate to session-level handler if available (ask_question_to_user, spawn_agent, task_output)
+		// Delegate to thread-level handler if available (ask_question_to_user, spawn_agent, task_output)
 		if opts.handleSpecial != nil {
 			if result, handled := opts.handleSpecial(ctx, t.toolUse.Name, t.input); handled {
 				t.result = result
@@ -2663,8 +2663,8 @@ func resolveConfirmation(ctx context.Context, t *toolTask, opts dispatchOptions)
 	return opts.executeTool(t.toolUse.Name, p)
 }
 
-// sessionDispatchToolCalls is the Session-specific wrapper around the unified dispatcher.
-func (s *Session) sessionDispatchToolCalls(ctx context.Context, msg *llm.Message) []llm.ContentBlock {
+// threadDispatchToolCalls is the Thread-specific wrapper around the unified dispatcher.
+func (s *Thread) threadDispatchToolCalls(ctx context.Context, msg *llm.Message) []llm.ContentBlock {
 	def, maxv := s.toolTimeoutBounds()
 	opts := dispatchOptions{
 		cwd:                s.cwd,
@@ -2717,13 +2717,13 @@ func (s *Session) sessionDispatchToolCalls(ctx context.Context, msg *llm.Message
 				RequestedDirs: requestedDirs,
 				Detail:        buildConfirmDetail(s.cwd, name, input),
 			})
-			cmd, ok := s.waitForCommand(s.ctx, "session.confirm")
+			cmd, ok := s.waitForCommand(s.ctx, "thread.confirm")
 			if !ok {
 				return false, true
 			}
-			var confirmData protocol.SessionConfirmData
+			var confirmData protocol.ThreadConfirmData
 			json.Unmarshal(cmd.Data, &confirmData)
-			// If approved and directories were requested, add them to the session.
+			// If approved and directories were requested, add them to the thread.
 			if confirmData.Approved && len(requestedDirs) > 0 {
 				for _, dir := range requestedDirs {
 					s.addAllowedDir(dir)
@@ -2763,13 +2763,13 @@ func providerFor(model string) string {
 	return "openai"
 }
 
-// handleWorkflowCommand handles a session.workflow command by looking up and
+// handleWorkflowCommand handles a thread.workflow command by looking up and
 // executing the workflow matching the given name. When inline is non-empty it
 // carries a self-contained workflow definition (a workflow.Def as JSON) which
-// is registered into the session's workflow set first, then resolved by its own
+// is registered into the thread's workflow set first, then resolved by its own
 // name through the normal lookup below.
-func (s *Session) handleWorkflowCommand(name, text string, inline json.RawMessage) {
-	// Unconfigured session: no usable LLM client. Workflows stream too, so
+func (s *Thread) handleWorkflowCommand(name, text string, inline json.RawMessage) {
+	// Unconfigured thread: no usable LLM client. Workflows stream too, so
 	// refuse before doing any work and surface the error to the UI.
 	if s.configErr != nil {
 		s.emit("event.error", protocol.EventError{Message: s.unconfiguredMessage()})
@@ -2779,19 +2779,19 @@ func (s *Session) handleWorkflowCommand(name, text string, inline json.RawMessag
 
 	// Inline workflow: validate and register it transiently, then fall through
 	// to the by-name lookup (using the def's own name). Registering here, inside
-	// the session goroutine, is race-free with Run()'s initial workflow load.
+	// the thread goroutine, is race-free with Run()'s initial workflow load.
 	if len(inline) > 0 {
 		var def WorkflowDef
 		if err := json.Unmarshal(inline, &def); err != nil {
 			msg := fmt.Sprintf("invalid inline workflow: %v", err)
-			log.Printf("[session] %s", msg)
+			log.Printf("[thread] %s", msg)
 			s.emit("event.error", protocol.EventError{Message: msg})
 			s.emit("event.agent_done", nil)
 			return
 		}
 		if err := validateWorkflow(&def); err != nil {
 			msg := fmt.Sprintf("invalid inline workflow: %v", err)
-			log.Printf("[session] %s", msg)
+			log.Printf("[thread] %s", msg)
 			s.emit("event.error", protocol.EventError{Message: msg})
 			s.emit("event.agent_done", nil)
 			return
@@ -2809,13 +2809,13 @@ func (s *Session) handleWorkflowCommand(name, text string, inline json.RawMessag
 	}
 	if wf == nil {
 		msg := fmt.Sprintf("workflow %q not found", name)
-		log.Printf("[session] %s", msg)
+		log.Printf("[thread] %s", msg)
 		s.emit("event.error", protocol.EventError{Message: msg})
 		s.emit("event.agent_done", nil)
 		return
 	}
 
-	s.sessionMode = "workflow"
+	s.threadMode = "workflow"
 	s.activeWorkflow = name
 	s.persist()
 
@@ -2881,11 +2881,11 @@ func workflowStepIDFromError(err error) string {
 	return ""
 }
 
-// recordFailureNotice appends a terminal-failure notice to the session,
+// recordFailureNotice appends a terminal-failure notice to the thread,
 // anchored to the end of the transcript so it replays after any partial work
-// (AfterIdx == -1 when no messages exist at all). Persisted with the session so
+// (AfterIdx == -1 when no messages exist at all). Persisted with the thread so
 // a reopened run shows why it aborted instead of a blank transcript.
-func (s *Session) recordFailureNotice(stepID, reason string) {
+func (s *Thread) recordFailureNotice(stepID, reason string) {
 	if strings.TrimSpace(reason) == "" {
 		return
 	}
@@ -2899,7 +2899,7 @@ func (s *Session) recordFailureNotice(stepID, reason string) {
 }
 
 // handleSpawnAgent resolves and runs a subagent.
-func (s *Session) handleSpawnAgent(ctx context.Context, input map[string]any) (string, bool) {
+func (s *Thread) handleSpawnAgent(ctx context.Context, input map[string]any) (string, bool) {
 	prompt, _ := input["prompt"].(string)
 	if prompt == "" {
 		return "spawn_agent requires a 'prompt' parameter", true
@@ -2947,9 +2947,9 @@ func (s *Session) handleSpawnAgent(ctx context.Context, input map[string]any) (s
 
 	if background {
 		// Background tasks must outlive the current tool dispatch — bind both
-		// the subagent loop and its tool executor to the session context, not
+		// the subagent loop and its tool executor to the thread context, not
 		// the per-dispatch ctx, which is cancelled as soon as
-		// sessionDispatchToolCalls returns.
+		// threadDispatchToolCalls returns.
 		bgCtx := s.ctx
 		bgExecuteTool := func(name string, params map[string]any, cwd string) (*ToolResult, error) {
 			return s.executeToolConfirmed(bgCtx, name, params), nil
@@ -2958,7 +2958,7 @@ func (s *Session) handleSpawnAgent(ctx context.Context, input map[string]any) (s
 		taskID := s.backgroundTasks.SpawnBackground(bgCtx, config, prompt, cred, parentModel, s.server.plugins, bgExecuteTool, s.cwd, bgDef, bgMax, s.searchDirsSlice()...)
 		s.fireSubagentStart(agentType, taskID, prompt)
 		// Fire SubagentStop when the background task completes, bound to the
-		// session context so it never outlives the session.
+		// thread context so it never outlives the thread.
 		if task, ok := s.backgroundTasks.Load(taskID); ok {
 			go func() {
 				select {
@@ -2997,8 +2997,8 @@ func (s *Session) handleSpawnAgent(ctx context.Context, input map[string]any) (s
 // RunExploration spawns a named agent (looked up from s.customAgents) as a
 // foreground subagent and blocks until it completes or ctx is cancelled.
 // It is intended for external callers such as the web API that need to run an
-// agent on behalf of the session without going through the normal command loop.
-func (s *Session) RunExploration(ctx context.Context, agentName, prompt string) (*SubagentResult, error) {
+// agent on behalf of the thread without going through the normal command loop.
+func (s *Thread) RunExploration(ctx context.Context, agentName, prompt string) (*SubagentResult, error) {
 	agentConfig, ok := s.customAgents[agentName]
 	if !ok {
 		return nil, fmt.Errorf("unknown agent: %q", agentName)
@@ -3017,7 +3017,7 @@ func (s *Session) RunExploration(ctx context.Context, agentName, prompt string) 
 	return RunSubagent(ctx, agentConfig, prompt, cred, s.model, s.server.plugins, executeTool, s.cwd, nil, def, maxv, s.searchDirsSlice()...)
 }
 
-func (s *Session) handleTaskOutput(ctx context.Context, input map[string]any) (string, bool) {
+func (s *Thread) handleTaskOutput(ctx context.Context, input map[string]any) (string, bool) {
 	taskID, _ := input["task_id"].(string)
 	if taskID == "" {
 		return "task_output requires a 'task_id' parameter", true
@@ -3042,7 +3042,7 @@ func (s *Session) handleTaskOutput(ctx context.Context, input map[string]any) (s
 }
 
 // handleAskQuestionsBatch emits a user question event and waits for all answers.
-func (s *Session) handleAskQuestionsBatch(ctx context.Context, input map[string]any) (*ToolResult, error) {
+func (s *Thread) handleAskQuestionsBatch(ctx context.Context, input map[string]any) (*ToolResult, error) {
 	questionsRaw, ok := input["questions"].([]any)
 	if !ok || len(questionsRaw) == 0 {
 		return &ToolResult{Output: "ask_questions_batch requires a non-empty 'questions' array", IsError: true}, nil
@@ -3077,12 +3077,12 @@ func (s *Session) handleAskQuestionsBatch(ctx context.Context, input map[string]
 		Questions: questions,
 	})
 
-	cmd, ok2 := s.waitForCommand(ctx, "session.user_answer")
+	cmd, ok2 := s.waitForCommand(ctx, "thread.user_answer")
 	if !ok2 {
 		return nil, ctx.Err()
 	}
 
-	var answerData protocol.SessionUserAnswerData
+	var answerData protocol.ThreadUserAnswerData
 	json.Unmarshal(cmd.Data, &answerData)
 
 	// For a single question, return the answer directly.
@@ -3117,8 +3117,8 @@ func extractStatusCode(err error) int {
 	return extractStatusCodeAnthropic(err)
 }
 
-// accumulateTurnTelemetry tracks a completed LLM turn and updates session totals.
-func (s *Session) accumulateTurnTelemetry(inputTokens, outputTokens, cacheWrite, cacheRead, elapsedMs int64, toolCalls int) {
+// accumulateTurnTelemetry tracks a completed LLM turn and updates thread totals.
+func (s *Thread) accumulateTurnTelemetry(inputTokens, outputTokens, cacheWrite, cacheRead, elapsedMs int64, toolCalls int) {
 
 	s.turnCount++
 	s.totalInputTokens += inputTokens

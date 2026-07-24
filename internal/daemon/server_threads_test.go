@@ -12,41 +12,41 @@ import (
 	"github.com/get-vix/vix/internal/config"
 )
 
-func TestSessionsIncludesPersistedOpenRecords(t *testing.T) {
+func TestThreadsIncludesPersistedOpenRecords(t *testing.T) {
 	home := t.TempDir()
 	paths := config.NewVixPaths("", home, "")
 	started := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	last := time.Date(2026, 6, 17, 12, 5, 0, 0, time.UTC)
 
-	if err := saveSessionRecord(paths, sessionRecord{
+	if err := saveThreadRecord(paths, threadRecord{
 		ID:                "persisted",
 		CWD:               "/tmp/project",
 		Model:             "openai/gpt-5.5",
-		Title:             "Persisted session",
+		Title:             "Persisted thread",
 		StartedAt:         started,
 		LastRequestAt:     last,
 		TotalInputTokens:  12,
 		TotalOutputTokens: 34,
 		Unread:            true,
 	}); err != nil {
-		t.Fatalf("saveSessionRecord: %v", err)
+		t.Fatalf("saveThreadRecord: %v", err)
 	}
 
 	srv := &Server{
 		homeVixDir: home,
-		sessions:   map[string]*Session{},
+		threads:    map[string]*Thread{},
 	}
 
-	infos := srv.Sessions()
+	infos := srv.Threads()
 	if len(infos) != 1 {
-		t.Fatalf("len(Sessions()) = %d, want 1 (%+v)", len(infos), infos)
+		t.Fatalf("len(Threads()) = %d, want 1 (%+v)", len(infos), infos)
 	}
 	info := infos[0]
 	if info.ID != "persisted" || info.CWD != "/tmp/project" {
-		t.Fatalf("session info = %+v", info)
+		t.Fatalf("thread info = %+v", info)
 	}
-	if info.Model != "openai/gpt-5.5" || info.Title != "Persisted session" {
-		t.Fatalf("session metadata = %+v", info)
+	if info.Model != "openai/gpt-5.5" || info.Title != "Persisted thread" {
+		t.Fatalf("thread metadata = %+v", info)
 	}
 	if info.InputTokens != 12 || info.OutputTokens != 34 {
 		t.Fatalf("token counts = (%d,%d), want (12,34)", info.InputTokens, info.OutputTokens)
@@ -62,12 +62,12 @@ func TestSessionsIncludesPersistedOpenRecords(t *testing.T) {
 	}
 }
 
-func TestSessionsPrefersLiveSessionOverPersistedRecord(t *testing.T) {
+func TestThreadsPrefersLiveThreadOverPersistedRecord(t *testing.T) {
 	home := t.TempDir()
 	paths := config.NewVixPaths("", home, "")
 	started := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 
-	if err := saveSessionRecord(paths, sessionRecord{
+	if err := saveThreadRecord(paths, threadRecord{
 		ID:                "same",
 		CWD:               "/tmp/persisted",
 		Model:             "openai/gpt-5.5",
@@ -75,12 +75,12 @@ func TestSessionsPrefersLiveSessionOverPersistedRecord(t *testing.T) {
 		TotalInputTokens:  1,
 		TotalOutputTokens: 2,
 	}); err != nil {
-		t.Fatalf("saveSessionRecord: %v", err)
+		t.Fatalf("saveThreadRecord: %v", err)
 	}
 
 	srv := &Server{
 		homeVixDir: home,
-		sessions: map[string]*Session{
+		threads: map[string]*Thread{
 			"same": {
 				id:                "same",
 				cwd:               "/tmp/live",
@@ -92,23 +92,23 @@ func TestSessionsPrefersLiveSessionOverPersistedRecord(t *testing.T) {
 		},
 	}
 
-	infos := srv.Sessions()
+	infos := srv.Threads()
 	if len(infos) != 1 {
-		t.Fatalf("len(Sessions()) = %d, want 1 (%+v)", len(infos), infos)
+		t.Fatalf("len(Threads()) = %d, want 1 (%+v)", len(infos), infos)
 	}
 	info := infos[0]
 	if !info.Attached {
-		t.Fatal("Attached = false, want true for live session")
+		t.Fatal("Attached = false, want true for live thread")
 	}
 	if info.CWD != "/tmp/live" || info.Model != "anthropic/claude-sonnet-4-6" {
-		t.Fatalf("live session did not override persisted record: %+v", info)
+		t.Fatalf("live thread did not override persisted record: %+v", info)
 	}
 	if info.InputTokens != 10 || info.OutputTokens != 20 {
 		t.Fatalf("token counts = (%d,%d), want live counts (10,20)", info.InputTokens, info.OutputTokens)
 	}
 }
 
-func TestSessionForWebCallRestoresPersistedOpenRecord(t *testing.T) {
+func TestThreadForWebCallRestoresPersistedOpenRecord(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	agentsDir := filepath.Join(home, "agents")
@@ -120,65 +120,65 @@ func TestSessionForWebCallRestoresPersistedOpenRecord(t *testing.T) {
 	}
 
 	paths := config.NewVixPaths("", home, "")
-	if err := saveSessionRecord(paths, sessionRecord{
+	if err := saveThreadRecord(paths, threadRecord{
 		ID:        "persisted-web",
 		CWD:       cwd,
 		Model:     "openai/gpt-5.5",
 		StartedAt: time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
 	}); err != nil {
-		t.Fatalf("saveSessionRecord: %v", err)
+		t.Fatalf("saveThreadRecord: %v", err)
 	}
 
-	srv := NewServer("", config.Credential{}, "test-session", "openai/gpt-5.5", &config.DaemonConfig{HomeVixDir: home}, nil)
-	sess, cleanup, err := srv.sessionForWebCall("persisted-web")
+	srv := NewServer("", config.Credential{}, "test-thread", "openai/gpt-5.5", &config.DaemonConfig{HomeVixDir: home}, nil)
+	sess, cleanup, err := srv.threadForWebCall("persisted-web")
 	if err != nil {
-		t.Fatalf("sessionForWebCall: %v", err)
+		t.Fatalf("threadForWebCall: %v", err)
 	}
 	if cleanup == nil {
-		t.Fatal("cleanup = nil, want cleanup for restored web-only session")
+		t.Fatal("cleanup = nil, want cleanup for restored web-only thread")
 	}
 	defer cleanup()
 	if sess == nil {
-		t.Fatal("sessionForWebCall returned nil session")
+		t.Fatal("threadForWebCall returned nil thread")
 	}
 	if sess.id != "persisted-web" || sess.cwd != cwd {
-		t.Fatalf("restored session = id %q cwd %q, want persisted-web %q", sess.id, sess.cwd, cwd)
+		t.Fatalf("restored thread = id %q cwd %q, want persisted-web %q", sess.id, sess.cwd, cwd)
 	}
 	if !sess.headless {
-		t.Fatal("restored web session should be headless")
+		t.Fatal("restored web thread should be headless")
 	}
 	if _, ok := sess.customAgents["general"]; !ok {
-		t.Fatalf("restored web session did not load general agent: %#v", sess.customAgents)
+		t.Fatalf("restored web thread did not load general agent: %#v", sess.customAgents)
 	}
-	if live := srv.getSession("persisted-web"); live != nil {
-		t.Fatalf("web-only restore registered a live session: %#v", live)
+	if live := srv.getThread("persisted-web"); live != nil {
+		t.Fatalf("web-only restore registered a live thread: %#v", live)
 	}
 }
 
-func TestSessionForWebCallPrefersLiveSession(t *testing.T) {
+func TestThreadForWebCallPrefersLiveThread(t *testing.T) {
 	home := t.TempDir()
-	live := &Session{id: "same", cwd: "/tmp/live"}
+	live := &Thread{id: "same", cwd: "/tmp/live"}
 	srv := &Server{
 		homeVixDir: home,
-		sessions: map[string]*Session{
+		threads: map[string]*Thread{
 			"same": live,
 		},
 	}
 
-	sess, cleanup, err := srv.sessionForWebCall("same")
+	sess, cleanup, err := srv.threadForWebCall("same")
 	if err != nil {
-		t.Fatalf("sessionForWebCall: %v", err)
+		t.Fatalf("threadForWebCall: %v", err)
 	}
 	if sess != live {
-		t.Fatalf("sessionForWebCall returned %#v, want live session %#v", sess, live)
+		t.Fatalf("threadForWebCall returned %#v, want live thread %#v", sess, live)
 	}
 	if cleanup != nil {
-		t.Fatal("cleanup should be nil for live sessions")
+		t.Fatal("cleanup should be nil for live threads")
 	}
 }
 
 func TestRunExplorationReturnsConfigErrorWithoutLLM(t *testing.T) {
-	sess := &Session{
+	sess := &Thread{
 		model:     "openai/gpt-5.5",
 		configErr: errors.New("missing model credentials"),
 		customAgents: map[string]SubagentConfig{

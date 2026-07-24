@@ -11,9 +11,9 @@ func makeMsg(text string) llm.MessageParam {
 	return llm.NewUserMessage(llm.NewTextBlock(text))
 }
 
-// seedSnapshots populates a session with n turn snapshots.
+// seedSnapshots populates a thread with n turn snapshots.
 // Snapshot i contains i+1 messages ("turn-0" … "turn-i").
-func seedSnapshots(s *Session, n int) {
+func seedSnapshots(s *Thread, n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.turnSnapshots = nil
@@ -34,7 +34,7 @@ func seedSnapshots(s *Session, n int) {
 // --- trimHistory tests ---
 
 func TestTrimHistory_MiddleTurn(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 4) // turns 0-3
 
 	s.trimHistory(1) // keep up to turn 1
@@ -48,7 +48,7 @@ func TestTrimHistory_MiddleTurn(t *testing.T) {
 }
 
 func TestTrimHistory_FirstTurn(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 3)
 
 	s.trimHistory(0) // keep only turn 0
@@ -62,7 +62,7 @@ func TestTrimHistory_FirstTurn(t *testing.T) {
 }
 
 func TestTrimHistory_LastTurn_IsNoop(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 3)
 
 	s.trimHistory(2) // trim to the last turn — messages unchanged
@@ -76,7 +76,7 @@ func TestTrimHistory_LastTurn_IsNoop(t *testing.T) {
 }
 
 func TestTrimHistory_OutOfRange_High(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 2)
 
 	s.trimHistory(99) // no-op
@@ -90,7 +90,7 @@ func TestTrimHistory_OutOfRange_High(t *testing.T) {
 }
 
 func TestTrimHistory_Negative_IsNoop(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 2)
 
 	s.trimHistory(-1)
@@ -101,7 +101,7 @@ func TestTrimHistory_Negative_IsNoop(t *testing.T) {
 }
 
 func TestTrimHistory_EmptySnapshots_IsNoop(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	// No snapshots at all.
 	s.trimHistory(0)
 	if s.messages != nil {
@@ -110,7 +110,7 @@ func TestTrimHistory_EmptySnapshots_IsNoop(t *testing.T) {
 }
 
 func TestTrimHistory_MessagesMatchSnapshot(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 4)
 
 	s.trimHistory(1)
@@ -128,7 +128,7 @@ func TestTrimHistory_MessagesMatchSnapshot(t *testing.T) {
 // --- snapshotMessagesForFork tests ---
 
 func TestSnapshotMessagesForFork_ValidIdx(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 3)
 
 	snap := s.snapshotMessagesForFork(1)
@@ -138,7 +138,7 @@ func TestSnapshotMessagesForFork_ValidIdx(t *testing.T) {
 }
 
 func TestSnapshotMessagesForFork_ZeroIdx(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 3)
 
 	snap := s.snapshotMessagesForFork(0)
@@ -148,7 +148,7 @@ func TestSnapshotMessagesForFork_ZeroIdx(t *testing.T) {
 }
 
 func TestSnapshotMessagesForFork_OutOfRange_High(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 2)
 
 	if snap := s.snapshotMessagesForFork(99); snap != nil {
@@ -157,7 +157,7 @@ func TestSnapshotMessagesForFork_OutOfRange_High(t *testing.T) {
 }
 
 func TestSnapshotMessagesForFork_Negative(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 2)
 
 	if snap := s.snapshotMessagesForFork(-1); snap != nil {
@@ -166,7 +166,7 @@ func TestSnapshotMessagesForFork_Negative(t *testing.T) {
 }
 
 func TestSnapshotMessagesForFork_Empty(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 
 	if snap := s.snapshotMessagesForFork(0); snap != nil {
 		t.Fatalf("expected nil when no snapshots, got %v", snap)
@@ -176,25 +176,25 @@ func TestSnapshotMessagesForFork_Empty(t *testing.T) {
 // --- fork seeding tests ---
 
 func TestForkSeeding_SeedsMessagesFromSource(t *testing.T) {
-	src := &Session{}
+	src := &Thread{}
 	seedSnapshots(src, 3)
 
-	// Simulate what server.go does when starting a forked session.
-	dst := &Session{}
+	// Simulate what server.go does when starting a forked thread.
+	dst := &Thread{}
 	if msgs := src.snapshotMessagesForFork(1); len(msgs) > 0 {
 		dst.messages = msgs
 	}
 
 	if len(dst.messages) != 2 {
-		t.Fatalf("forked session expected 2 messages, got %d", len(dst.messages))
+		t.Fatalf("forked thread expected 2 messages, got %d", len(dst.messages))
 	}
 }
 
 func TestForkSeeding_OutOfRange_LeavesDestinationEmpty(t *testing.T) {
-	src := &Session{}
+	src := &Thread{}
 	seedSnapshots(src, 2)
 
-	dst := &Session{}
+	dst := &Thread{}
 	if msgs := src.snapshotMessagesForFork(99); len(msgs) > 0 {
 		dst.messages = msgs
 	}
@@ -205,7 +205,7 @@ func TestForkSeeding_OutOfRange_LeavesDestinationEmpty(t *testing.T) {
 }
 
 func TestForkSeeding_DoesNotAliasSourceMessages(t *testing.T) {
-	src := &Session{}
+	src := &Thread{}
 	seedSnapshots(src, 2)
 
 	snap := src.snapshotMessagesForFork(1)
@@ -222,7 +222,7 @@ func TestForkSeeding_DoesNotAliasSourceMessages(t *testing.T) {
 }
 
 func TestTrimHistory_ThenFork_SeesOnlyTrimmedHistory(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	seedSnapshots(s, 4) // turns 0-3
 
 	s.trimHistory(1) // trim to turn 1
@@ -301,17 +301,17 @@ func TestRebuildTurnSnapshots_CopiesNotAliases(t *testing.T) {
 	}
 }
 
-// TestForkOfFork_SeededSessionIsForkable reproduces the duplicate-of-a-duplicate
-// bug: a session seeded purely from a fork (messages set, turnSnapshots empty)
+// TestForkOfFork_SeededThreadIsForkable reproduces the duplicate-of-a-duplicate
+// bug: a thread seeded purely from a fork (messages set, turnSnapshots empty)
 // must be forkable again. With snapshots rebuilt on seed, the second fork copies
 // the full history instead of starting empty.
-func TestForkOfFork_SeededSessionIsForkable(t *testing.T) {
-	// Original session with two real turns.
-	orig := &Session{}
+func TestForkOfFork_SeededThreadIsForkable(t *testing.T) {
+	// Original thread with two real turns.
+	orig := &Thread{}
 	orig.turnSnapshots = rebuildTurnSnapshots(twoTurnHistory())
 
 	// First duplicate: seed messages + snapshots from the last turn (as server.go does).
-	dupA := &Session{}
+	dupA := &Thread{}
 	msgsA := orig.snapshotMessagesForFork(1)
 	if len(msgsA) == 0 {
 		t.Fatal("first fork found no history to copy")

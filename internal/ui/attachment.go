@@ -271,7 +271,7 @@ func matchedPath(text string, loc []int) (string, bool) {
 
 // attachmentRefPattern matches the daemon's persisted attachment reference
 // lines ("[Image: /path]" / "[File: /path]") that prefix a stored user message
-// (see Session.AddUserMessage in the daemon).
+// (see Thread.AddUserMessage in the daemon).
 var attachmentRefPattern = regexp.MustCompile(`^\[(Image|File): (.+)\]$`)
 
 // parseAttachmentRefs splits a replayed user message into its body text and the

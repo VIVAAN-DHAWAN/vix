@@ -7,7 +7,7 @@ import (
 
 // TestAvailableModels_AllPrefixed asserts every catalogue entry's Spec
 // starts with its declared Provider name plus a slash. The settings UI
-// dispatches Spec verbatim to session.set_model; if a row leaks a bare
+// dispatches Spec verbatim to thread.set_model; if a row leaks a bare
 // name through, ParseModel rejects it and the model picker breaks.
 func TestAvailableModels_AllPrefixed(t *testing.T) {
 	for _, m := range AvailableModels() {

@@ -22,14 +22,14 @@ type Config struct {
 // Load reads configuration from environment variables.
 // The API key is no longer needed on the client side — the daemon handles it.
 // If workdir is non-empty, it is resolved to an absolute path and used as the
-// session working directory instead of os.Getwd().
+// thread working directory instead of os.Getwd().
 // If configDir is non-empty, it is resolved to an absolute path and used as
 // the sole .vix config root (ignoring ~/.vix and ./.vix).
 // If socketPath is empty, /tmp/vixd.sock is used.
 func Load(forceInit bool, workdir, configDir, socketPath string) (*Config, error) {
 	// Model selection now lives in the active chat agent's `model:` YAML
-	// frontmatter (resolved per-session in the daemon). The Config.Model
-	// field is left as a final fallback only — see session.go for the
+	// frontmatter (resolved per-thread in the daemon). The Config.Model
+	// field is left as a final fallback only — see thread.go for the
 	// resolution chain.
 	const model = "anthropic/claude-sonnet-4-6"
 
@@ -120,21 +120,29 @@ func LoadDaemonConfig(version string) (*DaemonConfig, error) {
 // feature reads a boolean feature flag from ~/.vix/settings.json, returning
 // def when the file is missing, unparsable, or the flag is absent.
 func feature(name string, def bool) bool {
+	if v, ok := featureRaw(name); ok {
+		return v
+	}
+	return def
+}
+
+// featureRaw reads a boolean feature flag from ~/.vix/settings.json, reporting
+// whether the key was present. Used to distinguish "explicitly set" from
+// "absent" (e.g. for legacy-key fallbacks).
+func featureRaw(name string) (bool, bool) {
 	p := filepath.Join(HomeVixDir(), "settings.json")
 	data, err := os.ReadFile(p)
 	if err != nil {
-		return def
+		return false, false
 	}
 	var cfg struct {
 		Features map[string]bool `json:"features"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return def
+		return false, false
 	}
-	if v, ok := cfg.Features[name]; ok {
-		return v
-	}
-	return def
+	v, ok := cfg.Features[name]
+	return v, ok
 }
 
 // setFeature writes a boolean feature flag to ~/.vix/settings.json, preserving
@@ -191,13 +199,20 @@ func ShowThinking() bool { return feature("show_thinking", false) }
 // SetShowThinking writes the show_thinking feature flag to ~/.vix/settings.json.
 func SetShowThinking(v bool) error { return setFeature("show_thinking", v) }
 
-// CloseAllSessionsOnQuit reads the close_all_sessions_on_quit feature flag.
-// Defaults to false: quitting vix leaves all session records open so they are
-// restored on next launch. When true, quitting explicitly closes every session.
-func CloseAllSessionsOnQuit() bool { return feature("close_all_sessions_on_quit", false) }
+// CloseAllThreadsOnQuit reads the close_all_threads_on_quit feature flag.
+// Defaults to false: quitting vix leaves all thread records open so they are
+// restored on next launch. When true, quitting explicitly closes every thread.
+// The pre-rename key close_all_sessions_on_quit is honored as a fallback so an
+// existing settings.json keeps working.
+func CloseAllThreadsOnQuit() bool {
+	if v, ok := featureRaw("close_all_threads_on_quit"); ok {
+		return v
+	}
+	return feature("close_all_sessions_on_quit", false)
+}
 
-// SetCloseAllSessionsOnQuit writes the close_all_sessions_on_quit feature flag.
-func SetCloseAllSessionsOnQuit(v bool) error { return setFeature("close_all_sessions_on_quit", v) }
+// SetCloseAllThreadsOnQuit writes the close_all_threads_on_quit feature flag.
+func SetCloseAllThreadsOnQuit(v bool) error { return setFeature("close_all_threads_on_quit", v) }
 
 // ReadAgentsMD reads the read_agents_md feature flag. Defaults to false.
 func ReadAgentsMD() bool { return feature("read_agents_md", false) }
@@ -398,37 +413,48 @@ func SetCompactionAuto(v bool) error { return setCompactionField("auto", v) }
 // SetCompactionThreshold writes compaction.threshold to ~/.vix/settings.json.
 func SetCompactionThreshold(v float64) error { return setCompactionField("threshold", v) }
 
-// DefaultClosedSessionRetentionMinutes is the default retention for closed
-// session records: one week.
-const DefaultClosedSessionRetentionMinutes = 7 * 24 * 60
+// DefaultClosedThreadRetentionMinutes is the default retention for closed
+// thread records: one week.
+const DefaultClosedThreadRetentionMinutes = 7 * 24 * 60
 
-// ClosedSessionRetentionMinutes reads sessions.closed_retention_minutes from
-// ~/.vix/settings.json. Closed session records older than this are deleted by
+// ClosedThreadRetentionMinutes reads threads.closed_retention_minutes from
+// ~/.vix/settings.json. Closed thread records older than this are deleted by
 // the daemon on startup. Defaults to one week when absent. 0 means never trim
-// (settable only by editing settings.json — the TUI does not offer it).
-func ClosedSessionRetentionMinutes() int {
+// (settable only by editing settings.json — the TUI does not offer it). The
+// pre-rename block sessions.closed_retention_minutes is honored as a fallback.
+func ClosedThreadRetentionMinutes() int {
 	p := filepath.Join(HomeVixDir(), "settings.json")
 	data, err := os.ReadFile(p)
 	if err != nil {
-		return DefaultClosedSessionRetentionMinutes
+		return DefaultClosedThreadRetentionMinutes
 	}
 	var cfg struct {
+		Threads struct {
+			ClosedRetentionMinutes *int `json:"closed_retention_minutes"`
+		} `json:"threads"`
 		Sessions struct {
 			ClosedRetentionMinutes *int `json:"closed_retention_minutes"`
 		} `json:"sessions"`
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil || cfg.Sessions.ClosedRetentionMinutes == nil {
-		return DefaultClosedSessionRetentionMinutes
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return DefaultClosedThreadRetentionMinutes
 	}
-	if *cfg.Sessions.ClosedRetentionMinutes < 0 {
-		return DefaultClosedSessionRetentionMinutes
+	v := cfg.Threads.ClosedRetentionMinutes
+	if v == nil {
+		v = cfg.Sessions.ClosedRetentionMinutes // legacy fallback
 	}
-	return *cfg.Sessions.ClosedRetentionMinutes
+	if v == nil {
+		return DefaultClosedThreadRetentionMinutes
+	}
+	if *v < 0 {
+		return DefaultClosedThreadRetentionMinutes
+	}
+	return *v
 }
 
-// SetClosedSessionRetentionMinutes writes sessions.closed_retention_minutes to
+// SetClosedThreadRetentionMinutes writes threads.closed_retention_minutes to
 // ~/.vix/settings.json, preserving other keys.
-func SetClosedSessionRetentionMinutes(v int) error {
+func SetClosedThreadRetentionMinutes(v int) error {
 	home := HomeVixDir()
 	if home == "" {
 		return fmt.Errorf("no home directory")
@@ -443,12 +469,12 @@ func SetClosedSessionRetentionMinutes(v int) error {
 		_ = json.Unmarshal(data, &raw)
 	}
 
-	sessions, _ := raw["sessions"].(map[string]any)
-	if sessions == nil {
-		sessions = map[string]any{}
+	threads, _ := raw["threads"].(map[string]any)
+	if threads == nil {
+		threads = map[string]any{}
 	}
-	sessions["closed_retention_minutes"] = v
-	raw["sessions"] = sessions
+	threads["closed_retention_minutes"] = v
+	raw["threads"] = threads
 
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {

@@ -13,7 +13,7 @@ func TestRunNowFiresAndPreservesSchedule(t *testing.T) {
 	writeSpec(t, dir, validSpec("alpha")) // cron "@every 1m"
 
 	runner := newTestRunner(func(Spec) RunResult {
-		return RunResult{Status: StatusOK, SessionID: "sess-x"}
+		return RunResult{Status: StatusOK, ThreadID: "sess-x"}
 	})
 	sched := newTestScheduler(t, dir, runner)
 	sched.reconcile(time.Now())
@@ -38,8 +38,8 @@ func TestRunNowFiresAndPreservesSchedule(t *testing.T) {
 	sched.mu.Lock()
 	st := sched.state["alpha"]
 	sched.mu.Unlock()
-	if st.LastSessionID != "sess-x" {
-		t.Fatalf("LastSessionID = %q, want sess-x", st.LastSessionID)
+	if st.LastThreadID != "sess-x" {
+		t.Fatalf("LastThreadID = %q, want sess-x", st.LastThreadID)
 	}
 	if !st.NextRunAt.Equal(before) {
 		t.Fatalf("manual run changed the schedule: NextRunAt %v -> %v", before, st.NextRunAt)

@@ -17,7 +17,7 @@ func TestSeedDefaultFeedbackHook(t *testing.T) {
 	seedDefaultFeedbackHook(dir)
 	hookDir := filepath.Join(dir, feedbackHookID)
 
-	// Spec: present, valid, and wired to SessionStart/startup async.
+	// Spec: present, valid, and wired to ThreadStart/startup async.
 	raw, err := os.ReadFile(filepath.Join(hookDir, "hook.json"))
 	if err != nil {
 		t.Fatalf("spec not written: %v", err)
@@ -29,8 +29,8 @@ func TestSeedDefaultFeedbackHook(t *testing.T) {
 	if err := spec.Validate(); err != nil {
 		t.Fatalf("seeded spec fails validation: %v", err)
 	}
-	if spec.Trigger.Event != hooks.EventSessionStart || spec.Trigger.Matcher != "startup" {
-		t.Errorf("trigger = %+v, want SessionStart/startup", spec.Trigger)
+	if spec.Trigger.Event != hooks.EventThreadStart || spec.Trigger.Matcher != "startup" {
+		t.Errorf("trigger = %+v, want ThreadStart/startup", spec.Trigger)
 	}
 	if spec.EffectiveMode() != hooks.ModeAsync {
 		t.Errorf("mode = %q, want async", spec.EffectiveMode())
@@ -79,11 +79,11 @@ func TestSeedDefaultFeedbackHook(t *testing.T) {
 }
 
 func TestBuildHookContextIncludesVixBinAndSocket(t *testing.T) {
-	sess := &Session{
+	sess := &Thread{
 		id:     "sess-1",
 		server: &Server{vixBin: "/opt/vix/bin/vix", sockPath: "/tmp/vixd-test.sock"},
 	}
-	ctx := sess.buildHookContext(hooks.EventSessionStart, map[string]any{"source": "startup"})
+	ctx := sess.buildHookContext(hooks.EventThreadStart, map[string]any{"source": "startup"})
 	if ctx["vix_bin"] != "/opt/vix/bin/vix" {
 		t.Errorf("vix_bin = %v, want the server's binary path", ctx["vix_bin"])
 	}
@@ -92,7 +92,7 @@ func TestBuildHookContextIncludesVixBinAndSocket(t *testing.T) {
 	}
 }
 
-func TestCreateMessageSessionFromFile(t *testing.T) {
+func TestCreateMessageThreadFromFile(t *testing.T) {
 	s, home := newMessageTestServer(t)
 	cwd := t.TempDir()
 
@@ -101,20 +101,20 @@ func TestCreateMessageSessionFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := s.createMessageSession(MessageSessionSpec{MessageFile: msgPath, CWD: cwd, Title: "T"})
+	id, err := s.createMessageThread(MessageThreadSpec{MessageFile: msgPath, CWD: cwd, Title: "T"})
 	if err != nil {
-		t.Fatalf("createMessageSession(message_file): %v", err)
+		t.Fatalf("createMessageThread(message_file): %v", err)
 	}
-	rec, found, _ := loadOpenSessionRecord(config.NewVixPaths("", home, cwd), id)
+	rec, found, _ := loadOpenThreadRecord(config.NewVixPaths("", home, cwd), id)
 	if !found || rec.Messages[0].Content[0].Text != "# Hi\n\nfrom a file" {
 		t.Fatalf("message_file contents not used as the message: %+v", rec.Messages)
 	}
 
 	// Errors: both set, and a missing file.
-	if _, err := s.createMessageSession(MessageSessionSpec{Message: "x", MessageFile: msgPath, CWD: cwd}); err == nil {
+	if _, err := s.createMessageThread(MessageThreadSpec{Message: "x", MessageFile: msgPath, CWD: cwd}); err == nil {
 		t.Error("expected error when both message and message_file are set")
 	}
-	if _, err := s.createMessageSession(MessageSessionSpec{MessageFile: "/no/such/file.md", CWD: cwd}); err == nil {
+	if _, err := s.createMessageThread(MessageThreadSpec{MessageFile: "/no/such/file.md", CWD: cwd}); err == nil {
 		t.Error("expected error when message_file is missing")
 	}
 }
@@ -134,7 +134,7 @@ func runFeedbackScript(t *testing.T, scriptPath, home, fakeVix string) {
 }
 
 // writeFeedbackFixtures writes the real feedback script plus a fake `vix` that
-// records each `session create` invocation to callLog. Returns (scriptPath,
+// records each `thread create` invocation to callLog. Returns (scriptPath,
 // fakeVixPath, callLog).
 func writeFeedbackFixtures(t *testing.T) (string, string, string) {
 	t.Helper()

@@ -180,7 +180,7 @@ func TestConfigWatcherHookStateIgnored(t *testing.T) {
 }
 
 // an fsnotify event on workflow.json is debounced, the file is re-read, and
-// every live session receives a fresh event.workflows_available.
+// every live thread receives a fresh event.workflows_available.
 func TestConfigWatcherReloadsWorkflows(t *testing.T) {
 	dir := t.TempDir()
 	wfPath := filepath.Join(dir, "workflow.json")
@@ -196,11 +196,11 @@ func TestConfigWatcherReloadsWorkflows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sess := &Session{
-		eventChan: make(chan protocol.SessionEvent, 16),
+	sess := &Thread{
+		eventChan: make(chan protocol.ThreadEvent, 16),
 		ctx:       context.Background(),
 	}
-	srv := &Server{sessions: map[string]*Session{"s1": sess}}
+	srv := &Server{threads: map[string]*Thread{"s1": sess}}
 	cw := &configWatcher{
 		server:   srv,
 		wfPath:   wfPath,

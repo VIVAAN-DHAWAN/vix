@@ -85,7 +85,7 @@ func TestAuthButtonsFor(t *testing.T) {
 // Settings [F6] tabs.
 func TestTabBarHasModelsAndSettings(t *testing.T) {
 	bar := renderTabBar(TabKindModels, 160, NewStyles(false), true, false, false, false, false)
-	for _, want := range []string{"Sessions [F1]", "Workspace [F2]", "Models [F3]", "MCP [F4]", "Jobs & Triggers [F5]", "Settings [F6]"} {
+	for _, want := range []string{"Threads [F1]", "Workspace [F2]", "Models [F3]", "MCP [F4]", "Jobs & Triggers [F5]", "Settings [F6]"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("tab bar missing %q\n%s", want, bar)
 		}

@@ -16,24 +16,24 @@ func newMessageTestServer(t *testing.T) (*Server, string) {
 	return s, home
 }
 
-func TestCreateMessageSession(t *testing.T) {
+func TestCreateMessageThread(t *testing.T) {
 	s, home := newMessageTestServer(t)
 	cwd := t.TempDir()
 
-	id, err := s.createMessageSession(MessageSessionSpec{
+	id, err := s.createMessageThread(MessageThreadSpec{
 		Message: "Thanks for using vix!",
 		CWD:     cwd,
 		Title:   "Feedback",
 	})
 	if err != nil {
-		t.Fatalf("createMessageSession: %v", err)
+		t.Fatalf("createMessageThread: %v", err)
 	}
 	if id == "" {
-		t.Fatal("expected a non-empty session id")
+		t.Fatal("expected a non-empty thread id")
 	}
 
 	paths := config.NewVixPaths("", home, cwd)
-	rec, found, err := loadOpenSessionRecord(paths, id)
+	rec, found, err := loadOpenThreadRecord(paths, id)
 	if err != nil || !found {
 		t.Fatalf("record not persisted to open/ (found=%v err=%v)", found, err)
 	}
@@ -55,22 +55,22 @@ func TestCreateMessageSession(t *testing.T) {
 	}
 }
 
-func TestCreateMessageSessionValidation(t *testing.T) {
+func TestCreateMessageThreadValidation(t *testing.T) {
 	s, _ := newMessageTestServer(t)
 	cwd := t.TempDir()
 
 	cases := []struct {
 		name string
-		spec MessageSessionSpec
+		spec MessageThreadSpec
 	}{
-		{"missing message", MessageSessionSpec{CWD: cwd}},
-		{"blank message", MessageSessionSpec{Message: "   ", CWD: cwd}},
-		{"missing cwd", MessageSessionSpec{Message: "hi"}},
-		{"nonexistent cwd", MessageSessionSpec{Message: "hi", CWD: "/no/such/dir/xyz"}},
+		{"missing message", MessageThreadSpec{CWD: cwd}},
+		{"blank message", MessageThreadSpec{Message: "   ", CWD: cwd}},
+		{"missing cwd", MessageThreadSpec{Message: "hi"}},
+		{"nonexistent cwd", MessageThreadSpec{Message: "hi", CWD: "/no/such/dir/xyz"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := s.createMessageSession(tc.spec); err == nil {
+			if _, err := s.createMessageThread(tc.spec); err == nil {
 				t.Fatal("expected an error, got nil")
 			}
 		})
@@ -82,7 +82,7 @@ func TestMessageCreateHandler(t *testing.T) {
 	cwd := t.TempDir()
 
 	resp := callHandler(t, s, "message.create", map[string]any{
-		"session": map[string]any{
+		"thread": map[string]any{
 			"message": "hello from a hook",
 			"cwd":     cwd,
 			"title":   "Hook says hi",
@@ -91,19 +91,19 @@ func TestMessageCreateHandler(t *testing.T) {
 	if resp["status"] != "ok" {
 		t.Fatalf("status = %v, want ok (resp=%v)", resp["status"], resp)
 	}
-	id, _ := resp["session_id"].(string)
+	id, _ := resp["thread_id"].(string)
 	if id == "" {
-		t.Fatal("missing session_id in response")
+		t.Fatal("missing thread_id in response")
 	}
 
 	paths := config.NewVixPaths("", home, cwd)
-	if _, found, _ := loadOpenSessionRecord(paths, id); !found {
-		t.Fatal("handler did not persist the session record")
+	if _, found, _ := loadOpenThreadRecord(paths, id); !found {
+		t.Fatal("handler did not persist the thread record")
 	}
 
 	// Missing payload → error status, not a transport error.
 	bad := callHandler(t, s, "message.create", map[string]any{})
 	if bad["status"] != "error" {
-		t.Errorf("missing 'session' should yield error status, got %v", bad["status"])
+		t.Errorf("missing 'thread' should yield error status, got %v", bad["status"])
 	}
 }

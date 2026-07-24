@@ -201,11 +201,11 @@ func TestTitleTranscriptSkipsToolBlocksAndCaps(t *testing.T) {
 }
 
 // TestMaybeGenerateTitle exercises the async pass end to end against a fake
-// LLM: qualifying session → title set, persisted state updated, and
+// LLM: qualifying thread → title set, persisted state updated, and
 // event.title_updated emitted.
 func TestMaybeGenerateTitle(t *testing.T) {
-	fake := &fakeCompactionLLM{summary: `"Refactoring the session store"`}
-	s, events := newCompactionTestSession(t, fake)
+	fake := &fakeCompactionLLM{summary: `"Refactoring the thread store"`}
+	s, events := newCompactionTestThread(t, fake)
 	s.endTurnCount = titleEndTurnThreshold
 
 	s.maybeGenerateTitle()
@@ -218,14 +218,14 @@ func TestMaybeGenerateTitle(t *testing.T) {
 				continue
 			}
 			tu := ev.Data.(protocol.EventTitleUpdated)
-			if tu.Title != "Refactoring the session store" {
+			if tu.Title != "Refactoring the thread store" {
 				t.Errorf("event title = %q", tu.Title)
 			}
 			s.mu.Lock()
 			got := s.title
 			s.mu.Unlock()
-			if got != "Refactoring the session store" {
-				t.Errorf("session title = %q", got)
+			if got != "Refactoring the thread store" {
+				t.Errorf("thread title = %q", got)
 			}
 			// The one-shot call must be tool-free.
 			if len(fake.gotMsgs) != 1 || fake.gotMsgs[0].Role != llm.RoleUser {
@@ -244,17 +244,17 @@ func TestMaybeGenerateTitle(t *testing.T) {
 func TestMaybeGenerateTitleSkips(t *testing.T) {
 	cases := []struct {
 		name string
-		prep func(s *Session)
+		prep func(s *Thread)
 	}{
-		{"below threshold", func(s *Session) { s.endTurnCount = titleEndTurnThreshold - 1 }},
-		{"vix origin", func(s *Session) { s.endTurnCount = titleEndTurnThreshold; s.origin = "vix" }},
-		{"already titled", func(s *Session) { s.endTurnCount = titleEndTurnThreshold; s.title = "set" }},
-		{"in flight", func(s *Session) { s.endTurnCount = titleEndTurnThreshold; s.titleGenInFlight = true }},
+		{"below threshold", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold - 1 }},
+		{"vix origin", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold; s.origin = "vix" }},
+		{"already titled", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold; s.title = "set" }},
+		{"in flight", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold; s.titleGenInFlight = true }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fake := &fakeCompactionLLM{summary: "nope"}
-			s, _ := newCompactionTestSession(t, fake)
+			s, _ := newCompactionTestThread(t, fake)
 			c.prep(s)
 			s.maybeGenerateTitle()
 			time.Sleep(20 * time.Millisecond)

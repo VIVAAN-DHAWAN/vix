@@ -46,12 +46,12 @@ func renderStatusBar(
 	type shortcut struct{ key, label string }
 	var defs []shortcut
 	switch activeTab {
-	case TabKindSessions:
+	case TabKindThreads:
 		defs = []shortcut{
-			{"t", "new session"},
-			{"d", "duplicate session"},
-			{"x", "delete session"},
-			{"↑↓", "navigate sessions"},
+			{"t", "new thread"},
+			{"d", "duplicate thread"},
+			{"x", "delete thread"},
+			{"↑↓", "navigate threads"},
 			{"enter", "open in workspace"},
 		}
 	case TabKindModels:
@@ -78,24 +78,24 @@ func renderStatusBar(
 				{"g", "top"},
 				{"Shift+G", "bottom"},
 				{"Tab", "Switch focus"},
-				{"Ctrl+T", "New session"},
-				{"Ctrl+P", "Previous session"},
-				{"Ctrl+N", "Next session"},
+				{"Ctrl+T", "New thread"},
+				{"Ctrl+P", "Previous thread"},
+				{"Ctrl+N", "Next thread"},
 			}
 		case FocusRightPanel:
 			defs = []shortcut{
 				{"Tab", "Switch focus"},
-				{"Ctrl+T", "New session"},
-				{"Ctrl+P", "Previous session"},
-				{"Ctrl+N", "Next session"},
+				{"Ctrl+T", "New thread"},
+				{"Ctrl+P", "Previous thread"},
+				{"Ctrl+N", "Next thread"},
 			}
 		default: // FocusEditor
 			defs = []shortcut{
 				{"Tab", "Switch focus"},
 				{"Shift+Tab", "Workflows"},
-				{"Ctrl+T", "New session"},
-				{"Ctrl+P", "Previous session"},
-				{"Ctrl+N", "Next session"},
+				{"Ctrl+T", "New thread"},
+				{"Ctrl+P", "Previous thread"},
+				{"Ctrl+N", "Next thread"},
 			}
 		}
 	}

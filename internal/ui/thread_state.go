@@ -12,28 +12,28 @@ import (
 	"github.com/get-vix/vix/internal/providers"
 )
 
-// sessionPhase distinguishes a draft (client-only, never connected) session
+// threadPhase distinguishes a draft (client-only, never connected) thread
 // from a live one that has a daemon connection. A draft is created up front for
 // a fresh launch (nothing to restore) and for every ctrl+t tab; it holds no
-// SessionClient and sends no session.start until the user submits the first
+// ThreadClient and sends no thread.start until the user submits the first
 // message, at which point its working directory is frozen for the rest of the
-// session's life.
-type sessionPhase int
+// thread's life.
+type threadPhase int
 
 const (
 	// phaseDraft: no daemon connection yet. The welcome screen is shown and the
 	// working directory (draftCWD) may still be changed. Committed on the first
 	// message submit.
-	phaseDraft sessionPhase = iota
-	// phaseLive: session.start has been (or is being) sent; cwd is frozen.
+	phaseDraft threadPhase = iota
+	// phaseLive: thread.start has been (or is being) sent; cwd is frozen.
 	phaseLive
 )
 
-// newClientKey returns a random, process-unique handle for a SessionState. It
-// is stable for the session's lifetime and independent of daemonSessionID,
+// newClientKey returns a random, process-unique handle for a ThreadState. It
+// is stable for the thread's lifetime and independent of daemonThreadID,
 // which lets the Update loop match an async connect result back to the right
 // draft even when several drafts coexist (all of which have an empty
-// daemonSessionID until they commit).
+// daemonThreadID until they commit).
 func newClientKey() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
@@ -44,50 +44,50 @@ func newClientKey() string {
 // re-rendered through glamour (see lastStreamRender/lastThinkingRender).
 const streamRenderInterval = 100 * time.Millisecond
 
-// SessionState holds all accumulated UI state for a single agent session.
-// Sessions are independent objects — the Chat tab renders whichever session
+// ThreadState holds all accumulated UI state for a single agent thread.
+// Threads are independent objects — the Chat tab renders whichever thread
 // is currently selected. Messages accumulate continuously from daemon events
 // regardless of which tab is visible.
-type SessionState struct {
-	// daemonSessionID is the session ID assigned by the daemon after the
+type ThreadState struct {
+	// daemonThreadID is the thread ID assigned by the daemon after the
 	// initial handshake. It is used as the stable key carried by all async
 	// goroutines (event loops, reconnect attempts) so the Update handler can
-	// locate the right session even after the sessions slice has been
+	// locate the right thread even after the threads slice has been
 	// re-ordered by a close operation. It changes on every successful
 	// reconnect, which naturally invalidates any in-flight messages from the
 	// previous connection without needing a separate generation counter.
-	// Empty for sessions that have never successfully connected.
-	daemonSessionID string
+	// Empty for threads that have never successfully connected.
+	daemonThreadID string
 
 	// Daemon connection
-	client       *daemon.SessionClient
+	client       *daemon.ThreadClient
 	reconnecting bool
 
-	// startedAt caches the daemon session's creation time, captured from the
+	// startedAt caches the daemon thread's creation time, captured from the
 	// client on (re)connect. It survives brief client==nil windows (reconnect,
-	// orphaned) so the Sessions tab can keep ordering the row by creation time.
+	// orphaned) so the Threads tab can keep ordering the row by creation time.
 	startedAt time.Time
 
-	// phase is phaseDraft until the session is committed (first message) and
+	// phase is phaseDraft until the thread is committed (first message) and
 	// phaseLive thereafter. clientKey is a stable, process-unique handle used to
-	// match async connect results back to this session while its
-	// daemonSessionID is still empty. workDir is the session's working
+	// match async connect results back to this thread while its
+	// daemonThreadID is still empty. workDir is the thread's working
 	// directory: editable on the welcome screen while a draft, then frozen and
 	// used as the cwd for every (re)connect. pendingFirstInput holds the message
 	// that triggered the commit, sent once the connection is established.
-	phase     sessionPhase
+	phase     threadPhase
 	clientKey string
 	workDir   string
 	// recentDirSelected is the highlighted row in the welcome screen's
-	// recent-directories list while this session is a draft and the welcome
+	// recent-directories list while this thread is a draft and the welcome
 	// area is focused. Navigated with up/down; enter applies it to workDir.
 	recentDirSelected int
 	pendingFirstInput *pendingMsg
-	// closing is set when the TUI itself initiated this session's close (the
-	// quit-time "close all sessions" flow). The daemon tears the connection
-	// down as part of handling session.close, so the subsequent disconnect is
+	// closing is set when the TUI itself initiated this thread's close (the
+	// quit-time "close all threads" flow). The daemon tears the connection
+	// down as part of handling thread.close, so the subsequent disconnect is
 	// expected: the handler must not treat it as a lost connection and
-	// auto-reconnect, which would resurrect the just-closed session.
+	// auto-reconnect, which would resurrect the just-closed thread.
 	closing   bool
 	initState protocol.InitState
 
@@ -149,7 +149,7 @@ type SessionState struct {
 	fileCompleter FileCompleter
 	slashMenu     SlashMenu
 	// dirPicker is the working-directory browser opened with Ctrl+O on a draft
-	// session's welcome screen. It reuses FileCompleter in directory-only mode.
+	// thread's welcome screen. It reuses FileCompleter in directory-only mode.
 	dirPicker FileCompleter
 
 	// Animation
@@ -178,7 +178,7 @@ type SessionState struct {
 	modelName string
 
 	// unreadCount is the number of completed agent responses that arrived
-	// while this session was not the active workspace view.
+	// while this thread was not the active workspace view.
 	unreadCount int
 
 	// Trim confirm state
@@ -186,45 +186,45 @@ type SessionState struct {
 	trimSelected  int
 	trimSep       TurnSepInfo
 
-	// Fork lineage (zero values for root sessions)
+	// Fork lineage (zero values for root threads)
 	parentID    string
 	forkTurnIdx int
 
-	// orphaned is set when a reconnect attach reported the session no longer
+	// orphaned is set when a reconnect attach reported the thread no longer
 	// exists on disk (e.g. lost in a daemon restart before its first flush).
 	// The conversation can't be continued; input is disabled and the user is
 	// told to /copy it before it's gone.
 	orphaned bool
 
-	// awaitingReplay is set for a session that was attached (restored) on launch
+	// awaitingReplay is set for a thread that was attached (restored) on launch
 	// and is still waiting for its event.replay to rebuild the viewport. While
 	// true the chat area shows a "Restoring conversation…" placeholder instead
 	// of the welcome screen, so a restored conversation doesn't flash the
 	// welcome view before its history arrives.
 	awaitingReplay bool
 
-	// vixSummary is set when this session was attached from a vix-initiated
+	// vixSummary is set when this thread was attached from a vix-initiated
 	// record (job run, alert). It carries the record's trigger/status metadata
-	// and keeps the session rendered inside the Sessions tab's "Vix-initiated"
-	// group rather than among the user-initiated sessions.
-	vixSummary *protocol.SessionSummary
+	// and keeps the thread rendered inside the Threads tab's "Vix-initiated"
+	// group rather than among the user-initiated threads.
+	vixSummary *protocol.ThreadSummary
 
-	// title is the session's display title (LLM-generated after a few turns,
-	// or set at creation for job runs). Empty = the Sessions tab falls back to
+	// title is the thread's display title (LLM-generated after a few turns,
+	// or set at creation for job runs). Empty = the Threads tab falls back to
 	// the first user message.
 	title string
 }
 
-// newSessionState initialises a fresh session state ready for a new agent session.
-// A nil client yields a draft session (phaseDraft): no daemon connection is
+// newThreadState initialises a fresh thread state ready for a new agent thread.
+// A nil client yields a draft thread (phaseDraft): no daemon connection is
 // opened until the first message commits it. A non-nil client (restore/attach)
 // is live immediately.
-func newSessionState(cfg *config.Config, client *daemon.SessionClient) *SessionState {
+func newThreadState(cfg *config.Config, client *daemon.ThreadClient) *ThreadState {
 	phase := phaseDraft
 	if client != nil {
 		phase = phaseLive
 	}
-	s := &SessionState{
+	s := &ThreadState{
 		agentState:    StateWaitingForInput,
 		input:         newInput(),
 		thinkingAnim:  NewThinkingAnim(),
@@ -240,16 +240,16 @@ func newSessionState(cfg *config.Config, client *daemon.SessionClient) *SessionS
 		showThinking:  config.ShowThinking(),
 	}
 	if client != nil {
-		s.daemonSessionID = client.SessionID()
+		s.daemonThreadID = client.ThreadID()
 	}
 	return s
 }
 
-// createdAt returns the daemon session's creation time, used to order the row in
-// the Sessions tab. It prefers the live client's start time and falls back to
+// createdAt returns the daemon thread's creation time, used to order the row in
+// the Threads tab. It prefers the live client's start time and falls back to
 // the cached startedAt while the client is momentarily absent (reconnect,
 // orphaned) or in tests. A draft that has never connected returns the zero time.
-func (s *SessionState) createdAt() time.Time {
+func (s *ThreadState) createdAt() time.Time {
 	if s.client != nil {
 		if t := s.client.StartedAt(); !t.IsZero() {
 			return t
@@ -258,9 +258,9 @@ func (s *SessionState) createdAt() time.Time {
 	return s.startedAt
 }
 
-// setModel updates the session's model spec and refreshes the resolved context
+// setModel updates the thread's model spec and refreshes the resolved context
 // window used by the status-bar indicator and (daemon-side) auto-compaction.
-func (s *SessionState) setModel(spec string) {
+func (s *ThreadState) setModel(spec string) {
 	s.modelName = spec
 	s.contextWindow = providers.Default().ContextWindow(spec)
 }

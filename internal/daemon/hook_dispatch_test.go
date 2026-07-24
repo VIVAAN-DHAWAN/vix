@@ -13,14 +13,14 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-// newHookSession builds a Session whose server carries a hook registry loaded
+// newHookThread builds a Thread whose server carries a hook registry loaded
 // from dir, plus all tool handlers so executeToolDirect works.
-func newHookSession(t *testing.T, cwd, hooksDir, origin string) *Session {
+func newHookThread(t *testing.T, cwd, hooksDir, origin string) *Thread {
 	t.Helper()
 	srv := &Server{handlers: make(map[string]HandlerFunc), serverCtx: context.Background()}
 	RegisterToolHandlers(srv)
 	srv.hookRegistry = hooks.NewRegistry(hooks.NewStore(hooksDir))
-	return &Session{
+	return &Thread{
 		server:                         srv,
 		cwd:                            cwd,
 		model:                          "test/model",
@@ -49,10 +49,10 @@ func writeHookSpec(t *testing.T, dir, name, body string) {
 }
 
 // TestAnnounceStart_SourceClassification pins the regression where emitReplay
-// (which clears attachRecord) ran before the SessionStart source was computed,
-// so every resumed session fired as "startup" — wrongly tripping startup-gated
-// hooks like the feedback counter. A fresh session must fire only the "startup"
-// hook; a resumed session must fire only the "resume" hook.
+// (which clears attachRecord) ran before the ThreadStart source was computed,
+// so every resumed thread fired as "startup" — wrongly tripping startup-gated
+// hooks like the feedback counter. A fresh thread must fire only the "startup"
+// hook; a resumed thread must fire only the "resume" hook.
 func TestAnnounceStart_SourceClassification(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -60,21 +60,21 @@ func TestAnnounceStart_SourceClassification(t *testing.T) {
 		want   string
 		absent string
 	}{
-		{"fresh session fires startup", false, "startup.flag", "resume.flag"},
-		{"resumed session fires resume", true, "resume.flag", "startup.flag"},
+		{"fresh thread fires startup", false, "startup.flag", "resume.flag"},
+		{"resumed thread fires resume", true, "resume.flag", "startup.flag"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hd := t.TempDir()
-			writeHookSpec(t, hd, "startup.json", `{"id":"startup","enabled":true,"mode":"async","trigger":{"event":"SessionStart","matcher":"startup"},"command":"touch startup.flag"}`)
-			writeHookSpec(t, hd, "resume.json", `{"id":"resume","enabled":true,"mode":"async","trigger":{"event":"SessionStart","matcher":"resume"},"command":"touch resume.flag"}`)
+			writeHookSpec(t, hd, "startup.json", `{"id":"startup","enabled":true,"mode":"async","trigger":{"event":"ThreadStart","matcher":"startup"},"command":"touch startup.flag"}`)
+			writeHookSpec(t, hd, "resume.json", `{"id":"resume","enabled":true,"mode":"async","trigger":{"event":"ThreadStart","matcher":"resume"},"command":"touch resume.flag"}`)
 
 			cwd := t.TempDir()
-			s := newHookSession(t, cwd, hd, "")
-			s.eventChan = make(chan protocol.SessionEvent, 4)
+			s := newHookThread(t, cwd, hd, "")
+			s.eventChan = make(chan protocol.ThreadEvent, 4)
 			s.ctx, s.cancel = context.WithCancel(context.Background())
 			defer s.cancel()
 			if tc.resume {
-				s.attachRecord = &sessionRecord{ID: "r1", SessionMode: "chat"}
+				s.attachRecord = &threadRecord{ID: "r1", ThreadMode: "chat"}
 			}
 
 			s.announceStart()
@@ -104,7 +104,7 @@ func TestPreToolUseHook_BlockingDeny(t *testing.T) {
 	// exit 2 with a reason on stderr → deny.
 	writeHookSpec(t, hd, "block.json", `{"id":"block","enabled":true,"mode":"sync","blocking":true,"trigger":{"event":"PreToolUse","matcher":"write_file"},"command":"echo blocked-by-test >&2; exit 2"}`)
 
-	s := newHookSession(t, t.TempDir(), hd, "")
+	s := newHookThread(t, t.TempDir(), hd, "")
 	_, reason, denied := s.preToolUseHook(context.Background(), "write_file", map[string]any{"path": "x.txt"})
 	if !denied {
 		t.Fatal("expected write_file to be denied by hook")
@@ -123,7 +123,7 @@ func TestPreToolUseHook_NonBlockingDenyDowngraded(t *testing.T) {
 	hd := t.TempDir()
 	// Same exit 2, but not blocking → must NOT deny (downgraded to context).
 	writeHookSpec(t, hd, "warn.json", `{"id":"warn","enabled":true,"mode":"sync","trigger":{"event":"PreToolUse","matcher":"write_file"},"command":"echo nope >&2; exit 2"}`)
-	s := newHookSession(t, t.TempDir(), hd, "")
+	s := newHookThread(t, t.TempDir(), hd, "")
 	if _, _, denied := s.preToolUseHook(context.Background(), "write_file", map[string]any{"path": "x"}); denied {
 		t.Fatal("non-blocking hook must not deny")
 	}
@@ -132,7 +132,7 @@ func TestPreToolUseHook_NonBlockingDenyDowngraded(t *testing.T) {
 func TestPreToolUseHook_Modify(t *testing.T) {
 	hd := t.TempDir()
 	writeHookSpec(t, hd, "mod.json", `{"id":"mod","enabled":true,"mode":"sync","blocking":true,"trigger":{"event":"PreToolUse","matcher":"write_file"},"command":"echo '{\"behavior\":\"modify\",\"input\":{\"path\":\"safe.txt\"}}'"}`)
-	s := newHookSession(t, t.TempDir(), hd, "")
+	s := newHookThread(t, t.TempDir(), hd, "")
 	newInput, _, denied := s.preToolUseHook(context.Background(), "write_file", map[string]any{"path": "danger.txt"})
 	if denied {
 		t.Fatal("modify should not deny")
@@ -145,7 +145,7 @@ func TestPreToolUseHook_Modify(t *testing.T) {
 func TestPostToolUseHook_AppendsContext(t *testing.T) {
 	hd := t.TempDir()
 	writeHookSpec(t, hd, "ctx.json", `{"id":"ctx","enabled":true,"mode":"sync","trigger":{"event":"PostToolUse","matcher":"bash"},"command":"echo extra-note"}`)
-	s := newHookSession(t, t.TempDir(), hd, "")
+	s := newHookThread(t, t.TempDir(), hd, "")
 	res := &ToolResult{Output: "original"}
 	s.postToolUseHook(context.Background(), "bash", map[string]any{"command": "ls"}, res)
 	if res.Output == "original" || !strings.Contains(res.Output, "extra-note") {
@@ -156,7 +156,7 @@ func TestPostToolUseHook_AppendsContext(t *testing.T) {
 func TestUserPromptSubmitHook_Veto(t *testing.T) {
 	hd := t.TempDir()
 	writeHookSpec(t, hd, "veto.json", `{"id":"veto","enabled":true,"mode":"sync","blocking":true,"trigger":{"event":"UserPromptSubmit"},"command":"exit 2"}`)
-	s := newHookSession(t, t.TempDir(), hd, "")
+	s := newHookThread(t, t.TempDir(), hd, "")
 	_, _, denied := s.userPromptSubmitHook(context.Background(), "do something")
 	if !denied {
 		t.Fatal("expected prompt to be vetoed")
@@ -166,10 +166,10 @@ func TestUserPromptSubmitHook_Veto(t *testing.T) {
 func TestHooks_RecursionGuard(t *testing.T) {
 	hd := t.TempDir()
 	writeHookSpec(t, hd, "block.json", `{"id":"block","enabled":true,"mode":"sync","blocking":true,"trigger":{"event":"PreToolUse"},"command":"exit 2"}`)
-	// origin "vix" marks a hook/job session: it must not fire hooks.
-	s := newHookSession(t, t.TempDir(), hd, "vix")
+	// origin "vix" marks a hook/job thread: it must not fire hooks.
+	s := newHookThread(t, t.TempDir(), hd, "vix")
 	if _, _, denied := s.preToolUseHook(context.Background(), "write_file", map[string]any{"path": "x"}); denied {
-		t.Fatal("vix-origin sessions must not fire hooks (recursion guard)")
+		t.Fatal("vix-origin threads must not fire hooks (recursion guard)")
 	}
 }
 
@@ -178,7 +178,7 @@ func TestHooks_RecursionGuard(t *testing.T) {
 func TestDispatch_PreToolUseDenyShortCircuits(t *testing.T) {
 	hd := t.TempDir()
 	writeHookSpec(t, hd, "block.json", `{"id":"block","enabled":true,"mode":"sync","blocking":true,"trigger":{"event":"PreToolUse","matcher":"write_file"},"command":"exit 2"}`)
-	s := newHookSession(t, t.TempDir(), hd, "")
+	s := newHookThread(t, t.TempDir(), hd, "")
 
 	executed := false
 	opts := dispatchOptions{
@@ -222,7 +222,7 @@ func TestSubagentHooks_FireStartAndStop(t *testing.T) {
 	writeHookSpec(t, hd, "sa-other.json", `{"id":"sa-other","enabled":true,"mode":"async","trigger":{"event":"SubagentStart","matcher":"reviewer"},"command":"touch other.flag"}`)
 
 	cwd := t.TempDir()
-	s := newHookSession(t, cwd, hd, "")
+	s := newHookThread(t, cwd, hd, "")
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	defer s.cancel()
 
@@ -236,20 +236,20 @@ func TestSubagentHooks_FireStartAndStop(t *testing.T) {
 	}
 }
 
-// TestSubagentHooks_RecursionGuard confirms a vix-origin session (a hook/job
+// TestSubagentHooks_RecursionGuard confirms a vix-origin thread (a hook/job
 // run) does not fire subagent hooks.
 func TestSubagentHooks_RecursionGuard(t *testing.T) {
 	hd := t.TempDir()
 	writeHookSpec(t, hd, "sa-start.json", `{"id":"sa-start","enabled":true,"mode":"async","trigger":{"event":"SubagentStart"},"command":"touch start.flag"}`)
 	cwd := t.TempDir()
-	s := newHookSession(t, cwd, hd, "vix")
+	s := newHookThread(t, cwd, hd, "vix")
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	defer s.cancel()
 
 	s.fireSubagentStart("general", "task_1", "do work")
 	time.Sleep(100 * time.Millisecond)
 	if _, err := os.Stat(filepath.Join(cwd, "start.flag")); err == nil {
-		t.Fatal("vix-origin sessions must not fire subagent hooks (recursion guard)")
+		t.Fatal("vix-origin threads must not fire subagent hooks (recursion guard)")
 	}
 }
 
@@ -258,7 +258,7 @@ func TestSubagentHooks_RecursionGuard(t *testing.T) {
 func TestPermissionRequestHook_BlockingDeny(t *testing.T) {
 	hd := t.TempDir()
 	writeHookSpec(t, hd, "perm.json", `{"id":"perm","enabled":true,"mode":"sync","blocking":true,"trigger":{"event":"PermissionRequest","matcher":"write_file"},"command":"echo no-writes >&2; exit 2"}`)
-	s := newHookSession(t, t.TempDir(), hd, "")
+	s := newHookThread(t, t.TempDir(), hd, "")
 
 	reason, denied := s.permissionRequestHook(context.Background(), "write_file", map[string]any{"path": "x"}, nil)
 	if !denied {
@@ -277,7 +277,7 @@ func TestPermissionRequestHook_BlockingDeny(t *testing.T) {
 func TestPermissionRequestHook_NonBlockingDowngraded(t *testing.T) {
 	hd := t.TempDir()
 	writeHookSpec(t, hd, "perm.json", `{"id":"perm","enabled":true,"mode":"sync","trigger":{"event":"PermissionRequest","matcher":"write_file"},"command":"echo nope >&2; exit 2"}`)
-	s := newHookSession(t, t.TempDir(), hd, "")
+	s := newHookThread(t, t.TempDir(), hd, "")
 	if _, denied := s.permissionRequestHook(context.Background(), "write_file", map[string]any{"path": "x"}, nil); denied {
 		t.Fatal("a non-blocking permission hook must not deny")
 	}
@@ -293,7 +293,7 @@ func TestCompactionHooks_FireWithTrigger(t *testing.T) {
 	writeHookSpec(t, hd, "manual.json", `{"id":"manual","enabled":true,"mode":"async","trigger":{"event":"PreCompact","matcher":"manual"},"command":"touch manual.flag"}`)
 
 	fake := &fakeCompactionLLM{summary: "SUMMARY"}
-	s, _ := newCompactionTestSession(t, fake)
+	s, _ := newCompactionTestThread(t, fake)
 	cwd := t.TempDir()
 	s.cwd = cwd
 	srv := &Server{handlers: make(map[string]HandlerFunc), serverCtx: context.Background()}

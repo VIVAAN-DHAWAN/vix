@@ -893,7 +893,7 @@ func TestExpandTildePath(t *testing.T) {
 }
 
 // A relative entry declared in a ./.vix/settings.json is resolved BOTH against
-// the config dir (existing behaviour) and recorded raw so the session can also
+// the config dir (existing behaviour) and recorded raw so the thread can also
 // resolve it against cwd. This is the crux of issue #52.
 func TestLoadProjectConfig_DenyList_RelativeDualResolution(t *testing.T) {
 	root := testRoot(t)
@@ -969,7 +969,7 @@ func TestCombineDenyPaths(t *testing.T) {
 	}
 }
 
-// End-to-end at the session layer: the exact scenario from issue #52. A
+// End-to-end at the thread layer: the exact scenario from issue #52. A
 // relative deny entry in ./.vix/settings.json must block the secret file at
 // the project root, and its contents must never leak.
 func TestIntegration_DenyList_RelativeEntryBlocksProjectRoot(t *testing.T) {
@@ -984,7 +984,7 @@ func TestIntegration_DenyList_RelativeEntryBlocksProjectRoot(t *testing.T) {
 
 	cfg := LoadProjectConfig(cfgPath)
 	deny := combineDenyPaths(root, cfg.DenyPaths, cfg.DenyPathsRel)
-	s := newIntegrationSession(t, root, deny)
+	s := newIntegrationThread(t, root, deny)
 
 	for _, p := range []string{secret, ".envrc.private", "./.envrc.private"} {
 		res := s.executeToolDirect(context.Background(), "read_file", map[string]any{"path": p})

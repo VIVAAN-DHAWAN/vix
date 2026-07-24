@@ -10,7 +10,7 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-func (s *Session) handleTodoWrite(ctx context.Context, input map[string]any) (string, bool) {
+func (s *Thread) handleTodoWrite(ctx context.Context, input map[string]any) (string, bool) {
 	raw, ok := input["todos"]
 	if !ok {
 		return "error: todo_write requires a 'todos' array (use [] to clear the list)", true
@@ -55,7 +55,7 @@ func (s *Session) handleTodoWrite(ctx context.Context, input map[string]any) (st
 	return "TODO list updated.\n" + formatTodoList(snapshot), false
 }
 
-func (s *Session) handleTodoRead(ctx context.Context, input map[string]any) (string, bool) {
+func (s *Thread) handleTodoRead(ctx context.Context, input map[string]any) (string, bool) {
 	s.todoMu.RLock()
 	snapshot := make([]protocol.TodoItem, len(s.todoList))
 	copy(snapshot, s.todoList)
@@ -220,7 +220,7 @@ func plural(n int) string {
 	return "s"
 }
 
-func (s *Session) hasPendingTodos() bool {
+func (s *Thread) hasPendingTodos() bool {
 	s.todoMu.RLock()
 	defer s.todoMu.RUnlock()
 	for _, t := range s.todoList {

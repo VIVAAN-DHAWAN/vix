@@ -8,7 +8,7 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-// TestVixRowTitle covers the bare-title Sessions-tab rendering: a clean title
+// TestVixRowTitle covers the bare-title Threads-tab rendering: a clean title
 // for ok/skipped runs and a ⚠ marker for failures. The job-id/status prefix is
 // gone for titled rows.
 func TestVixRowTitle(t *testing.T) {
@@ -26,7 +26,7 @@ func TestVixRowTitle(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			sum := protocol.SessionSummary{Title: title, JobStatus: c.status}
+			sum := protocol.ThreadSummary{Title: title, JobStatus: c.status}
 			got := vixRowTitle(sum)
 			if got != c.want {
 				t.Errorf("vixRowTitle(status=%q) = %q, want %q", c.status, got, c.want)
@@ -45,8 +45,8 @@ func TestVixRowTitle(t *testing.T) {
 // emoji-presentation "⚠️" (with U+FE0F) measures three here, which regressed the
 // layout, so assert the variation selector is absent.
 func TestVixRowTitleMarkerWidth(t *testing.T) {
-	flagged := vixRowTitle(protocol.SessionSummary{Title: "x", JobStatus: "error"})
-	clean := vixRowTitle(protocol.SessionSummary{Title: "x", JobStatus: "ok"})
+	flagged := vixRowTitle(protocol.ThreadSummary{Title: "x", JobStatus: "error"})
+	clean := vixRowTitle(protocol.ThreadSummary{Title: "x", JobStatus: "ok"})
 
 	if strings.ContainsRune(flagged, '\uFE0F') {
 		t.Fatalf("marker must not contain the U+FE0F variation selector: %q", flagged)
@@ -162,7 +162,7 @@ func TestRenderSettingsViewToolsSection(t *testing.T) {
 
 // TestRenderSettingsViewCursorUnaffectedByTools guards that the non-selectable
 // Tools info rows don't shift the cursor index space: with the cursor on the
-// last selectable row (closed-session retention), the "▸" marker must land on
+// last selectable row (closed-thread retention), the "▸" marker must land on
 // that row, not be swallowed by the Tools section that renders after it.
 func TestRenderSettingsViewCursorUnaffectedByTools(t *testing.T) {
 	s := NewStyles(true)
@@ -181,7 +181,7 @@ func TestRenderSettingsViewCursorUnaffectedByTools(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(cursorLine, "Closed session retention") {
+	if !strings.Contains(cursorLine, "Closed thread retention") {
 		t.Errorf("cursor marker should be on the retention row, got %q", cursorLine)
 	}
 }

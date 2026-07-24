@@ -9,28 +9,28 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-// vixSessionsMsg carries the persisted, not-currently-attached session records
-// shown in the Sessions tab: vix-initiated ones (job runs, synthetic alerts) in
+// vixThreadsMsg carries the persisted, not-currently-attached thread records
+// shown in the Threads tab: vix-initiated ones (job runs, synthetic alerts) in
 // their own group, and user-initiated ones from every working directory (userSums),
-// which the tab groups by directory alongside the live sessions.
-type vixSessionsMsg struct {
-	sums     []protocol.SessionSummary
-	userSums []protocol.SessionSummary
+// which the tab groups by directory alongside the live threads.
+type vixThreadsMsg struct {
+	sums     []protocol.ThreadSummary
+	userSums []protocol.ThreadSummary
 }
 
-// fetchVixSessions lists the persisted open sessions (across every working
+// fetchVixThreads lists the persisted open threads (across every working
 // directory) and keeps the not-currently-attached ones, split into
 // vix-initiated (sums) and user-initiated (userSums) groups. Triggered on Init,
-// on entering the Sessions tab, and on event.sessions_changed broadcasts.
-func fetchVixSessions(socketPath, cwd, configDir, authToken string) tea.Cmd {
+// on entering the Threads tab, and on event.threads_changed broadcasts.
+func fetchVixThreads(socketPath, cwd, configDir, authToken string) tea.Cmd {
 	return func() tea.Msg {
 		client := daemon.NewClient(socketPath)
 		client.SetAuthToken(authToken)
-		sums, err := client.ListSessions(cwd, configDir)
+		sums, err := client.ListThreads(cwd, configDir)
 		if err != nil {
-			return vixSessionsMsg{}
+			return vixThreadsMsg{}
 		}
-		var vixOut, userOut []protocol.SessionSummary
+		var vixOut, userOut []protocol.ThreadSummary
 		for _, s := range sums {
 			if s.Attached {
 				continue
@@ -41,18 +41,18 @@ func fetchVixSessions(socketPath, cwd, configDir, authToken string) tea.Cmd {
 				userOut = append(userOut, s)
 			}
 		}
-		return vixSessionsMsg{sums: vixOut, userSums: userOut}
+		return vixThreadsMsg{sums: vixOut, userSums: userOut}
 	}
 }
 
-// dismissVixSession archives a vix-initiated record (open/ → closed/) without
+// dismissVixThread archives a vix-initiated record (open/ → closed/) without
 // attaching it, then refreshes the list.
-func dismissVixSession(socketPath, cwd, configDir, authToken, id string) tea.Cmd {
+func dismissVixThread(socketPath, cwd, configDir, authToken, id string) tea.Cmd {
 	return func() tea.Msg {
 		client := daemon.NewClient(socketPath)
 		client.SetAuthToken(authToken)
-		client.DismissSession(cwd, configDir, id)
-		return fetchVixSessions(socketPath, cwd, configDir, authToken)()
+		client.DismissThread(cwd, configDir, id)
+		return fetchVixThreads(socketPath, cwd, configDir, authToken)()
 	}
 }
 

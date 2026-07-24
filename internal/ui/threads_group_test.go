@@ -10,18 +10,18 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-// userRec builds a not-attached, user-initiated session record for the given
+// userRec builds a not-attached, user-initiated thread record for the given
 // directory with an activity timestamp used for recency ordering.
-func userRec(id, cwd, lastReq string) protocol.SessionSummary {
-	return protocol.SessionSummary{ID: id, CWD: cwd, Title: "title-" + id, LastRequestAt: lastReq}
+func userRec(id, cwd, lastReq string) protocol.ThreadSummary {
+	return protocol.ThreadSummary{ID: id, CWD: cwd, Title: "title-" + id, LastRequestAt: lastReq}
 }
 
-// liveAt builds a live (attached) user session in the given directory whose
+// liveAt builds a live (attached) user thread in the given directory whose
 // daemon creation time is fixed, so tests can assert creation-time ordering.
 // The client is nil (a real one can't be constructed cross-package), so the
-// cached startedAt supplies the sort key via SessionState.createdAt.
-func liveAt(dir, rfc3339 string) *SessionState {
-	s := newSessionState(testCfg(dir), nil)
+// cached startedAt supplies the sort key via ThreadState.createdAt.
+func liveAt(dir, rfc3339 string) *ThreadState {
+	s := newThreadState(testCfg(dir), nil)
 	s.phase = phaseLive
 	t, _ := time.Parse(time.RFC3339, rfc3339)
 	s.startedAt = t
@@ -48,15 +48,15 @@ func TestAbbreviatePath(t *testing.T) {
 	}
 }
 
-// TestUserDirBlocksGrouping: user sessions are grouped by working directory with
+// TestUserDirBlocksGrouping: user threads are grouped by working directory with
 // the current cwd first and other directories by most-recent activity (desc).
 func TestUserDirBlocksGrouping(t *testing.T) {
 	liveWork := liveAt("/work", "2026-01-04T00:00:00Z") // current cwd, newest in /work
-	liveBeta := liveAt("/beta", "2026-01-01T00:00:00Z") // attached other-dir session, oldest in /beta
+	liveBeta := liveAt("/beta", "2026-01-01T00:00:00Z") // attached other-dir thread, oldest in /beta
 	m := &Model{
-		cwd:      "/work",
-		sessions: []*SessionState{liveWork, liveBeta},
-		userSessionRecords: []protocol.SessionSummary{
+		cwd:     "/work",
+		threads: []*ThreadState{liveWork, liveBeta},
+		userThreadRecords: []protocol.ThreadSummary{
 			{ID: "rWork", CWD: "/work", Title: "rWork", StartedAt: "2026-01-01T00:00:00Z", LastRequestAt: "2026-01-01T00:00:00Z"},
 			{ID: "rAlpha", CWD: "/alpha", Title: "rAlpha", StartedAt: "2026-01-02T00:00:00Z", LastRequestAt: "2026-01-02T00:00:00Z"},
 			{ID: "rBeta", CWD: "/beta", Title: "rBeta", StartedAt: "2026-01-03T00:00:00Z", LastRequestAt: "2026-01-03T00:00:00Z"},
@@ -75,31 +75,31 @@ func TestUserDirBlocksGrouping(t *testing.T) {
 	if blocks[1].dir != "/beta" || blocks[2].dir != "/alpha" {
 		t.Errorf("other-dir order = [%q, %q], want [/beta, /alpha]", blocks[1].dir, blocks[2].dir)
 	}
-	// Within /work: record rWork (01-01) precedes the newer live session (01-04),
-	// i.e. the live session is NOT hoisted ahead of an older record.
+	// Within /work: record rWork (01-01) precedes the newer live thread (01-04),
+	// i.e. the live thread is NOT hoisted ahead of an older record.
 	if len(blocks[0].rows) != 2 || blocks[0].rows[0].sum == nil || blocks[0].rows[0].sum.ID != "rWork" || blocks[0].rows[1].liveIdx != 0 {
 		t.Errorf("/work rows = %+v, want [record rWork, live#0]", blocks[0].rows)
 	}
-	// Within /beta: the older live session (01-01) precedes its newer record (01-03).
+	// Within /beta: the older live thread (01-01) precedes its newer record (01-03).
 	if len(blocks[1].rows) != 2 || blocks[1].rows[0].liveIdx != 1 || blocks[1].rows[1].sum == nil || blocks[1].rows[1].sum.ID != "rBeta" {
 		t.Errorf("/beta rows = %+v, want [live#1, record rBeta]", blocks[1].rows)
 	}
 }
 
-// TestUserDirBlocksOrdersByCreatedAt: within one directory, live sessions and
+// TestUserDirBlocksOrdersByCreatedAt: within one directory, live threads and
 // not-attached records interleave strictly by creation time (asc), and a
-// still-connecting session (unknown start time) sorts last.
+// still-connecting thread (unknown start time) sorts last.
 func TestUserDirBlocksOrdersByCreatedAt(t *testing.T) {
-	oldRec := protocol.SessionSummary{ID: "old", CWD: "/work", Title: "old", StartedAt: "2026-01-01T00:00:00Z", LastRequestAt: "2026-01-01T00:00:00Z"}
+	oldRec := protocol.ThreadSummary{ID: "old", CWD: "/work", Title: "old", StartedAt: "2026-01-01T00:00:00Z", LastRequestAt: "2026-01-01T00:00:00Z"}
 	midLive := liveAt("/work", "2026-01-02T00:00:00Z")
-	newRec := protocol.SessionSummary{ID: "new", CWD: "/work", Title: "new", StartedAt: "2026-01-03T00:00:00Z", LastRequestAt: "2026-01-03T00:00:00Z"}
-	connecting := newSessionState(testCfg("/work"), nil) // no start time yet
+	newRec := protocol.ThreadSummary{ID: "new", CWD: "/work", Title: "new", StartedAt: "2026-01-03T00:00:00Z", LastRequestAt: "2026-01-03T00:00:00Z"}
+	connecting := newThreadState(testCfg("/work"), nil) // no start time yet
 	connecting.phase = phaseLive
 
 	m := &Model{
-		cwd:                "/work",
-		sessions:           []*SessionState{midLive, connecting},
-		userSessionRecords: []protocol.SessionSummary{newRec, oldRec}, // deliberately out of order
+		cwd:               "/work",
+		threads:           []*ThreadState{midLive, connecting},
+		userThreadRecords: []protocol.ThreadSummary{newRec, oldRec}, // deliberately out of order
 	}
 
 	blocks := m.userDirBlocks()
@@ -114,7 +114,7 @@ func TestUserDirBlocksOrdersByCreatedAt(t *testing.T) {
 			got = append(got, "live")
 		}
 	}
-	// old (01-01), midLive (01-02), new (01-03), then the connecting session last.
+	// old (01-01), midLive (01-02), new (01-03), then the connecting thread last.
 	want := []string{"old", "live", "new", "live"}
 	if len(got) != len(want) {
 		t.Fatalf("row count = %d, want %d (%v)", len(got), len(want), got)
@@ -124,35 +124,35 @@ func TestUserDirBlocksOrdersByCreatedAt(t *testing.T) {
 			t.Fatalf("row order = %v, want %v", got, want)
 		}
 	}
-	// The last row must be the still-connecting session (no client, zero start).
+	// The last row must be the still-connecting thread (no client, zero start).
 	if last := blocks[0].rows[len(blocks[0].rows)-1]; last.liveIdx != 1 {
-		t.Errorf("connecting session should sort last, got liveIdx=%d", last.liveIdx)
+		t.Errorf("connecting thread should sort last, got liveIdx=%d", last.liveIdx)
 	}
 }
 
-// TestSessionRowTargetsIncludesUserRecords: the flat selection order lists the
+// TestThreadRowTargetsIncludesUserRecords: the flat selection order lists the
 // User-initiated rows (grouped by dir) before the Vix-initiated rows, so the
 // selection index space covers cross-directory user records.
-func TestSessionRowTargetsIncludesUserRecords(t *testing.T) {
-	liveWork := newSessionState(testCfg("/work"), nil)
-	vixRec := protocol.SessionSummary{ID: "vixRun", CWD: "/job", Origin: "vix", StartedAt: "2026-01-05T00:00:00Z"}
+func TestThreadRowTargetsIncludesUserRecords(t *testing.T) {
+	liveWork := newThreadState(testCfg("/work"), nil)
+	vixRec := protocol.ThreadSummary{ID: "vixRun", CWD: "/job", Origin: "vix", StartedAt: "2026-01-05T00:00:00Z"}
 	m := &Model{
-		cwd:      "/work",
-		sessions: []*SessionState{liveWork},
-		userSessionRecords: []protocol.SessionSummary{
+		cwd:     "/work",
+		threads: []*ThreadState{liveWork},
+		userThreadRecords: []protocol.ThreadSummary{
 			userRec("rWork", "/work", "2026-01-01T00:00:00Z"),
 			userRec("rAlpha", "/alpha", "2026-01-02T00:00:00Z"),
 		},
-		vixSessions: []protocol.SessionSummary{vixRec},
+		vixThreads: []protocol.ThreadSummary{vixRec},
 	}
 
-	rows := m.sessionRowTargets()
+	rows := m.threadRowTargets()
 	if len(rows) != 4 {
 		t.Fatalf("want 4 rows (1 live + 2 user records + 1 vix), got %d", len(rows))
 	}
 	// User section: live /work, record rWork, record rAlpha.
 	if rows[0].sum != nil || rows[0].liveIdx != 0 {
-		t.Errorf("row[0] should be the live /work session, got %+v", rows[0])
+		t.Errorf("row[0] should be the live /work thread, got %+v", rows[0])
 	}
 	if rows[1].sum == nil || rows[1].sum.ID != "rWork" {
 		t.Errorf("row[1] should be record rWork, got %+v", rows[1])
@@ -169,12 +169,12 @@ func TestSessionRowTargetsIncludesUserRecords(t *testing.T) {
 // TestUserDirBlocksDedupsLiveRecords: a record that is already live in this
 // window (attached but the list hasn't refreshed) is not shown twice.
 func TestUserDirBlocksDedupsLiveRecords(t *testing.T) {
-	live := newSessionState(testCfg("/work"), nil)
-	live.daemonSessionID = "dup-id"
+	live := newThreadState(testCfg("/work"), nil)
+	live.daemonThreadID = "dup-id"
 	m := &Model{
-		cwd:      "/work",
-		sessions: []*SessionState{live},
-		userSessionRecords: []protocol.SessionSummary{
+		cwd:     "/work",
+		threads: []*ThreadState{live},
+		userThreadRecords: []protocol.ThreadSummary{
 			{ID: "dup-id", CWD: "/work", Title: "dup", LastRequestAt: "2026-01-01T00:00:00Z"},
 			userRec("keep", "/work", "2026-01-02T00:00:00Z"),
 		},
@@ -189,24 +189,24 @@ func TestUserDirBlocksDedupsLiveRecords(t *testing.T) {
 	}
 	for _, r := range blocks[0].rows {
 		if r.sum != nil && r.sum.ID == "dup-id" {
-			t.Error("record duplicating a live session should be dropped")
+			t.Error("record duplicating a live thread should be dropped")
 		}
 	}
 }
 
-// TestRenderSessionsViewGroupsByDir: the User-initiated group renders a path
+// TestRenderThreadsViewGroupsByDir: the User-initiated group renders a path
 // subtitle for every directory (always shown) and the rows under each.
-func TestRenderSessionsViewGroupsByDir(t *testing.T) {
+func TestRenderThreadsViewGroupsByDir(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		t.Skip("no home dir")
 	}
 	workDir := filepath.Join(home, "work")
 	groups := []userDirGroupView{
-		{dir: workDir, rows: []userRowView{{sum: protocol.SessionSummary{ID: "s1abc", Title: "Alpha title", LastRequestAt: "2026-01-01T00:00:00Z"}}}},
-		{dir: "/opt/proj", rows: []userRowView{{sum: protocol.SessionSummary{ID: "s2xyz", Title: "Beta title", LastRequestAt: "2026-01-01T00:00:00Z"}}}},
+		{dir: workDir, rows: []userRowView{{sum: protocol.ThreadSummary{ID: "s1abc", Title: "Alpha title", LastRequestAt: "2026-01-01T00:00:00Z"}}}},
+		{dir: "/opt/proj", rows: []userRowView{{sum: protocol.ThreadSummary{ID: "s2xyz", Title: "Beta title", LastRequestAt: "2026-01-01T00:00:00Z"}}}},
 	}
-	out := renderSessionsView(groups, nil, 120, 40, NewStyles(true), 0, "")
+	out := renderThreadsView(groups, nil, 120, 40, NewStyles(true), 0, "")
 
 	for _, want := range []string{
 		"User-initiated",
@@ -216,7 +216,7 @@ func TestRenderSessionsViewGroupsByDir(t *testing.T) {
 		"s1abc", "s2xyz",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("renderSessionsView output missing %q\n---\n%s", want, out)
+			t.Errorf("renderThreadsView output missing %q\n---\n%s", want, out)
 		}
 	}
 }

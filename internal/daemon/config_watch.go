@@ -20,12 +20,12 @@ const configWatchDebounce = 250 * time.Millisecond
 
 // configWatcher watches ~/.vix/config for changes to workflow.json and
 // languages.json and hot-reloads them. Workflows are pushed to every live
-// session (re-emitting event.workflows_available so the TUI refreshes its
+// thread (re-emitting event.workflows_available so the TUI refreshes its
 // slash menu and Shift+Tab cycle); languages rebuild the brain ext→language
 // map and restart the LSP pool.
 //
 // The watcher targets the home-level config directory only, matching the
-// home-only resolution of these files. Config-dir override sessions read their
+// home-only resolution of these files. Config-dir override threads read their
 // own config/ and are not hot-reloaded.
 type configWatcher struct {
 	server   *Server
@@ -217,19 +217,19 @@ func (cw *configWatcher) schedule(key string, fn func()) {
 }
 
 // reloadWorkflows re-reads workflow.json and pushes the new list to every live
-// session.
+// thread.
 func (cw *configWatcher) reloadWorkflows() {
 	wfs := LoadWorkflowsFile(cw.wfPath)
 	LogInfo("config watcher: reloaded %d workflow(s) from %s", len(wfs), cw.wfPath)
 
-	cw.server.sessionMu.Lock()
-	sessions := make([]*Session, 0, len(cw.server.sessions))
-	for _, sess := range cw.server.sessions {
-		sessions = append(sessions, sess)
+	cw.server.threadMu.Lock()
+	threads := make([]*Thread, 0, len(cw.server.threads))
+	for _, sess := range cw.server.threads {
+		threads = append(threads, sess)
 	}
-	cw.server.sessionMu.Unlock()
+	cw.server.threadMu.Unlock()
 
-	for _, sess := range sessions {
+	for _, sess := range threads {
 		sess.ReloadWorkflows(wfs)
 	}
 }

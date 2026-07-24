@@ -69,7 +69,7 @@ func (keyringStore) Backend() string { return BackendKeyring }
 // fileStore is the plaintext auth.json fallback used when no OS keyring is
 // available. The file is a flat {user: secret} JSON map, written 0600 via a
 // temp+rename so a crash can't leave a half-written file. Credentials are
-// user-global, so the file lives next to sessions (home/auth.json), never in a
+// user-global, so the file lives next to threads (home/auth.json), never in a
 // project's ./.vix.
 //
 // SECURITY: secrets are stored in cleartext. This backend exists only as a
@@ -198,7 +198,7 @@ func selectStore(keyringOK bool, authFile string) CredentialStore {
 
 // keyringUsable reports whether the OS keyring can actually store and retrieve a
 // secret, via a sentinel round-trip. This is more reliable than probing for a
-// D-Bus session bus: the failure observed on keyring-less Linux containers is
+// D-Bus thread bus: the failure observed on keyring-less Linux containers is
 // keyring.Set returning `exec: "dbus-launch": executable file not found`, which
 // only a real Set surfaces.
 func keyringUsable() bool {

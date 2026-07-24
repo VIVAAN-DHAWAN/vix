@@ -28,7 +28,7 @@ func TestValidate(t *testing.T) {
 		{"ok command", Spec{ID: "a", Trigger: HookTrigger{Event: EventPreToolUse}, Command: "true"}, false},
 		{"ok workflow_id", Spec{ID: "a", Trigger: HookTrigger{Event: EventStop}, WorkflowID: "wf"}, false},
 		{"ok inline workflow", Spec{ID: "a", Trigger: HookTrigger{Event: EventStop}, Workflow: validInlineWorkflow()}, false},
-		{"ok prompt", Spec{ID: "a", Trigger: HookTrigger{Event: EventSessionStart}, Prompt: "hi"}, false},
+		{"ok prompt", Spec{ID: "a", Trigger: HookTrigger{Event: EventThreadStart}, Prompt: "hi"}, false},
 		{"missing id", Spec{Trigger: HookTrigger{Event: EventPreToolUse}, Command: "true"}, true},
 		{"missing event", Spec{ID: "a", Command: "true"}, true},
 		{"unknown event", Spec{ID: "a", Trigger: HookTrigger{Event: "Nope"}, Command: "true"}, true},

@@ -26,11 +26,11 @@ const maxRecentRuns = 10
 
 // RunRecord is one entry in a job's recent-run history (State.RecentRuns).
 type RunRecord struct {
-	At        time.Time `json:"at"`
-	Status    string    `json:"status"` // ok | error | skipped | timeout
-	Error     string    `json:"error,omitempty"`
-	SessionID string    `json:"session_id,omitempty"`
-	Duration  string    `json:"duration,omitempty"` // Go duration string
+	At       time.Time `json:"at"`
+	Status   string    `json:"status"` // ok | error | skipped | timeout
+	Error    string    `json:"error,omitempty"`
+	ThreadID string    `json:"session_id,omitempty"`
+	Duration string    `json:"duration,omitempty"` // Go duration string
 }
 
 // State is the machine-written runtime state of one job, persisted as
@@ -42,7 +42,7 @@ type State struct {
 	LastStatus        string    `json:"last_status,omitempty"` // ok | error | skipped | timeout
 	LastError         string    `json:"last_error,omitempty"`
 	ConsecutiveErrors int       `json:"consecutive_errors,omitempty"`
-	LastSessionID     string    `json:"last_session_id,omitempty"`
+	LastThreadID      string    `json:"last_session_id,omitempty"`
 	ValidationError   string    `json:"validation_error,omitempty"`
 	// AutoDisabled is set after maxConsecutiveErrors failures in a row. The
 	// job stays on disk for inspection; editing its spec file clears the flag

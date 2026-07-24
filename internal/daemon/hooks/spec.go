@@ -1,11 +1,11 @@
 // Package hooks implements vixd's lifecycle-hooks engine: user-authored hook
 // specs (~/.vix/hooks/<id>/hook.json) that fire on agent-loop events (a tool
-// about to run, a prompt submitted, a session starting, …) rather than on a
+// about to run, a prompt submitted, a thread starting, …) rather than on a
 // timer.
 //
 // A hook either runs synchronously and returns a Decision that can veto/rewrite
 // the triggering action (mode "sync"), or fires-and-forgets in an isolated
-// session (mode "async"). The package owns parsing, validation, and the
+// thread (mode "async"). The package owns parsing, validation, and the
 // in-memory registry; actual execution is delegated to the daemon, keeping the
 // dependency direction daemon → hooks.
 package hooks
@@ -21,12 +21,12 @@ import (
 
 // Lifecycle events a hook can subscribe to. Only events listed in
 // supportedEvents are accepted by Validate; the rest of the catalogue is added
-// as it gets wired into the session loop.
+// as it gets wired into the thread loop.
 const (
 	EventPreToolUse        = "PreToolUse"
 	EventPostToolUse       = "PostToolUse"
 	EventUserPromptSubmit  = "UserPromptSubmit"
-	EventSessionStart      = "SessionStart"
+	EventThreadStart       = "ThreadStart"
 	EventStop              = "Stop"
 	EventPreCompact        = "PreCompact"
 	EventPostCompact       = "PostCompact"
@@ -48,7 +48,7 @@ var supportedEvents = map[string]bool{
 	EventPreToolUse:        true,
 	EventPostToolUse:       true,
 	EventUserPromptSubmit:  true,
-	EventSessionStart:      true,
+	EventThreadStart:       true,
 	EventStop:              true,
 	EventPreCompact:        true,
 	EventPostCompact:       true,
@@ -75,13 +75,13 @@ const (
 
 // HookTrigger selects which event fires the hook and (optionally) narrows it
 // with a regex matched against the event's match field (tool name for tool
-// events, source for SessionStart, …). An empty or "*" matcher matches all.
+// events, source for ThreadStart, …). An empty or "*" matcher matches all.
 type HookTrigger struct {
 	Event   string `json:"event"`
 	Matcher string `json:"matcher,omitempty"`
 }
 
-// Permissions maps onto the isolated session's automatic-permission flags for
+// Permissions maps onto the isolated thread's automatic-permission flags for
 // workflow/prompt hooks. Pointers so "absent" defaults to true.
 type Permissions struct {
 	AutoWrite *bool `json:"auto_write,omitempty"`

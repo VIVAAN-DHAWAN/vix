@@ -43,15 +43,15 @@ func main() {
 		os.Exit(runDaemonCommand(os.Args[2:]))
 	}
 
-	// `vix session create` — create a Vix-initiated message session in the
+	// `vix thread create` — create a Vix-initiated message thread in the
 	// running daemon. A sibling verb group to `vix daemon`, dispatched before
 	// flag parsing.
-	if len(os.Args) >= 2 && os.Args[1] == "session" {
-		os.Exit(runSessionCommand(os.Args[2:]))
+	if len(os.Args) >= 2 && os.Args[1] == "thread" {
+		os.Exit(runThreadCommand(os.Args[2:]))
 	}
 
 	// `vix job run <id>` — fire a scheduled job immediately by id, out of band
-	// from its schedule. Sibling verb group to `vix daemon`/`vix session`.
+	// from its schedule. Sibling verb group to `vix daemon`/`vix thread`.
 	if len(os.Args) >= 2 && os.Args[1] == "job" {
 		os.Exit(runJobCommand(os.Args[2:]))
 	}
@@ -68,7 +68,7 @@ func main() {
 	prompt := flag.String("p", "", "Run a single prompt non-interactively (headless mode). Use '-' to read from stdin.")
 	workflow := flag.String("w", "", "Workflow name to run (e.g. 'Plan Workflow'). Requires -p.")
 	outputFormat := flag.String("output-format", "text", "Output format for headless mode: text, json, stream-json")
-	workdir := flag.String("workdir", "", "Set the working directory for this session")
+	workdir := flag.String("workdir", "", "Set the working directory for this thread")
 	configDir := flag.String("config-dir", "", "Use this directory as the sole .vix config root (ignores ~/.vix and ./.vix)")
 	disableWritePermission := flag.Bool("disable-automatic-write-permission", false, "Require user confirmation for write_file, edit_file, and delete_file calls (by default, writes execute without confirmation)")
 	disableDirAccess := flag.Bool("disable-automatic-directory-access", false, "Restrict tool calls to paths within the working directory (by default, all paths are accessible)")
@@ -171,7 +171,7 @@ func main() {
 		prompt = &text
 	}
 
-	// Pre-flight credential resolution. The session resolves the actual
+	// Pre-flight credential resolution. The thread resolves the actual
 	// per-provider credential when the daemon constructs the LLM (based on
 	// the active chat agent's `model:` frontmatter); this check just makes
 	// sure the user has at least one usable key configured, failing fast in
@@ -202,7 +202,7 @@ func main() {
 	}
 
 	// When --config-dir is set, make sure the directory exists and is
-	// bootstrapped with default settings/agents so the session starts with a
+	// bootstrapped with default settings/agents so the thread starts with a
 	// working config.
 	if cfg.ConfigDir != "" {
 		if err := os.MkdirAll(cfg.ConfigDir, 0o755); err != nil {
@@ -245,26 +245,26 @@ func main() {
 		}
 	}()
 	telemetry.TrackTUIStarted(appMode, Version)
-	// Record session end on shutdown. Registered after the Shutdown defer so it
+	// Record thread end on shutdown. Registered after the Shutdown defer so it
 	// runs first on unwind (before Shutdown flushes); the endOnce guard inside
 	// keeps it single-fire even on the panic path above.
 	defer telemetry.TrackTUIEnded()
 	ui.Version = Version
 
-	var session *daemon.SessionClient
+	var thread *daemon.ThreadClient
 
 	// instanceClient is the window's long-lived control channel to the daemon,
-	// carrying process-level events (sessions_changed, jobs_changed, quit)
-	// independent of any chat session. Held for the process lifetime; passed to
+	// carrying process-level events (threads_changed, jobs_changed, quit)
+	// independent of any chat thread. Held for the process lifetime; passed to
 	// the TUI model so it can read the channel. nil when registration failed.
 	var instanceClient *daemon.InstanceClient
 
-	// restoreSessions holds the persisted open sessions (beyond the first,
+	// restoreThreads holds the persisted open threads (beyond the first,
 	// which becomes the initial client) that the TUI reopens on Init.
-	var restoreSessions []protocol.SessionSummary
+	var restoreThreads []protocol.ThreadSummary
 
-	// initialAttached is true when the initial session client resumed a
-	// persisted session (Attach) rather than starting fresh (Connect). The TUI
+	// initialAttached is true when the initial thread client resumed a
+	// persisted thread (Attach) rather than starting fresh (Connect). The TUI
 	// uses it to show a "Restoring conversation…" placeholder until the replay
 	// arrives, instead of flashing the welcome screen.
 	var initialAttached bool
@@ -300,7 +300,7 @@ func main() {
 		}
 
 		// Version gate: refuse to talk to a daemon from a different build. The
-		// daemon enforces the same rule on session start; this client-side check
+		// daemon enforces the same rule on thread start; this client-side check
 		// fires first and produces the friendlier message. An empty daemon
 		// version means a pre-gate build, which is a mismatch for any client.
 		daemonVersion, _ := client.DaemonVersion()
@@ -320,8 +320,8 @@ func main() {
 		// Register this vix process as an attached instance for its whole
 		// lifetime. Besides the observability count (web UI vitals, logging),
 		// the connection is the window's control channel: the daemon pushes
-		// process-level events (sessions_changed, jobs_changed, quit) to it,
-		// independent of any chat session, so a launch-time draft still refreshes
+		// process-level events (threads_changed, jobs_changed, quit) to it,
+		// independent of any chat thread, so a launch-time draft still refreshes
 		// live. Best-effort: if registration fails we still run (just without
 		// live process-level updates). Only the TUI reads the channel; headless
 		// holds it open purely for the count.
@@ -330,34 +330,34 @@ func main() {
 			defer ic.Close()
 		}
 
-		session = daemon.NewSessionClient(cfg.SocketPath)
-		session.SetAuthToken(authToken)
+		thread = daemon.NewThreadClient(cfg.SocketPath)
+		thread.SetAuthToken(authToken)
 
-		// TUI mode: reopen previously-open sessions for this cwd. Sessions
+		// TUI mode: reopen previously-open threads for this cwd. Threads
 		// already live in the daemon (Attached) are owned by another vix
 		// instance — skip them, since exclusive ownership would refuse the
-		// attach anyway. The first non-attached session becomes the initial
+		// attach anyway. The first non-attached thread becomes the initial
 		// client; the rest are attached by the TUI on Init. Headless mode
 		// (prompt set) always starts fresh.
 		attached := false
 		if *prompt == "" {
-			if sums, err := client.ListSessions(cfg.CWD, cfg.ConfigDir); err == nil {
-				var claimable []protocol.SessionSummary
+			if sums, err := client.ListThreads(cfg.CWD, cfg.ConfigDir); err == nil {
+				var claimable []protocol.ThreadSummary
 				for _, sum := range sums {
-					// Only auto-reopen user sessions rooted at this cwd:
-					// session.list now returns every directory's sessions (so
+					// Only auto-reopen user threads rooted at this cwd:
+					// thread.list now returns every directory's threads (so
 					// the TUI can group them), but launch restore stays
-					// project-scoped. Skip sessions another instance owns
+					// project-scoped. Skip threads another instance owns
 					// (Attached) and vix-initiated records (job runs / alerts),
-					// which are browsed from the sessions list, never
+					// which are browsed from the threads list, never
 					// auto-reopened as chat tabs.
 					if !sum.Attached && sum.Origin != "vix" && sum.CWD == cfg.CWD {
 						claimable = append(claimable, sum)
 					}
 				}
 				if len(claimable) > 0 {
-					if err := session.Attach(cfg.CWD, cfg.ConfigDir, cfg.Model, cfg.ForceInit, !*disableWritePermission, !*disableDirAccess, false, claimable[0].ID); err == nil {
-						restoreSessions = claimable[1:]
+					if err := thread.Attach(cfg.CWD, cfg.ConfigDir, cfg.Model, cfg.ForceInit, !*disableWritePermission, !*disableDirAccess, false, claimable[0].ID); err == nil {
+						restoreThreads = claimable[1:]
 						attached = true
 						initialAttached = true
 					}
@@ -367,37 +367,37 @@ func main() {
 		if !attached {
 			if *prompt != "" {
 				// Headless mode always needs a live connection up front.
-				if err := session.Connect(cfg.CWD, cfg.ConfigDir, cfg.Model, cfg.ForceInit, !*disableWritePermission, !*disableDirAccess, true); err != nil {
+				if err := thread.Connect(cfg.CWD, cfg.ConfigDir, cfg.Model, cfg.ForceInit, !*disableWritePermission, !*disableDirAccess, true); err != nil {
 					fmt.Fprintf(os.Stderr, "Error connecting to daemon: %v\n", err)
 					os.Exit(1)
 				}
 			} else {
 				// TUI mode with nothing to restore: start as a draft. No
-				// session.start is sent until the user submits the first
+				// thread.start is sent until the user submits the first
 				// message, which lets them pick the working directory first and
-				// avoids creating a ghost empty session on quit. Passing a nil
-				// client to NewModel yields a draft initial session.
-				session = nil
+				// avoids creating a ghost empty thread on quit. Passing a nil
+				// client to NewModel yields a draft initial thread.
+				thread = nil
 			}
 		}
-		// Headless sessions are one-shot: close the record explicitly so
+		// Headless threads are one-shot: close the record explicitly so
 		// it isn't restored by the next TUI launch. TUI exits must NOT
-		// send session.close here — the bare disconnect leaves records in
+		// send thread.close here — the bare disconnect leaves records in
 		// open/ so they restore on relaunch; an explicit close-all is
-		// handled by the quit dialog (closeSessionsForQuit) when the user
+		// handled by the quit dialog (closeThreadsForQuit) when the user
 		// opts in.
 		if *prompt != "" {
-			defer session.SendClose()
+			defer thread.SendClose()
 		}
 	}
 
 	// Headless mode: send prompt and print result
 	if *prompt != "" {
-		if session == nil {
+		if thread == nil {
 			fmt.Fprintf(os.Stderr, "Error: headless mode requires a daemon connection (cannot use --test)\n")
 			os.Exit(1)
 		}
-		if err := headless.Run(session, *prompt, format, *workflow, cfg.Model); err != nil {
+		if err := headless.Run(thread, *prompt, format, *workflow, cfg.Model); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -406,8 +406,8 @@ func main() {
 
 	ui.ApplyTheme(config.LoadThemeConfig(cfg.Paths))
 
-	model := ui.NewModel(cfg, session, *testMode, authToken, !*disableWritePermission, !*disableDirAccess)
-	model.SetRestoreSessions(restoreSessions)
+	model := ui.NewModel(cfg, thread, *testMode, authToken, !*disableWritePermission, !*disableDirAccess)
+	model.SetRestoreThreads(restoreThreads)
 	model.SetInitialAwaitingReplay(initialAttached)
 	model.SetInstanceClient(instanceClient)
 
@@ -457,7 +457,7 @@ func printDaemonError(stale bool, socketPath string) {
 		headline = "⬣ vixd isn't running"
 		body = []string{
 			"vix is just the client — it talks to vixd, the background",
-			"daemon that runs your sessions, tools, and code analysis.",
+			"daemon that runs your threads, tools, and code analysis.",
 		}
 		actions = [][2]string{
 			{"Start it", "vix daemon start"},
@@ -610,7 +610,7 @@ Flags:
 		v, _ := client.DaemonVersion()
 		fmt.Printf("vixd is running (version %s) on %s\n", orUnknown(v), sock)
 		if v != Version {
-			fmt.Printf("WARNING: this vix is %s — version mismatch, sessions will be refused.\nRestart the daemon: vix daemon stop && vix daemon start\n", Version)
+			fmt.Printf("WARNING: this vix is %s — version mismatch, threads will be refused.\nRestart the daemon: vix daemon stop && vix daemon start\n", Version)
 		}
 		return 0
 
@@ -635,18 +635,18 @@ func orUnknown(v string) string {
 	return v
 }
 
-// runSessionCommand implements the `vix session create` subcommand: create a
-// Vix-initiated message session in the running daemon from a whole-JSON spec
-// (MessageSessionSpec) read from --json, --file, or stdin. Returns the exit
-// code. The created session lands in the Sessions tab under "Vix-initiated".
-func runSessionCommand(args []string) int {
+// runThreadCommand implements the `vix thread create` subcommand: create a
+// Vix-initiated message thread in the running daemon from a whole-JSON spec
+// (MessageThreadSpec) read from --json, --file, or stdin. Returns the exit
+// code. The created thread lands in the Threads tab under "Vix-initiated".
+func runThreadCommand(args []string) int {
 	usage := func() {
-		fmt.Fprintf(os.Stderr, `Usage: vix session create [flags]
+		fmt.Fprintf(os.Stderr, `Usage: vix thread create [flags]
 
-  create   Create a Vix-initiated message session in the running daemon.
+  create   Create a Vix-initiated message thread in the running daemon.
            The spec is a JSON object read from --json, --file, or stdin:
              { "message": "…", "cwd": "/abs/project", "title": "…" }
-           message and cwd are required. Prints the new session id.
+           message and cwd are required. Prints the new thread id.
 
 Flags:
   -json string             Inline JSON spec
@@ -660,9 +660,9 @@ Flags:
 		return 1
 	}
 
-	fs := flag.NewFlagSet("vix session create", flag.ExitOnError)
-	jsonFlag := fs.String("json", "", "Inline JSON session spec.")
-	fileFlag := fs.String("file", "", `Read the JSON session spec from this file ("-" for stdin).`)
+	fs := flag.NewFlagSet("vix thread create", flag.ExitOnError)
+	jsonFlag := fs.String("json", "", "Inline JSON thread spec.")
+	fileFlag := fs.String("file", "", `Read the JSON thread spec from this file ("-" for stdin).`)
 	socketPath := fs.String("socket-path", "", "Unix socket path for the vix↔vixd connection. Env: VIX_SOCKET_PATH. Default: /tmp/vixd.sock.")
 	authTokenPath := fs.String("auth-token-path", "", "Path to a file holding the shared-secret token. Must match the daemon's -auth-token-path.")
 	fs.Parse(args[1:])
@@ -726,7 +726,7 @@ Flags:
 		return 1
 	}
 
-	id, err := client.CreateMessageSession(json.RawMessage(rawSpec))
+	id, err := client.CreateMessageThread(json.RawMessage(rawSpec))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
@@ -774,7 +774,7 @@ func dialDaemon(socketPath, authTokenPath string) (*daemon.Client, int) {
 
 // runJobCommand implements `vix job run <id>`: fire a scheduled job immediately
 // by id in the running daemon, out of band from its schedule. The run proceeds
-// in the background; the command prints the run's session id. Returns the exit
+// in the background; the command prints the run's thread id. Returns the exit
 // code.
 func runJobCommand(args []string) int {
 	usage := func() {
@@ -784,7 +784,7 @@ func runJobCommand(args []string) int {
              schedule. A manual run records its outcome but does not advance the
              schedule or complete a one-shot, and runs even when the job is
              disabled. The run proceeds in the background and lands under
-             "Vix-initiated" sessions. Prints the run's session id.
+             "Vix-initiated" threads. Prints the run's thread id.
 
 Flags:
   -socket-path string      Unix socket path (env VIX_SOCKET_PATH, default /tmp/vixd.sock)
@@ -812,18 +812,18 @@ Flags:
 		return code
 	}
 
-	sessionID, err := client.RunJob(id)
+	threadID, err := client.RunJob(id)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
-	fmt.Println(sessionID)
+	fmt.Println(threadID)
 	return 0
 }
 
 // runHookCommand implements `vix hook trigger <id>`: fire a lifecycle hook
 // immediately by id in the running daemon, out of band from its event. Prints
-// the run's session id (workflow/prompt hooks) or the fire id (command hooks).
+// the run's thread id (workflow/prompt hooks) or the fire id (command hooks).
 // Returns the exit code.
 func runHookCommand(args []string) int {
 	usage := func() {
@@ -832,7 +832,7 @@ func runHookCommand(args []string) int {
   trigger <id>  Fire the hook with the given id immediately, out of band from
                 its event. It runs fire-and-forget regardless of mode, even when
                 the hook is disabled. Workflow/prompt hooks run in an isolated
-                session (its id is printed); command hooks print their fire id.
+                thread (its id is printed); command hooks print their fire id.
 
 Flags:
   -socket-path string      Unix socket path (env VIX_SOCKET_PATH, default /tmp/vixd.sock)
@@ -860,13 +860,13 @@ Flags:
 		return code
 	}
 
-	sessionID, fireID, err := client.TriggerHook(id)
+	threadID, fireID, err := client.TriggerHook(id)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
-	if sessionID != "" {
-		fmt.Println(sessionID)
+	if threadID != "" {
+		fmt.Println(threadID)
 	} else {
 		fmt.Println(fireID)
 	}
@@ -1152,7 +1152,7 @@ func startDaemon(apiKey, logDir, socketPath, authTokenPath string) (*exec.Cmd, e
 		args = append(args, "--auth-token-path", authTokenPath)
 	}
 	cmd := exec.Command(daemonPath, args...)
-	// Detach the daemon from this client: start it in a new session (setsid) so
+	// Detach the daemon from this client: start it in a new thread (setsid) so
 	// it is not in the client's process group and is unaffected by terminal
 	// signals (SIGHUP on terminal close, SIGINT/SIGTERM to the foreground
 	// group). The daemon is a shared, long-lived process that runs until

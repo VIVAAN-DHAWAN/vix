@@ -11,14 +11,14 @@ import (
 	"github.com/get-vix/vix/internal/agent"
 )
 
-// newSkillSession builds a minimal session whose skill registry is loaded from
+// newSkillThread builds a minimal thread whose skill registry is loaded from
 // the given project skills directory, suitable for exercising the `skill` tool
 // dispatch path in executeToolDirect.
-func newSkillSession(t *testing.T, skillsDir string) *Session {
+func newSkillThread(t *testing.T, skillsDir string) *Thread {
 	t.Helper()
 	srv := &Server{handlers: make(map[string]HandlerFunc)}
 	RegisterToolHandlers(srv)
-	return &Session{
+	return &Thread{
 		server:                         srv,
 		cwd:                            t.TempDir(),
 		headless:                       true,
@@ -54,7 +54,7 @@ Deploy $ARGUMENTS now.
 `)
 	os.WriteFile(filepath.Join(dir, "checklist.md"), []byte("checklist"), 0o644)
 
-	s := newSkillSession(t, root)
+	s := newSkillThread(t, root)
 	res := s.executeToolDirect(context.Background(), "skill", map[string]any{
 		"name":      "deploy",
 		"arguments": "staging",
@@ -73,7 +73,7 @@ Deploy $ARGUMENTS now.
 func TestSkillTool_MissingName(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "deploy", "---\nname: deploy\ndescription: x\n---\nbody\n")
-	s := newSkillSession(t, root)
+	s := newSkillThread(t, root)
 
 	res := s.executeToolDirect(context.Background(), "skill", map[string]any{})
 	if res == nil || !res.IsError {
@@ -84,7 +84,7 @@ func TestSkillTool_MissingName(t *testing.T) {
 func TestSkillTool_UnknownSkill(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "deploy", "---\nname: deploy\ndescription: x\n---\nbody\n")
-	s := newSkillSession(t, root)
+	s := newSkillThread(t, root)
 
 	res := s.executeToolDirect(context.Background(), "skill", map[string]any{"name": "nope"})
 	if res == nil || !res.IsError {

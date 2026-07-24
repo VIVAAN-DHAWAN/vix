@@ -141,7 +141,7 @@ func TestTurnSepByNumber(t *testing.T) {
 		styles:     NewStyles(true),
 		mdRenderer: NewMarkdownRenderer(80, true, NewStyles(true).CodeBoxBorderStyle),
 	}
-	sess := &SessionState{
+	sess := &ThreadState{
 		chatMessages: []ChatMessage{
 			{Type: MsgUser, Text: "hi", Rendered: "hi\n"},
 			{Type: MsgAssistant, Text: "a", Rendered: "a\n"},
@@ -184,7 +184,7 @@ func TestGotoTurn(t *testing.T) {
 			ChatMessage{Type: MsgSystem, TurnModel: "m", Rendered: fmt.Sprintf("sep%d\n", i)},
 		)
 	}
-	sess := &SessionState{chatMessages: msgs}
+	sess := &ThreadState{chatMessages: msgs}
 
 	// Independently recompute the rendered layout to find which logical line
 	// lands at the top of the viewport after gotoTurn.
@@ -213,7 +213,7 @@ func TestGotoTurn(t *testing.T) {
 
 	// Turn 1 always starts at the very top of the conversation.
 	m.gotoTurn(sess, 1)
-	if got := m.sessionMaxScrollOffset(sess); sess.chatScrollOffset != got {
+	if got := m.threadMaxScrollOffset(sess); sess.chatScrollOffset != got {
 		t.Errorf("gotoTurn(1) offset = %d, want max %d", sess.chatScrollOffset, got)
 	}
 }

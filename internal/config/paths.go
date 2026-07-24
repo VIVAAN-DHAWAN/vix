@@ -2,7 +2,7 @@ package config
 
 import "path/filepath"
 
-// VixPaths resolves all .vix-relative filesystem paths for a session.
+// VixPaths resolves all .vix-relative filesystem paths for a thread.
 //
 // When Override is set, every path resolves under the override directory and
 // neither ~/.vix nor cwd/.vix is consulted. This enables fully isolated runs
@@ -18,7 +18,7 @@ type VixPaths struct {
 
 // NewVixPaths constructs a resolver. override may be empty (normal mode).
 // home should be the result of HomeVixDir() (may be empty if UserHomeDir fails).
-// cwd is the session working directory.
+// cwd is the thread working directory.
 func NewVixPaths(override, home, cwd string) VixPaths {
 	return VixPaths{override: override, home: home, cwd: cwd}
 }
@@ -26,7 +26,7 @@ func NewVixPaths(override, home, cwd string) VixPaths {
 // Override returns the override directory, or "" if not set.
 func (p VixPaths) Override() string { return p.override }
 
-// IsOverride reports whether the session is running in config-dir override mode.
+// IsOverride reports whether the thread is running in config-dir override mode.
 func (p VixPaths) IsOverride() bool { return p.override != "" }
 
 // Home returns the home .vix directory. Empty in override mode or if unavailable.
@@ -155,7 +155,7 @@ func (p VixPaths) AgentsMD() []string {
 	return out
 }
 
-// Primary returns the write target for session-scoped state (history, plans,
+// Primary returns the write target for thread-scoped state (history, plans,
 // access stats when override is set, etc.). Override mode: override.
 // Normal mode: cwd/.vix.
 func (p VixPaths) Primary() string {
@@ -165,7 +165,7 @@ func (p VixPaths) Primary() string {
 	return filepath.Join(p.cwd, ".vix")
 }
 
-// Logs returns where LLM logs should be written for this session.
+// Logs returns where LLM logs should be written for this thread.
 // Override mode: override/logs. Normal mode: home/logs (or "" if home empty).
 func (p VixPaths) Logs() string {
 	if p.override != "" {
@@ -198,12 +198,26 @@ func (p VixPaths) HooksLog() string {
 	return filepath.Join(base, "hooks")
 }
 
-// Sessions returns the directory where persisted session records live.
-// Sessions are stored globally (not project-scoped): override mode uses
-// override/sessions; normal mode uses home/sessions (empty if home is
+// Threads returns the directory where persisted thread records live.
+// Threads are stored globally (not project-scoped): override mode uses
+// override/threads; normal mode uses home/threads (empty if home is
 // unavailable). Each record carries its own cwd so the daemon can filter the
 // open list by the launching project.
-func (p VixPaths) Sessions() string {
+func (p VixPaths) Threads() string {
+	if p.override != "" {
+		return filepath.Join(p.override, "threads")
+	}
+	if p.home == "" {
+		return ""
+	}
+	return filepath.Join(p.home, "threads")
+}
+
+// LegacyThreads returns the pre-rename directory ("sessions") that threads used
+// to live in, mirroring Threads()'s override/home resolution. Empty when
+// Threads() is empty. Used only by the one-time startup migration that renames
+// the old sessions/ tree to threads/.
+func (p VixPaths) LegacyThreads() string {
 	if p.override != "" {
 		return filepath.Join(p.override, "sessions")
 	}
@@ -213,27 +227,27 @@ func (p VixPaths) Sessions() string {
 	return filepath.Join(p.home, "sessions")
 }
 
-// SessionsOpen returns the subdirectory holding open (TUI-visible) sessions.
-// Empty when Sessions() is empty.
-func (p VixPaths) SessionsOpen() string {
-	base := p.Sessions()
+// ThreadsOpen returns the subdirectory holding open (TUI-visible) threads.
+// Empty when Threads() is empty.
+func (p VixPaths) ThreadsOpen() string {
+	base := p.Threads()
 	if base == "" {
 		return ""
 	}
 	return filepath.Join(base, "open")
 }
 
-// SessionsClosed returns the subdirectory holding closed sessions (retained on
-// disk but not reopened on launch). Empty when Sessions() is empty.
-func (p VixPaths) SessionsClosed() string {
-	base := p.Sessions()
+// ThreadsClosed returns the subdirectory holding closed threads (retained on
+// disk but not reopened on launch). Empty when Threads() is empty.
+func (p VixPaths) ThreadsClosed() string {
+	base := p.Threads()
 	if base == "" {
 		return ""
 	}
 	return filepath.Join(base, "closed")
 }
 
-// AccessStatsDB returns the sqlite path for per-session tool access stats.
+// AccessStatsDB returns the sqlite path for per-thread tool access stats.
 // Override mode: override/access_stats.db.
 // Normal mode:   cwd/.vix/access_stats.db.
 func (p VixPaths) AccessStatsDB() string {
@@ -242,7 +256,7 @@ func (p VixPaths) AccessStatsDB() string {
 
 // AuthFile returns the path of the plaintext credential fallback (auth.json),
 // used only when no OS keyring is available. Credentials are user-global, so it
-// lives alongside sessions: override mode uses override/auth.json; normal mode
+// lives alongside threads: override mode uses override/auth.json; normal mode
 // uses home/auth.json (empty when home is unavailable). It is deliberately not
 // under cwd/.vix so secrets never land in a project repo.
 func (p VixPaths) AuthFile() string {
@@ -279,8 +293,8 @@ func (p VixPaths) ProjectSettingsWrite() string {
 	return filepath.Join(p.Primary(), "settings.json")
 }
 
-// StateFile returns the path to the global session-state file (state.json),
-// used for cross-session bookkeeping that is not project-scoped — e.g. the
+// StateFile returns the path to the global thread-state file (state.json),
+// used for cross-thread bookkeeping that is not project-scoped — e.g. the
 // once-per-day update-check record. Override mode: override/state.json. Normal
 // mode: home/state.json (empty when home is unavailable).
 func (p VixPaths) StateFile() string {
@@ -294,8 +308,8 @@ func (p VixPaths) StateFile() string {
 }
 
 // Jobs returns the directory holding scheduled job specs (<id>.json files).
-// Jobs are user-global like sessions — each spec carries its own cwd — so the
-// store lives next to sessions/: override mode uses override/jobs; normal mode
+// Jobs are user-global like threads — each spec carries its own cwd — so the
+// store lives next to threads/: override mode uses override/jobs; normal mode
 // uses home/jobs (empty when home is unavailable, which disables the scheduler).
 func (p VixPaths) Jobs() string {
 	if p.override != "" {

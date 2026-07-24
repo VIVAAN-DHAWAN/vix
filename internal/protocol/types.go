@@ -7,23 +7,23 @@ import (
 	"strings"
 )
 
-// SessionCommand is a message sent from client to daemon.
+// ThreadCommand is a message sent from client to daemon.
 //
 // AuthToken carries the shared-secret token the daemon was started with via
 // -auth-token-path. The daemon validates it on every message — both the
-// initial session.start and every follow-up — and closes the connection on
+// initial thread.start and every follow-up — and closes the connection on
 // mismatch. The auth check is OFF by default: when vixd is launched without
 // -auth-token-path the daemon-side token is empty, AuthToken is ignored,
 // and any caller is accepted (legacy single-user-host behaviour). The
 // omitempty tag keeps the wire format clean in that mode.
-type SessionCommand struct {
+type ThreadCommand struct {
 	Type      string          `json:"type"`
 	AuthToken string          `json:"auth_token,omitempty"`
 	Data      json.RawMessage `json:"data"`
 }
 
-// SessionEvent is a message sent from daemon to client.
-type SessionEvent struct {
+// ThreadEvent is a message sent from daemon to client.
+type ThreadEvent struct {
 	Type string `json:"type"`
 	Data any    `json:"data"`
 }
@@ -32,8 +32,8 @@ type SessionEvent struct {
 
 // InstanceRegisterData is the payload of an "instance.register" command. A vix
 // process opens one such connection at startup and holds it open for its whole
-// lifetime so the daemon can count attached instances independently of sessions
-// (a single vix instance may hold several session connections, or none). The
+// lifetime so the daemon can count attached instances independently of threads
+// (a single vix instance may hold several thread connections, or none). The
 // connection closing — on clean exit or process death — is the liveness signal;
 // no heartbeat is sent. The fields are advisory (logging/observability only);
 // counting relies on the connection itself.
@@ -42,8 +42,8 @@ type InstanceRegisterData struct {
 	Mode       string `json:"mode,omitempty"` // "tui" | "headless"
 }
 
-// SessionStartData is sent to start a new agent session.
-type SessionStartData struct {
+// ThreadStartData is sent to start a new agent thread.
+type ThreadStartData struct {
 	CWD                            string `json:"cwd"`
 	ConfigDir                      string `json:"config_dir,omitempty"`
 	Model                          string `json:"model"`
@@ -51,80 +51,80 @@ type SessionStartData struct {
 	EnableAutomaticWritePermission bool   `json:"enable_automatic_write_permission"`
 	EnableAutomaticDirectoryAccess bool   `json:"enable_automatic_directory_access"`
 	Headless                       bool   `json:"headless"`
-	// ClientVersion is the vix binary version opening this session. The daemon
-	// refuses the session (event.error, code "version_mismatch") when it does
+	// ClientVersion is the vix binary version opening this thread. The daemon
+	// refuses the thread (event.error, code "version_mismatch") when it does
 	// not exactly match the daemon's own version — a long-lived daemon must
 	// never serve a client from a different build.
 	ClientVersion string `json:"client_version,omitempty"`
-	// Fork fields: when ForkSessionID is non-empty the new session is seeded
-	// with the conversation history of the named session up to and including
+	// Fork fields: when ForkThreadID is non-empty the new thread is seeded
+	// with the conversation history of the named thread up to and including
 	// the turn at ForkTurnIdx (0-based).
-	ForkSessionID string `json:"fork_session_id,omitempty"`
-	ForkTurnIdx   int    `json:"fork_turn_idx,omitempty"`
-	// AttachSessionID, when non-empty, asks the daemon to resume a persisted
-	// session by ID instead of creating a fresh one: it loads the on-disk
+	ForkThreadID string `json:"fork_thread_id,omitempty"`
+	ForkTurnIdx  int    `json:"fork_turn_idx,omitempty"`
+	// AttachThreadID, when non-empty, asks the daemon to resume a persisted
+	// thread by ID instead of creating a fresh one: it loads the on-disk
 	// record from open/, reuses that ID, and replays the conversation to the
 	// client via event.replay. Records in closed/ are not attachable — an
-	// explicitly closed session stays closed. If no open record exists the
-	// daemon answers with event.error carrying Code "session_not_found".
-	AttachSessionID string `json:"attach_session_id,omitempty"`
+	// explicitly closed thread stays closed. If no open record exists the
+	// daemon answers with event.error carrying Code "thread_not_found".
+	AttachThreadID string `json:"attach_thread_id,omitempty"`
 }
 
-// TriggerInfo records what fired a vix-initiated session: a scheduled job's
+// TriggerInfo records what fired a vix-initiated thread: a scheduled job's
 // trigger type ("cron" | "at") and the job id.
 type TriggerInfo struct {
 	Type string `json:"type"`
 	Ref  string `json:"ref,omitempty"`
 }
 
-// SessionSummary is the lightweight projection of a persisted session returned
-// by the session.list RPC. It carries just enough to populate the Sessions
+// ThreadSummary is the lightweight projection of a persisted thread returned
+// by the thread.list RPC. It carries just enough to populate the Threads
 // list without loading full conversation histories.
-type SessionSummary struct {
+type ThreadSummary struct {
 	ID    string `json:"id"`
 	CWD   string `json:"cwd"`
 	Model string `json:"model"`
-	// Title is the session's display title: set by an LLM summarization pass
-	// after a few turns (user sessions) or at creation time (job runs). When
+	// Title is the thread's display title: set by an LLM summarization pass
+	// after a few turns (user threads) or at creation time (job runs). When
 	// empty, clients fall back to FirstMessage.
 	Title         string `json:"title,omitempty"`
 	FirstMessage  string `json:"first_message,omitempty"`
 	StartedAt     string `json:"started_at,omitempty"`      // RFC3339
 	LastRequestAt string `json:"last_request_at,omitempty"` // RFC3339
-	// Attached is true when this session is currently live in the daemon (open
+	// Attached is true when this thread is currently live in the daemon (open
 	// in some connection). The launching client uses it to avoid attaching a
-	// session another instance already owns (exclusive single-writer ownership).
+	// thread another instance already owns (exclusive single-writer ownership).
 	Attached bool `json:"attached,omitempty"`
-	// Origin distinguishes user-started sessions ("", the default) from
+	// Origin distinguishes user-started threads ("", the default) from
 	// vix-initiated ones ("vix" — scheduled job runs, synthetic alerts). The
-	// TUI groups the sessions list by it and never auto-claims vix-initiated
-	// sessions on launch.
+	// TUI groups the threads list by it and never auto-claims vix-initiated
+	// threads on launch.
 	Origin  string       `json:"origin,omitempty"`
 	Trigger *TriggerInfo `json:"trigger,omitempty"`
 	// JobStatus carries the finished run's status (ok | error | timeout) for
-	// vix-initiated sessions, powering the badge in the sessions list.
+	// vix-initiated threads, powering the badge in the threads list.
 	JobStatus string `json:"job_status,omitempty"`
-	// Unread reports whether the session holds content the user hasn't seen
-	// (session-global, persisted — survives restarts). Cleared via the
-	// session.mark_read command when the user views the session.
+	// Unread reports whether the thread holds content the user hasn't seen
+	// (thread-global, persisted — survives restarts). Cleared via the
+	// thread.mark_read command when the user views the thread.
 	Unread bool `json:"unread,omitempty"`
 }
 
-// DirUsage is a working directory ranked by how many open sessions use it,
-// returned by the session.dirs RPC. It powers the welcome screen's
-// recent-directories list and the default working directory for new sessions.
+// DirUsage is a working directory ranked by how many open threads use it,
+// returned by the thread.dirs RPC. It powers the welcome screen's
+// recent-directories list and the default working directory for new threads.
 type DirUsage struct {
-	// Path is the working directory (session CWD).
+	// Path is the working directory (thread CWD).
 	Path string `json:"path"`
-	// Count is the number of open user sessions rooted at Path.
+	// Count is the number of open user threads rooted at Path.
 	Count int `json:"count"`
-	// LastRequestAt is the most recent activity across those sessions,
+	// LastRequestAt is the most recent activity across those threads,
 	// RFC3339; used to order by recency and to pick the "latest used" dir.
 	LastRequestAt string `json:"last_request_at,omitempty"`
 }
 
-// SessionInputData carries user chat input.
-type SessionInputData struct {
+// ThreadInputData carries user chat input.
+type ThreadInputData struct {
 	Text        string       `json:"text"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
@@ -160,57 +160,57 @@ func ValidateAttachment(att Attachment) error {
 	return nil
 }
 
-// SessionConfirmData carries tool approval/denial.
-type SessionConfirmData struct {
+// ThreadConfirmData carries tool approval/denial.
+type ThreadConfirmData struct {
 	Approved    bool `json:"approved"`
 	PersistDirs bool `json:"persist_dirs,omitempty"` // save approved directories to settings.json
 }
 
-// SessionPlanActionData carries plan review decisions.
-type SessionPlanActionData struct {
+// ThreadPlanActionData carries plan review decisions.
+type ThreadPlanActionData struct {
 	Action string `json:"action"` // "approve", "reject", "modify"
 	Text   string `json:"text,omitempty"`
 }
 
-// SessionUserAnswerData carries the user's response to a question.
-type SessionUserAnswerData struct {
+// ThreadUserAnswerData carries the user's response to a question.
+type ThreadUserAnswerData struct {
 	Answer  string            `json:"answer"`
 	Text    string            `json:"text,omitempty"`    // user input when has_user_input
 	Answers map[string]string `json:"answers,omitempty"` // question ID → answer (batch mode)
 }
 
-// SessionWorkflowData carries a workflow execution request. Name selects a
-// workflow already loaded by the session (from config/workflow.json). Workflow,
+// ThreadWorkflowData carries a workflow execution request. Name selects a
+// workflow already loaded by the thread (from config/workflow.json). Workflow,
 // when present, is an inline definition (a workflow.Def) registered into the
-// session's workflow set for this run; the session looks it up by its own name.
+// thread's workflow set for this run; the thread looks it up by its own name.
 // Carried as raw JSON so the protocol package stays free of a workflow-package
 // dependency.
-type SessionWorkflowData struct {
+type ThreadWorkflowData struct {
 	Name     string          `json:"name"`
 	Text     string          `json:"text"`
 	Workflow json.RawMessage `json:"workflow,omitempty"`
 }
 
-// SessionWorkflowMessageData carries a user message to inject into the running workflow.
-type SessionWorkflowMessageData struct {
+// ThreadWorkflowMessageData carries a user message to inject into the running workflow.
+type ThreadWorkflowMessageData struct {
 	Text string `json:"text"`
 }
 
-// SessionSetModelData carries a model switch request.
-type SessionSetModelData struct {
+// ThreadSetModelData carries a model switch request.
+type ThreadSetModelData struct {
 	Model string `json:"model"`
 }
 
-// SessionTrimData carries a history trim request.
-type SessionTrimData struct {
+// ThreadTrimData carries a history trim request.
+type ThreadTrimData struct {
 	TurnIdx int `json:"turn_idx"` // keep history up to and including this turn (0-based)
 }
 
 // --- Daemon → Client event payloads ---
 
-// EventSessionStarted acknowledges session creation.
-type EventSessionStarted struct {
-	SessionID   string `json:"session_id"`
+// EventThreadStarted acknowledges thread creation.
+type EventThreadStarted struct {
+	ThreadID    string `json:"thread_id"`
 	StartedAt   string `json:"started_at"` // RFC3339
 	ParentID    string `json:"parent_id,omitempty"`
 	ForkTurnIdx int    `json:"fork_turn_idx,omitempty"`
@@ -352,15 +352,15 @@ type EventUserQuestion struct {
 type EventError struct {
 	Message string `json:"message"`
 	// Code is an optional machine-readable discriminator. Used by the attach
-	// flow: "session_not_found" tells the client a resume target no longer
-	// exists on disk so it can orphan the session (offer /copy) instead of
-	// retrying the reconnect forever; "session_busy" tells the client the
-	// session is already open in another connection (exclusive single-writer
-	// ownership) so it should retry later or attach a different session.
+	// flow: "thread_not_found" tells the client a resume target no longer
+	// exists on disk so it can orphan the thread (offer /copy) instead of
+	// retrying the reconnect forever; "thread_busy" tells the client the
+	// thread is already open in another connection (exclusive single-writer
+	// ownership) so it should retry later or attach a different thread.
 	Code string `json:"code,omitempty"`
 }
 
-// --- Session restore / replay (attach) ---
+// --- Thread restore / replay (attach) ---
 
 // ReplayBlock is one content block of a replayed conversation turn, projected
 // into a wire-stable shape owned by this package (so neither protocol nor the
@@ -374,7 +374,7 @@ type ReplayBlock struct {
 	Output   string         `json:"output,omitempty"`
 	IsError  bool           `json:"is_error,omitempty"`
 	// Retry-notice fields (Kind == "retry"): a transient API error that was
-	// retried during a workflow run, persisted so a reopened session replays
+	// retried during a workflow run, persisted so a reopened thread replays
 	// the same notice an interactive run shows live. Text carries the reason.
 	Attempt    int `json:"attempt,omitempty"`
 	MaxRetries int `json:"max_retries,omitempty"`
@@ -391,14 +391,14 @@ type ReplayMessage struct {
 	Blocks []ReplayBlock `json:"blocks"`
 	// Timestamp is when the turn was originally sent (RFC3339), so the
 	// replayed viewport shows original send times instead of the relaunch
-	// time. Empty for legacy sessions persisted before timestamps existed;
+	// time. Empty for legacy threads persisted before timestamps existed;
 	// the TUI omits the "Sent at" line in that case.
 	Timestamp string `json:"timestamp,omitempty"`
 }
 
-// EventReplay is emitted once, immediately after event.session_started, when a
-// client attaches to a persisted session. It rebuilds the chat viewport and
-// restores the session's mode/model/todos, plus any restore-time warnings
+// EventReplay is emitted once, immediately after event.thread_started, when a
+// client attaches to a persisted thread. It rebuilds the chat viewport and
+// restores the thread's mode/model/todos, plus any restore-time warnings
 // (model changed, workflow missing, etc.).
 type EventReplay struct {
 	Messages       []ReplayMessage `json:"messages"`
@@ -406,16 +406,16 @@ type EventReplay struct {
 	ActivePlan     *Plan           `json:"active_plan,omitempty"`
 	Model          string          `json:"model,omitempty"`
 	Title          string          `json:"title,omitempty"`
-	SessionMode    string          `json:"session_mode,omitempty"`
+	ThreadMode     string          `json:"thread_mode,omitempty"`
 	ActiveWorkflow string          `json:"active_workflow,omitempty"`
 	// Warnings are human-readable restore notices rendered into the viewport
 	// (e.g. "Saved with model X; switched to your current default Y.").
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// EventTitleUpdated is emitted on a session's stream when its display title
-// changes (LLM auto-titling after a few turns). The sessions list refresh for
-// other clients goes through event.sessions_changed.
+// EventTitleUpdated is emitted on a thread's stream when its display title
+// changes (LLM auto-titling after a few turns). The threads list refresh for
+// other clients goes through event.threads_changed.
 type EventTitleUpdated struct {
 	Title string `json:"title"`
 }
@@ -464,7 +464,7 @@ type EventSkillsAvailable struct {
 // the Settings tab can display which implementation the grep and glob tools
 // actually use. The *Effective fields reflect PATH fallback (e.g. a configured
 // "fd" resolves to "builtin" when fd is absent); the *Configured fields carry
-// the requested backend so the UI can flag a fallback. Emitted once per session
+// the requested backend so the UI can flag a fallback. Emitted once per thread
 // at init.
 type EventToolBackends struct {
 	GrepEffective  string `json:"grep_effective"`
@@ -474,7 +474,7 @@ type EventToolBackends struct {
 }
 
 // EventUpdateAvailable informs the UI of the running version versus the latest
-// published GitHub release. Emitted once per session at init. Latest is empty
+// published GitHub release. Emitted once per thread at init. Latest is empty
 // when the daemon is up-to-date, the check is disabled, or it could not reach
 // GitHub. Method is one of "brew" | "script" | "unknown" and selects the
 // in-app upgrade command the TUI offers.
@@ -501,21 +501,21 @@ type EventJobRun struct {
 }
 
 // EventJobDone reports a finished job run. Status is ok | error | timeout
-// (skipped runs are silent by design). SessionID references the persisted run
-// session in the sessions list.
+// (skipped runs are silent by design). ThreadID references the persisted run
+// thread in the threads list.
 type EventJobDone struct {
-	JobID     string `json:"job_id"`
-	Name      string `json:"name,omitempty"`
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
+	JobID    string `json:"job_id"`
+	Name     string `json:"name,omitempty"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
-// EventSessionsChanged tells every attached instance (over the control channel,
-// once per window) the persisted sessions list changed outside their own
+// EventThreadsChanged tells every attached instance (over the control channel,
+// once per window) the persisted threads list changed outside their own
 // connection (a job run was persisted or swept), so they should re-fetch
-// session.list.
-type EventSessionsChanged struct{}
+// thread.list.
+type EventThreadsChanged struct{}
 
 // EventJobsChanged tells every attached instance (over the control channel, once
 // per window) the scheduled jobs or lifecycle hooks changed — a run started or

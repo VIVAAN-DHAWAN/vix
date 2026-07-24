@@ -10,19 +10,19 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-// newWorkflowTestSession builds a Session wired just enough to drive
+// newWorkflowTestThread builds a Thread wired just enough to drive
 // executeWorkflow with bash-only workflows: no network, persistence disabled
 // (zero VixPaths), and a generously buffered event channel.
-func newWorkflowTestSession(t *testing.T) *Session {
+func newWorkflowTestThread(t *testing.T) *Thread {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	return &Session{
+	return &Thread{
 		id:        "wf-test",
 		cwd:       t.TempDir(),
 		model:     "anthropic/claude-opus-4-8",
 		llm:       &fakeCompactionLLM{},
-		eventChan: make(chan protocol.SessionEvent, 1024),
+		eventChan: make(chan protocol.ThreadEvent, 1024),
 		ctx:       ctx,
 		projectConfig: ProjectConfig{
 			ToolTimeouts:     ToolTimeouts{Default: defaultToolTimeoutDefault, Max: defaultToolTimeoutMax},
@@ -31,9 +31,9 @@ func newWorkflowTestSession(t *testing.T) *Session {
 	}
 }
 
-// drainEvents collects all buffered events from the session channel.
-func drainEvents(s *Session) []protocol.SessionEvent {
-	var evs []protocol.SessionEvent
+// drainEvents collects all buffered events from the thread channel.
+func drainEvents(s *Thread) []protocol.ThreadEvent {
+	var evs []protocol.ThreadEvent
 	for {
 		select {
 		case ev := <-s.eventChan:
@@ -44,7 +44,7 @@ func drainEvents(s *Session) []protocol.SessionEvent {
 	}
 }
 
-func streamedText(evs []protocol.SessionEvent) string {
+func streamedText(evs []protocol.ThreadEvent) string {
 	var sb strings.Builder
 	for _, ev := range evs {
 		if ev.Type == "event.stream_chunk" {
@@ -59,7 +59,7 @@ func streamedText(evs []protocol.SessionEvent) string {
 // ── budget gating ──
 
 func TestExecuteWorkflow_BudgetIterationsRoutesToOnExceeded(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	wf := &WorkflowDef{
 		Name:       "loop",
 		Budget:     &WorkflowBudget{MaxIterations: 3, OnExceeded: &StepRef{ID: "wrapup"}},
@@ -107,7 +107,7 @@ func TestExecuteWorkflow_BudgetIterationsRoutesToOnExceeded(t *testing.T) {
 }
 
 func TestExecuteWorkflow_BudgetWithoutOnExceededStops(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	wf := &WorkflowDef{
 		Name:       "loop",
 		Budget:     &WorkflowBudget{MaxIterations: 2},
@@ -129,7 +129,7 @@ func TestExecuteWorkflow_BudgetWithoutOnExceededStops(t *testing.T) {
 // ── resume ──
 
 func TestExecuteWorkflow_ResumeFromCursor(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	wf := &WorkflowDef{
 		Name:       "two",
 		EntryPoint: StepRef{ID: "first"},
@@ -166,7 +166,7 @@ func TestExecuteWorkflow_ResumeFromCursor(t *testing.T) {
 }
 
 func TestExecuteWorkflow_CancelParksRunAsPaused(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	runCtx, cancel := context.WithCancel(s.ctx)
 	wf := &WorkflowDef{
 		Name:       "slowwf",
@@ -200,10 +200,10 @@ func TestExecuteWorkflow_CancelParksRunAsPaused(t *testing.T) {
 }
 
 // TestExecuteWorkflow_WorkflowDirResolves pins that $(workflow.dir) resolves to
-// the session's job directory in bash steps, and is empty (not a literal token)
-// for non-job sessions.
+// the thread's job directory in bash steps, and is empty (not a literal token)
+// for non-job threads.
 func TestExecuteWorkflow_WorkflowDirResolves(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	s.jobDir = "/home/user/.vix/jobs/demo"
 	wf := &WorkflowDef{
 		Name:       "dir",
@@ -220,8 +220,8 @@ func TestExecuteWorkflow_WorkflowDirResolves(t *testing.T) {
 		t.Errorf("$(workflow.dir) should resolve to the job directory, got:\n%s", out)
 	}
 
-	// Non-job session: the token resolves to empty, never leaking literally.
-	s2 := newWorkflowTestSession(t)
+	// Non-job thread: the token resolves to empty, never leaking literally.
+	s2 := newWorkflowTestThread(t)
 	wf2 := &WorkflowDef{
 		Name:       "dir2",
 		EntryPoint: StepRef{ID: "show"},
@@ -234,7 +234,7 @@ func TestExecuteWorkflow_WorkflowDirResolves(t *testing.T) {
 	}
 	out2 := streamedText(drainEvents(s2))
 	if !strings.Contains(out2, "memory-at:[]") {
-		t.Errorf("$(workflow.dir) should be empty for non-job sessions, got:\n%s", out2)
+		t.Errorf("$(workflow.dir) should be empty for non-job threads, got:\n%s", out2)
 	}
 }
 
@@ -263,7 +263,7 @@ func TestExecuteWorkflow_BashStepRoutesOnOwnOutput(t *testing.T) {
 	}
 
 	// Case A: select emits NO_TODO → guard is false → detail must be skipped.
-	sA := newWorkflowTestSession(t)
+	sA := newWorkflowTestThread(t)
 	if err := sA.executeWorkflow(sA.ctx, mkWF("echo NO_TODO"), "obj", nil); err != nil {
 		t.Fatalf("executeWorkflow (skip case): %v", err)
 	}
@@ -273,7 +273,7 @@ func TestExecuteWorkflow_BashStepRoutesOnOwnOutput(t *testing.T) {
 
 	// Case B: select emits a real value → guard is true → detail runs and sees
 	// the step's own output.
-	sB := newWorkflowTestSession(t)
+	sB := newWorkflowTestThread(t)
 	if err := sB.executeWorkflow(sB.ctx, mkWF("echo https://example.test/issues/7"), "obj", nil); err != nil {
 		t.Fatalf("executeWorkflow (take case): %v", err)
 	}
@@ -302,7 +302,7 @@ func TestExecuteWorkflow_BashStepMultiBranchOnOwnOutput(t *testing.T) {
 			"idle": {Type: "bash", Command: "echo went-idle"},
 		},
 	}
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	if err := s.executeWorkflow(s.ctx, wf, "obj", nil); err != nil {
 		t.Fatalf("executeWorkflow: %v", err)
 	}
@@ -315,12 +315,12 @@ func TestExecuteWorkflow_BashStepMultiBranchOnOwnOutput(t *testing.T) {
 	}
 }
 
-// TestSessionJobDirIsAllowed pins that a job directory living outside both cwd
+// TestThreadJobDirIsAllowed pins that a job directory living outside both cwd
 // and $HOME (e.g. under a --config-dir override) becomes accessible once the job
 // runner marks it allowed — so a run can persist its memory file there.
-func TestSessionJobDirIsAllowed(t *testing.T) {
+func TestThreadJobDirIsAllowed(t *testing.T) {
 	t.Setenv("HOME", "/Users/nobody")
-	s := &Session{cwd: "/work"}
+	s := &Thread{cwd: "/work"}
 	jobDir := "/srv/vix-config/jobs/demo"
 
 	// Outside cwd, $HOME, and system dirs: not accessible by default.
@@ -342,7 +342,7 @@ func TestSessionJobDirIsAllowed(t *testing.T) {
 // ── workflow_signal ──
 
 func TestHandleWorkflowSignal(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	pf := &WorkflowDef{Name: "g"}
 	st := &WorkflowRunState{Name: "g", Status: WorkflowStatusRunning}
 
@@ -473,9 +473,9 @@ func TestValidateWorkflow_NewFields(t *testing.T) {
 
 // ── persistence round-trip ──
 
-func TestSessionRecord_WorkflowRunRoundTrip(t *testing.T) {
-	s := newWorkflowTestSession(t)
-	s.sessionMode = "workflow"
+func TestThreadRecord_WorkflowRunRoundTrip(t *testing.T) {
+	s := newWorkflowTestThread(t)
+	s.threadMode = "workflow"
 	s.activeWorkflow = "Goal"
 	s.workflowRunState = &WorkflowRunState{
 		Name:       "Goal",
@@ -495,12 +495,12 @@ func TestSessionRecord_WorkflowRunRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal record: %v", err)
 	}
-	var loaded sessionRecord
+	var loaded threadRecord
 	if err := json.Unmarshal(data, &loaded); err != nil {
 		t.Fatalf("unmarshal record: %v", err)
 	}
 
-	restored := newWorkflowTestSession(t)
+	restored := newWorkflowTestThread(t)
 	restored.seedFromRecord(&loaded)
 
 	st := restored.snapshotWorkflowRunState()

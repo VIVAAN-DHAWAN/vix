@@ -19,13 +19,13 @@ const (
 	attachmentInvalid = "invalid"
 )
 
-// readAttachmentFile authorizes a user-attached path against the session's
+// readAttachmentFile authorizes a user-attached path against the thread's
 // deny list (identical to read_file), then reads its bytes. Unlike read_file it
 // does NOT require the path to sit under the working directory: a drag-and-drop
 // is explicit user intent, so any file the user attaches is allowed unless it is
 // on the deny list. It returns an error describing why access was refused or why
 // the read failed.
-func (s *Session) readAttachmentFile(path string) ([]byte, error) {
+func (s *Thread) readAttachmentFile(path string) ([]byte, error) {
 	if blocked := checkDenyList("read_file", map[string]any{"path": path}, s.cwd, s.denyListSnapshot(), s.denyURLsSnapshot()); blocked != nil {
 		return nil, fmt.Errorf("access to this path is denied")
 	}

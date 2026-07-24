@@ -60,9 +60,9 @@ func StartWebServer(ctx context.Context, s *Server, port int) {
 	mux.Handle("/assets/", fileServer)
 
 	// Existing API routes — unchanged
-	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/threads", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		data, _ := json.Marshal(s.Sessions())
+		data, _ := json.Marshal(s.Threads())
 		w.Write(data)
 	})
 
@@ -72,12 +72,12 @@ func StartWebServer(ctx context.Context, s *Server, port int) {
 	// Fire an existing job immediately (add + trigger from the web UI).
 	mux.HandleFunc("/api/jobs/{id}/run", handleRunJob(s))
 
-	// New per-session API routes
-	mux.HandleFunc("/api/session/{id}/interview-data", handleInterviewData(s))
-	mux.HandleFunc("/api/session/{id}/signed-url", handleSignedURL(s))
-	mux.HandleFunc("/api/session/{id}/call-agent", handleCallAgent(s))
+	// New per-thread API routes
+	mux.HandleFunc("/api/thread/{id}/interview-data", handleInterviewData(s))
+	mux.HandleFunc("/api/thread/{id}/signed-url", handleSignedURL(s))
+	mux.HandleFunc("/api/thread/{id}/call-agent", handleCallAgent(s))
 
-	// WebSocket for live session updates
+	// WebSocket for live thread updates
 	mux.Handle("/ws", websocket.Handler(func(conn *websocket.Conn) {
 		ch := s.Subscribe()
 		defer s.Unsubscribe(ch)
@@ -174,7 +174,7 @@ func handleInterviewData(s *Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		title := id
-		for _, sess := range s.Sessions() {
+		for _, sess := range s.Threads() {
 			if sess.ID == id {
 				title = sess.CWD
 				break
@@ -269,7 +269,7 @@ func handleCallAgent(s *Server) http.HandlerFunc {
 			return
 		}
 
-		sess, cleanup, err := s.sessionForWebCall(id)
+		sess, cleanup, err := s.threadForWebCall(id)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 			return
@@ -278,7 +278,7 @@ func handleCallAgent(s *Server) http.HandlerFunc {
 			defer cleanup()
 		}
 		if sess == nil {
-			http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+			http.Error(w, `{"error":"thread not found"}`, http.StatusNotFound)
 			return
 		}
 
@@ -303,7 +303,7 @@ func handleCallAgent(s *Server) http.HandlerFunc {
 
 func sendUpdate(conn *websocket.Conn, s *Server) error {
 	data, err := json.Marshal(wsMessage{
-		Sessions:   s.Sessions(),
+		Threads:    s.Threads(),
 		Vitals:     collectVitals(),
 		Jobs:       s.Jobs(),
 		Hooks:      s.Hooks(),

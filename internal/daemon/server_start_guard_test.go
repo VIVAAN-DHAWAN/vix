@@ -68,7 +68,7 @@ func TestListenAndServeRefusesTakeover(t *testing.T) {
 	defer func() { cancel(); <-done }()
 
 	// Second server bound to the SAME socket path.
-	srvB := NewServer(srvA.sockPath, config.Credential{}, "test-session-b", "test-model", &config.DaemonConfig{}, nil)
+	srvB := NewServer(srvA.sockPath, config.Credential{}, "test-thread-b", "test-model", &config.DaemonConfig{}, nil)
 	ctx, cancelB := context.WithCancel(context.Background())
 	defer cancelB()
 	err := srvB.ListenAndServe(ctx)

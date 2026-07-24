@@ -156,7 +156,7 @@ func landlockBashCmd(ctx context.Context, command, cwd string, extraDirs []strin
 // The default RO/RW set comes from platformPolicies["linux"], so the
 // allow surface stays in sync with what the dispatcher's outside-paths
 // check considers acceptable. cwd is always RW; HOME is RW (uv/apt
-// caches live there); extraDirs from the session are RW too.
+// caches live there); extraDirs from the thread are RW too.
 //
 // Anything not in either list is denied by absence — any path the
 // operator hasn't explicitly opened up stays inaccessible.

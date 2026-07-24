@@ -8,7 +8,7 @@ import (
 )
 
 // Registry is the in-memory, hot-reloadable index of enabled hook specs grouped
-// by event. It is safe for concurrent use: the session loop reads it on every
+// by event. It is safe for concurrent use: the thread loop reads it on every
 // matching lifecycle point while the config watcher swaps it on disk changes.
 type Registry struct {
 	store *Store
@@ -172,7 +172,7 @@ func (r *Registry) Match(event, field string) (sync, async []Spec) {
 }
 
 // Has reports whether any enabled hook subscribes to event (cheap pre-check so
-// the session loop can skip building a context when nothing is listening).
+// the thread loop can skip building a context when nothing is listening).
 func (r *Registry) Has(event string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -208,7 +208,7 @@ func (r *Registry) Invalid() map[string]string {
 
 // Snapshot returns every valid hook spec (enabled and disabled) as read-only
 // views, sorted by id for stable rendering. Safe to call concurrently with the
-// session loop and config watcher.
+// thread loop and config watcher.
 func (r *Registry) Snapshot() []HookSnapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

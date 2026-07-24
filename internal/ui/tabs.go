@@ -18,8 +18,8 @@ import (
 type TabKind int
 
 const (
-	TabKindSessions TabKind = iota // sessions list overview
-	TabKindChat                    // chat display for the selected session
+	TabKindThreads  TabKind = iota // threads list overview
+	TabKindChat                    // chat display for the selected thread
 	TabKindModels                  // model + authentication management
 	TabKindMcp                     // configured MCP servers
 	TabKindJobs                    // scheduled jobs + lifecycle triggers
@@ -46,62 +46,62 @@ func formatRunningTime(d time.Duration) string {
 	return fmt.Sprintf("%dd %dh", days, h)
 }
 
-// waitingBadge is the "Waiting for input" styled tag shown on sessions that need user attention.
+// waitingBadge is the "Waiting for input" styled tag shown on threads that need user attention.
 var waitingBadge = lipgloss.NewStyle().Background(colorSecondary).Foreground(lipgloss.Color("0")).Bold(true).Render(" Waiting for input ")
 
-// sessionGroupHeaderStyle styles the "User-initiated" / "Vix-initiated" group
-// headers in the Sessions tab (and the "Jobs" / "Triggers" headers in the Jobs
+// threadGroupHeaderStyle styles the "User-initiated" / "Vix-initiated" group
+// headers in the Threads tab (and the "Jobs" / "Triggers" headers in the Jobs
 // & Triggers tab): a purple-background title block mirroring the markdown H1
 // look (bold cream text on a violet background, one cell of padding each side).
-var sessionGroupHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("228")).Background(lipgloss.Color("63")).Padding(0, 1)
+var threadGroupHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("228")).Background(lipgloss.Color("63")).Padding(0, 1)
 
-// sessionColumnHeaderStyle styles the column header row ("Session", "Title",
-// "Running") of the Sessions tab.
-var sessionColumnHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+// threadColumnHeaderStyle styles the column header row ("Thread", "Title",
+// "Running") of the Threads tab.
+var threadColumnHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 
-// sessionHeaderRuleStyle styles the horizontal rule drawn below the column
-// header row of the Sessions tab.
-var sessionHeaderRuleStyle = lipgloss.NewStyle().Foreground(colorPrimary)
+// threadHeaderRuleStyle styles the horizontal rule drawn below the column
+// header row of the Threads tab.
+var threadHeaderRuleStyle = lipgloss.NewStyle().Foreground(colorPrimary)
 
-// unreadDotStyle styles the ● indicator for sessions with unread messages.
+// unreadDotStyle styles the ● indicator for threads with unread messages.
 var unreadDotStyle = lipgloss.NewStyle().Foreground(colorSecondary)
 
-// sessionRowSelectedStyle highlights the row under the navigation cursor in
-// the Sessions tab: a dark gray background spanning the row, with
+// threadRowSelectedStyle highlights the row under the navigation cursor in
+// the Threads tab: a dark gray background spanning the row, with
 // secondary-colored text. Leading indicators (unread dot, spinner) keep
 // their own foreground color on top of it.
-var sessionRowSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorSecondary).Background(lipgloss.Color("#262626"))
+var threadRowSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorSecondary).Background(lipgloss.Color("#262626"))
 
-// sessionsSpinnerStyle styles the loading spinner shown for sessions that are
+// threadsSpinnerStyle styles the loading spinner shown for threads that are
 // actively working. Primary color distinguishes it from the secondary-tinted
 // unread dot.
-var sessionsSpinnerStyle = lipgloss.NewStyle().Foreground(colorPrimary)
+var threadsSpinnerStyle = lipgloss.NewStyle().Foreground(colorPrimary)
 
-// sessionDirSubtitleStyle styles the per-directory path subtitle shown above
+// threadDirSubtitleStyle styles the per-directory path subtitle shown above
 // each working directory's rows inside the User-initiated group: an italic
 // path in the primary color so it reads as a sub-section label under the group
 // header.
-var sessionDirSubtitleStyle = lipgloss.NewStyle().Italic(true).Foreground(colorPrimary)
+var threadDirSubtitleStyle = lipgloss.NewStyle().Italic(true).Foreground(colorPrimary)
 
 // vixDisplayRow is one row of the Vix-initiated group passed to the renderer:
-// a live attached session (live != nil) or a persisted, not-attached record
+// a live attached thread (live != nil) or a persisted, not-attached record
 // (live == nil). sum carries the record summary used to format the columns; for
-// a live row it is a copy of the session's vixSummary.
+// a live row it is a copy of the thread's vixSummary.
 type vixDisplayRow struct {
-	live *SessionState
-	sum  protocol.SessionSummary
+	live *ThreadState
+	sum  protocol.ThreadSummary
 }
 
-// userRowView is one row of the User-initiated group: a live session (live !=
+// userRowView is one row of the User-initiated group: a live thread (live !=
 // nil) or a persisted, not-attached record (live == nil, sum set).
 type userRowView struct {
-	live *SessionState
-	sum  protocol.SessionSummary
+	live *ThreadState
+	sum  protocol.ThreadSummary
 }
 
 // userDirGroupView is one working directory's block within the User-initiated
 // group: the directory path (rendered as a subtitle) and its rows in display
-// order (by creation time, interleaving live sessions and not-attached records).
+// order (by creation time, interleaving live threads and not-attached records).
 type userDirGroupView struct {
 	dir  string
 	rows []userRowView
@@ -124,17 +124,17 @@ func abbreviatePath(p string) string {
 	return p
 }
 
-// renderSessionsView renders the sessions list overview. spinnerFrame is the
+// renderThreadsView renders the threads list overview. spinnerFrame is the
 // current loading-spinner glyph (empty when the spinner is inactive); it is
-// shown in a busy session's leading-indicator slot in place of the unread dot.
-// userGroups are the User-initiated sessions grouped by working directory
+// shown in a busy thread's leading-indicator slot in place of the unread dot.
+// userGroups are the User-initiated threads grouped by working directory
 // (current cwd first), each block headed by a path subtitle and mixing live
-// sessions with persisted not-attached records. vixRows are the Vix-initiated
-// group: live attached sessions and persisted not-attached records merged into a
+// threads with persisted not-attached records. vixRows are the Vix-initiated
+// group: live attached threads and persisted not-attached records merged into a
 // single StartedAt-ordered list. The selection index space covers the user rows
 // (in block/row order) first, then the vix rows.
-func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, width, height int, s Styles, selectedRow int, spinnerFrame string) string {
-	const colSession = 10
+func renderThreadsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, width, height int, s Styles, selectedRow int, spinnerFrame string) string {
+	const colThread = 10
 	const colRunning = 10
 
 	innerWidth := width - 4 // width outer − 2 border sides − 2 padding sides
@@ -145,31 +145,31 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 	// colMessage fills the remaining space: innerWidth minus the two fixed columns,
 	// the 6 characters of inter-column padding ("  " × 3 in the header), and the
 	// 22-character badge slot ("  " + " Waiting for input ") always reserved so
-	// the layout stays stable whether or not any session needs input.
+	// the layout stays stable whether or not any thread needs input.
 	const badgeVisible = 22 // len("  ") + len(" Waiting for input ")
-	colMessage := innerWidth - colSession - colRunning - 6 - badgeVisible
+	colMessage := innerWidth - colThread - colRunning - 6 - badgeVisible
 	if colMessage < 20 {
 		colMessage = 20
 	}
 
-	header := fmt.Sprintf("  %-*s  %-*s  %-*s%-*s", colSession, "Session", colMessage, "Title", colRunning, "Running", badgeVisible, "")
-	headerRule := "  " + sessionHeaderRuleStyle.Render(strings.Repeat("─", colSession+colMessage+colRunning+4))
+	header := fmt.Sprintf("  %-*s  %-*s  %-*s%-*s", colThread, "Thread", colMessage, "Title", colRunning, "Running", badgeVisible, "")
+	headerRule := "  " + threadHeaderRuleStyle.Render(strings.Repeat("─", colThread+colMessage+colRunning+4))
 	// groupHeader renders a group title as a purple-background block (matching
 	// the markdown H1 look) followed by a blank line separating it from the
 	// table below.
 	groupHeader := func(title string) []string {
 		return []string{
-			"  " + sessionGroupHeaderStyle.Render(title),
+			"  " + threadGroupHeaderStyle.Render(title),
 			"",
 		}
 	}
-	// shortID trims an id to its first segment for the Session column.
+	// shortID trims an id to its first segment for the Thread column.
 	shortID := func(id string) string {
 		if dash := strings.Index(id, "-"); dash >= 0 {
 			return id[:dash]
 		}
-		if len(id) > colSession {
-			return id[:colSession]
+		if len(id) > colThread {
+			return id[:colThread]
 		}
 		return id
 	}
@@ -177,12 +177,12 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 	rows := []string{}
 	rowIdx := 0
 
-	// appendRow styles one session row from its precomputed columns and state,
+	// appendRow styles one thread row from its precomputed columns and state,
 	// applying the selected/busy/unread leading indicators.
 	appendRow := func(plainCols string, selected, busy, unread bool) {
 		switch {
 		case selected:
-			lead, leadStyle := "  ", sessionRowSelectedStyle
+			lead, leadStyle := "  ", threadRowSelectedStyle
 			if busy {
 				lead = spinnerFrame + " "
 				leadStyle = leadStyle.Foreground(colorPrimary)
@@ -190,9 +190,9 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 				lead = "● "
 				leadStyle = leadStyle.Foreground(colorSecondary)
 			}
-			rows = append(rows, leadStyle.Render(lead)+sessionRowSelectedStyle.Render(plainCols))
+			rows = append(rows, leadStyle.Render(lead)+threadRowSelectedStyle.Render(plainCols))
 		case busy:
-			rows = append(rows, sessionsSpinnerStyle.Render(spinnerFrame)+" "+plainCols)
+			rows = append(rows, threadsSpinnerStyle.Render(spinnerFrame)+" "+plainCols)
 		case unread:
 			rows = append(rows, unreadDotStyle.Render("●")+" "+plainCols)
 		default:
@@ -200,12 +200,12 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 		}
 	}
 
-	// liveCols formats the three shared columns for a live user session.
-	liveCols := func(sess *SessionState) string {
-		sessionCol := "connecting…"
+	// liveCols formats the three shared columns for a live user thread.
+	liveCols := func(sess *ThreadState) string {
+		threadCol := "connecting…"
 		runningCol := "—"
 		if sess.client != nil {
-			sessionCol = shortID(sess.client.SessionID())
+			threadCol = shortID(sess.client.ThreadID())
 			if !sess.client.StartedAt().IsZero() {
 				runningCol = formatRunningTime(renderSince(sess.client.StartedAt()))
 			}
@@ -253,13 +253,13 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 				}
 			}
 		}
-		return fmt.Sprintf("%-*s  %-*s  %-*s", colSession, sessionCol, colMessage, msgCol, colRunning, runningCol)
+		return fmt.Sprintf("%-*s  %-*s  %-*s", colThread, threadCol, colMessage, msgCol, colRunning, runningCol)
 	}
 
 	// recordCols formats the columns for a persisted, not-attached user record:
 	// its short id, title (or first message fallback), and time since last
 	// activity.
-	recordCols := func(sum protocol.SessionSummary) string {
+	recordCols := func(sum protocol.ThreadSummary) string {
 		msg := sum.Title
 		if msg == "" {
 			msg = sum.FirstMessage
@@ -279,7 +279,7 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 		if t, err := time.Parse(time.RFC3339, raw); err == nil {
 			ranCol = formatRunningTime(renderSince(t)) + " ago"
 		}
-		return fmt.Sprintf("%-*s  %s  %-*s", colSession, shortID(sum.ID), msg, colRunning, ranCol)
+		return fmt.Sprintf("%-*s  %s  %-*s", colThread, shortID(sum.ID), msg, colRunning, ranCol)
 	}
 
 	// --- User-initiated group: per-directory blocks, current cwd first. Each
@@ -291,9 +291,9 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 	}
 	if userRowCount > 0 {
 		rows = append(rows, groupHeader("User-initiated")...)
-		rows = append(rows, sessionColumnHeaderStyle.Render(header), headerRule)
+		rows = append(rows, threadColumnHeaderStyle.Render(header), headerRule)
 		for _, g := range userGroups {
-			rows = append(rows, "  "+sessionDirSubtitleStyle.Render(abbreviatePath(g.dir)))
+			rows = append(rows, "  "+threadDirSubtitleStyle.Render(abbreviatePath(g.dir)))
 			for _, r := range g.rows {
 				var busy, needsInput, unread bool
 				var plainCols string
@@ -320,7 +320,7 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 		}
 	}
 
-	// --- Vix-initiated group: live attached sessions and persisted job
+	// --- Vix-initiated group: live attached threads and persisted job
 	// runs/alerts, merged into one StartedAt-ordered list. Live rows can be
 	// opened (enter) or closed (x); persisted rows opened (enter) or dismissed (x).
 	if len(vixRows) > 0 {
@@ -328,14 +328,14 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 			rows = append(rows, "")
 		}
 		rows = append(rows, groupHeader("Vix-initiated")...)
-		rows = append(rows, sessionColumnHeaderStyle.Render(header), headerRule)
+		rows = append(rows, threadColumnHeaderStyle.Render(header), headerRule)
 
 		// vixCols formats the three shared columns of a vix-initiated row from
 		// its record summary (id, Title, ran ago). A titled record shows the
 		// bare title (e.g. the per-item GitHub-plan title), with a ⚠ marker when
 		// the run failed; an untitled record (a raw alert) falls back to the
 		// "<job> · <status>  <first message>" form.
-		vixCols := func(sum protocol.SessionSummary) string {
+		vixCols := func(sum protocol.ThreadSummary) string {
 			var msgCol string
 			if sum.Title != "" {
 				msgCol = vixRowTitle(sum)
@@ -364,7 +364,7 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 			if t, err := time.Parse(time.RFC3339, sum.StartedAt); err == nil {
 				ranCol = formatRunningTime(renderSince(t)) + " ago"
 			}
-			return fmt.Sprintf("%-*s  %s  %-*s", colSession, shortID(sum.ID), msgCol, colRunning, ranCol)
+			return fmt.Sprintf("%-*s  %s  %-*s", colThread, shortID(sum.ID), msgCol, colRunning, ranCol)
 		}
 
 		for _, row := range vixRows {
@@ -393,7 +393,7 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 }
 
 // vixRowTitle returns the Title-column text for a titled vix-initiated row: the
-// bare session title, prefixed with a ⚠ marker when the run failed (error or
+// bare thread title, prefixed with a ⚠ marker when the run failed (error or
 // timeout). Callers handle the untitled (raw-alert) fallback separately.
 //
 // The marker is the plain warning sign U+26A0 (no U+FE0F variation selector):
@@ -401,7 +401,7 @@ func renderSessionsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, 
 // keeps the Running column aligned. The emoji-presentation "⚠️" measures as two
 // cells in lipgloss but renders as one in many terminals, which shifts the
 // Running column left on flagged rows.
-func vixRowTitle(sum protocol.SessionSummary) string {
+func vixRowTitle(sum protocol.ThreadSummary) string {
 	if st := sum.JobStatus; st == "error" || st == "timeout" {
 		return "⚠ " + sum.Title
 	}
@@ -524,16 +524,16 @@ func renderJobsView(jobs []protocol.JobSummary, hooks []protocol.HookSummary, wi
 
 	header := fmt.Sprintf("    %-*s  %-*s  %-*s  %-*s",
 		colName, "Name", colMid, "Schedule / Event", colWhen, "Next", colLast, "Last")
-	headerRule := "  " + sessionHeaderRuleStyle.Render(strings.Repeat("─", min(colBox+colName+colMid+colWhen+colLast+8, innerWidth)))
+	headerRule := "  " + threadHeaderRuleStyle.Render(strings.Repeat("─", min(colBox+colName+colMid+colWhen+colLast+8, innerWidth)))
 
 	groupHeader := func(title string) {
 		if len(rows) > 0 {
 			rows = append(rows, "")
 		}
 		rows = append(rows,
-			"  "+sessionGroupHeaderStyle.Render(title),
+			"  "+threadGroupHeaderStyle.Render(title),
 			"",
-			sessionColumnHeaderStyle.Render(header),
+			threadColumnHeaderStyle.Render(header),
 			headerRule,
 		)
 	}
@@ -544,14 +544,14 @@ func renderJobsView(jobs []protocol.JobSummary, hooks []protocol.HookSummary, wi
 	appendRow := func(plain string, running bool) {
 		switch {
 		case rowIdx == selectedRow:
-			lead, leadStyle := "  ", sessionRowSelectedStyle
+			lead, leadStyle := "  ", threadRowSelectedStyle
 			if running {
 				lead = spinnerFrame + " "
 				leadStyle = leadStyle.Foreground(colorPrimary)
 			}
-			rows = append(rows, leadStyle.Render(lead)+sessionRowSelectedStyle.Render(plain))
+			rows = append(rows, leadStyle.Render(lead)+threadRowSelectedStyle.Render(plain))
 		case running:
-			rows = append(rows, sessionsSpinnerStyle.Render(spinnerFrame)+" "+plain)
+			rows = append(rows, threadsSpinnerStyle.Render(spinnerFrame)+" "+plain)
 		default:
 			rows = append(rows, "  "+plain)
 		}
@@ -650,7 +650,7 @@ func (m *Model) toggleSetting(item settingsItem) {
 	switch item {
 	case settingShowThinking:
 		v := !config.ShowThinking()
-		if sess := m.currentSession(); sess != nil {
+		if sess := m.currentThread(); sess != nil {
 			sess.showThinking = !sess.showThinking
 			v = sess.showThinking
 			if sess.showThinking && sess.thinkingBuf != "" {
@@ -688,10 +688,10 @@ func (m *Model) toggleSetting(item settingsItem) {
 func (m *Model) handleUpdateAction() tea.Cmd {
 	switch {
 	case m.updateInstalled:
-		// Intentionally no closeSessionsForQuit here: an update quit-all is a
-		// restart, not an exit — sessions must stay in open/ and restore on
-		// relaunch regardless of the close_all_sessions_on_quit preference.
-		if sess := m.currentSession(); sess != nil {
+		// Intentionally no closeThreadsForQuit here: an update quit-all is a
+		// restart, not an exit — threads must stay in open/ and restore on
+		// relaunch regardless of the close_all_threads_on_quit preference.
+		if sess := m.currentThread(); sess != nil {
 			_ = sess.client.SendUpdateQuit()
 		}
 		return tea.Quit
@@ -725,7 +725,7 @@ func (m *Model) adjustCompactionThreshold(delta float64) {
 	_ = config.SetCompactionThreshold(v)
 }
 
-// closedRetentionPresets is the ←/→ ladder for the closed-session retention
+// closedRetentionPresets is the ←/→ ladder for the closed-thread retention
 // row, in minutes. "Never" (0) is deliberately not on the ladder — it is only
 // settable by editing settings.json by hand.
 var closedRetentionPresets = []int{
@@ -762,11 +762,11 @@ func retentionLabel(mins int) string {
 	}
 }
 
-// adjustClosedRetention steps the closed-session retention to the next (dir>0)
+// adjustClosedRetention steps the closed-thread retention to the next (dir>0)
 // or previous (dir<0) preset. From a non-preset value (including the JSON-only
 // "Never"), adjusting steps onto the nearest preset in the requested direction.
 func (m *Model) adjustClosedRetention(dir int) {
-	cur := config.ClosedSessionRetentionMinutes()
+	cur := config.ClosedThreadRetentionMinutes()
 	idx := -1
 	for i, p := range closedRetentionPresets {
 		if p == cur {
@@ -801,7 +801,7 @@ func (m *Model) adjustClosedRetention(dir int) {
 			}
 		}
 	}
-	_ = config.SetClosedSessionRetentionMinutes(next)
+	_ = config.SetClosedThreadRetentionMinutes(next)
 }
 
 // updateActionLabel returns the text for the selectable Updates action row,
@@ -837,7 +837,7 @@ func backendLabel(effective, configured string) string {
 
 // renderSettingsView renders the Settings tab content (global preferences).
 func renderSettingsView(width, height int, s Styles, st settingsState) string {
-	// Body text and section titles are white (matching the Sessions/Models
+	// Body text and section titles are white (matching the Threads/Models
 	// tabs); primary marks the cursor row and the separator rules.
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	sectionTitleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
@@ -847,7 +847,7 @@ func renderSettingsView(width, height int, s Styles, st settingsState) string {
 		innerWidth = 0
 	}
 
-	sep := sessionHeaderRuleStyle.Width(innerWidth).Render(strings.Repeat("─", innerWidth))
+	sep := threadHeaderRuleStyle.Width(innerWidth).Render(strings.Repeat("─", innerWidth))
 
 	var lines []string
 	idx := 0 // running index of selectable settings, matches settingsItem
@@ -900,7 +900,7 @@ func renderSettingsView(width, height int, s Styles, st settingsState) string {
 	secondaryBold := lipgloss.NewStyle().Bold(true).Foreground(colorSecondary)
 
 	// actionRow renders the selectable Updates action. When an update is
-	// available it is tinted with the secondary color to mirror the Sessions
+	// available it is tinted with the secondary color to mirror the Threads
 	// tab's new-activity highlight. Always occupies one cursor slot.
 	actionRow := func(text string, highlight bool) {
 		switch {
@@ -950,8 +950,8 @@ func renderSettingsView(width, height int, s Styles, st settingsState) string {
 	toggleRow("Auto-compaction", st.compactionAuto)
 	sliderRow("Threshold       ", st.compactionThreshold)
 
-	section("Sessions")
-	row(fmt.Sprintf("Closed session retention  ‹ %s ›", retentionLabel(st.closedRetentionMins)))
+	section("Threads")
+	row(fmt.Sprintf("Closed thread retention  ‹ %s ›", retentionLabel(st.closedRetentionMins)))
 
 	section("Tools")
 	infoRow("Grep backend", st.grepBackend)
@@ -1001,7 +1001,7 @@ const modelsProviderColWidth = 20
 // the cursor index relative to the given slice (-1 when the cursor is outside
 // the slice, e.g. scrolled out of view).
 func renderModelGrid(models []ModelInfo, colWidth int, focused bool, modelSel int, activeModel string) []string {
-	// Body text on the Models tab is white by design (matches the Sessions tab).
+	// Body text on the Models tab is white by design (matches the Threads tab).
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	const cellGutter = 1
 	cellWidth := (colWidth - cellGutter*(modelGridCols-1)) / modelGridCols
@@ -1105,7 +1105,7 @@ func renderModelsView(width, height int, s Styles,
 	authRow, authBtn, modelSel, modelScroll int,
 	modelFilter, activeModel, loginStatus string) string {
 
-	// Body text on the Models tab is white by design (matches the Sessions
+	// Body text on the Models tab is white by design (matches the Threads
 	// tab); primary marks the focused cursor, secondary marks active/status.
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	secondaryStyle := lipgloss.NewStyle().Foreground(colorSecondary)
@@ -1148,7 +1148,7 @@ func renderModelsView(width, height int, s Styles,
 	var leftLines []string
 	leftLines = append(leftLines,
 		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Width(colWidth).Render("Providers"),
-		sessionHeaderRuleStyle.Width(colWidth).Render(strings.Repeat("─", colWidth)),
+		threadHeaderRuleStyle.Width(colWidth).Render(strings.Repeat("─", colWidth)),
 	)
 	flatIdx := 0
 	renderGroup := func(header string, names []string, dots bool) {
@@ -1193,7 +1193,7 @@ func renderModelsView(width, height int, s Styles,
 	// ---- right: authentication + models ----
 	st := status[provider]
 	authActive := focus == modelsFocusAuth
-	sep := sessionHeaderRuleStyle.Width(rightWidth).Render(strings.Repeat("─", rightWidth))
+	sep := threadHeaderRuleStyle.Width(rightWidth).Render(strings.Repeat("─", rightWidth))
 
 	authTitle := lipgloss.NewStyle().Bold(true)
 	if authActive {
@@ -1375,18 +1375,18 @@ func renderModelsView(width, height int, s Styles,
 	return s.ViewportFocusedStyle.Width(width).Height(height).Render(body)
 }
 
-// renderTabBar renders the two-tab bar: Sessions | Chat.
-// alertActive is true when some session is waiting for user input; the Sessions
+// renderTabBar renders the two-tab bar: Threads | Chat.
+// alertActive is true when some thread is waiting for user input; the Threads
 // tab title then blinks (alertBlinkOn is the current blink phase). When no alert
-// is active but unseen is true (a message arrived while the Sessions tab was not
-// focused), the Sessions title is tinted secondary statically (no blink).
+// is active but unseen is true (a message arrived while the Threads tab was not
+// focused), the Threads title is tinted secondary statically (no blink).
 func renderTabBar(activeTab TabKind, width int, s Styles, viewportFocused bool, alertActive bool, alertBlinkOn bool, unseen bool, updateAvailable bool) string {
 	type tabDef struct {
 		label string
 		kind  TabKind
 	}
 	defs := []tabDef{
-		{" Sessions [F1] ", TabKindSessions},
+		{" Threads [F1] ", TabKindThreads},
 		{" Workspace [F2] ", TabKindChat},
 		{" Models [F3] ", TabKindModels},
 		{" MCP [F4] ", TabKindMcp},
@@ -1427,19 +1427,19 @@ func renderTabBar(activeTab TabKind, width int, s Styles, viewportFocused bool, 
 		switch {
 		case d.kind == activeTab:
 			textStyle = s.TabActiveStyle
-		case d.kind == TabKindSessions && alertActive:
+		case d.kind == TabKindThreads && alertActive:
 			// Waiting for input: blink between the alert color and inactive.
 			if alertBlinkOn {
 				textStyle = s.TabAlertStyle
 			} else {
 				textStyle = s.TabInactiveStyle
 			}
-		case d.kind == TabKindSessions && unseen:
+		case d.kind == TabKindThreads && unseen:
 			// Unseen activity: static secondary tint (superseded by the blink above).
 			textStyle = s.TabAlertStyle
 		case d.kind == TabKindSettings && updateAvailable:
 			// A newer release is available: static secondary tint, mirroring the
-			// Sessions tab's unseen-activity highlight.
+			// Threads tab's unseen-activity highlight.
 			textStyle = s.TabAlertStyle
 		default:
 			textStyle = s.TabInactiveStyle

@@ -2,40 +2,40 @@ package ui
 
 import "testing"
 
-// A draft session (never connected, empty daemonSessionID) must NOT be
-// reconnected when switched to. Reconnecting a draft calls session.Connect,
-// which starts a fresh daemon session with no message — creating an empty
-// ghost session. Regression for: create two drafts, hit enter (no-op), switch
+// A draft thread (never connected, empty daemonThreadID) must NOT be
+// reconnected when switched to. Reconnecting a draft calls thread.Connect,
+// which starts a fresh daemon thread with no message — creating an empty
+// ghost thread. Regression for: create two drafts, hit enter (no-op), switch
 // back to the first draft, and it gets committed empty.
-func TestStepWorkspaceSession_DraftNotReconnected(t *testing.T) {
+func TestStepWorkspaceThread_DraftNotReconnected(t *testing.T) {
 	cfg := testCfg(t.TempDir())
-	a := newSessionState(cfg, nil) // draft, daemonSessionID == ""
-	b := newSessionState(cfg, nil) // draft
-	m := &Model{cfg: cfg, sessions: []*SessionState{a, b}, selectedSession: 1, width: 100}
+	a := newThreadState(cfg, nil) // draft, daemonThreadID == ""
+	b := newThreadState(cfg, nil) // draft
+	m := &Model{cfg: cfg, threads: []*ThreadState{a, b}, selectedThread: 1, width: 100}
 
-	m.stepWorkspaceSession(-1) // switch back to session 0 (a draft)
+	m.stepWorkspaceThread(-1) // switch back to thread 0 (a draft)
 
-	if m.selectedSession != 0 {
-		t.Fatalf("expected to switch to session 0, got %d", m.selectedSession)
+	if m.selectedThread != 0 {
+		t.Fatalf("expected to switch to thread 0, got %d", m.selectedThread)
 	}
 	if a.reconnecting {
-		t.Fatal("switching to a draft must not set reconnecting (would connect an empty session)")
+		t.Fatal("switching to a draft must not set reconnecting (would connect an empty thread)")
 	}
 }
 
-// A previously-live session that lost its client (has a daemonSessionID) IS
+// A previously-live thread that lost its client (has a daemonThreadID) IS
 // reconnected on switch — the fix must not regress genuine reconnects.
-func TestStepWorkspaceSession_LiveSessionReconnects(t *testing.T) {
+func TestStepWorkspaceThread_LiveThreadReconnects(t *testing.T) {
 	cfg := testCfg(t.TempDir())
-	a := newSessionState(cfg, nil)
+	a := newThreadState(cfg, nil)
 	a.phase = phaseLive
-	a.daemonSessionID = "sess-123" // connected before, client since dropped
-	b := newSessionState(cfg, nil)
-	m := &Model{cfg: cfg, sessions: []*SessionState{a, b}, selectedSession: 1, width: 100}
+	a.daemonThreadID = "sess-123" // connected before, client since dropped
+	b := newThreadState(cfg, nil)
+	m := &Model{cfg: cfg, threads: []*ThreadState{a, b}, selectedThread: 1, width: 100}
 
-	m.stepWorkspaceSession(-1) // switch back to session 0
+	m.stepWorkspaceThread(-1) // switch back to thread 0
 
 	if !a.reconnecting {
-		t.Fatal("a previously-connected session should reconnect on switch")
+		t.Fatal("a previously-connected thread should reconnect on switch")
 	}
 }

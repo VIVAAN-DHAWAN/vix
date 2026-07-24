@@ -8,7 +8,7 @@ import (
 )
 
 // hooksReg returns the server's hook registry, or nil when hooks are disabled.
-func (s *Session) hooksReg() *hooks.Registry {
+func (s *Thread) hooksReg() *hooks.Registry {
 	if s.server == nil {
 		return nil
 	}
@@ -16,10 +16,10 @@ func (s *Session) hooksReg() *hooks.Registry {
 }
 
 // hooksActive reports whether any enabled hook listens for event in a context
-// where firing is allowed. vix-initiated sessions (jobs and hook runs, marked
+// where firing is allowed. vix-initiated threads (jobs and hook runs, marked
 // origin "vix") never fire hooks — this is the recursion guard that stops a
 // hook's own tool calls from re-triggering hooks.
-func (s *Session) hooksActive(event string) bool {
+func (s *Thread) hooksActive(event string) bool {
 	r := s.hooksReg()
 	if r == nil {
 		return false
@@ -33,27 +33,27 @@ func (s *Session) hooksActive(event string) bool {
 // buildHookContext assembles the common envelope every hook receives, plus the
 // event-specific extras. Used as command-hook stdin JSON and as the text passed
 // to workflow/prompt hooks.
-func (s *Session) buildHookContext(event string, extra map[string]any) map[string]any {
+func (s *Thread) buildHookContext(event string, extra map[string]any) map[string]any {
 	m := map[string]any{
-		"session_id":      s.id,
+		"thread_id":       s.id,
 		"hook_event_name": event,
 		"cwd":             s.cwd,
 		"model":           s.model,
 		"permission_mode": s.permissionMode(),
 		"origin":          s.originLabel(),
 		"headless":        s.headless,
-		"session_mode":    s.sessionMode,
+		"thread_mode":     s.threadMode,
 		"agent":           s.chatAgent,
 		"turn_count":      s.turnCount,
 	}
 	if s.server != nil {
-		// Let a hook call back into this daemon (e.g. `vix session create`)
+		// Let a hook call back into this daemon (e.g. `vix thread create`)
 		// without guessing the binary path or socket.
 		m["vix_bin"] = s.server.vixBin
 		m["socket_path"] = s.server.sockPath
 	}
 	if s.parentID != "" {
-		m["parent_session_id"] = s.parentID
+		m["parent_thread_id"] = s.parentID
 	}
 	if s.activeWorkflow != "" {
 		m["active_workflow"] = s.activeWorkflow
@@ -73,18 +73,18 @@ func (s *Session) buildHookContext(event string, extra map[string]any) map[strin
 	return m
 }
 
-// originLabel renders the session's provenance for hooks: user-started sessions
+// originLabel renders the thread's provenance for hooks: user-started threads
 // report "user", daemon-initiated ones report their origin ("vix").
-func (s *Session) originLabel() string {
+func (s *Thread) originLabel() string {
 	if s.origin == "" {
 		return "user"
 	}
 	return s.origin
 }
 
-// permissionMode derives a Claude-Code-style permission mode from the session's
+// permissionMode derives a Claude-Code-style permission mode from the thread's
 // automatic-permission flags, so hooks can gate on how autonomous the run is.
-func (s *Session) permissionMode() string {
+func (s *Thread) permissionMode() string {
 	s.mu.Lock()
 	plan := s.activePlan != nil
 	s.mu.Unlock()
@@ -103,7 +103,7 @@ func (s *Session) permissionMode() string {
 // preToolUseHook fires PreToolUse hooks before a tool runs. It returns the
 // rewritten input (modify), a deny reason (when a blocking hook vetoes), and a
 // denied flag. Async hooks are fired fire-and-forget.
-func (s *Session) preToolUseHook(ctx context.Context, name string, input map[string]any) (newInput map[string]any, denyReason string, denied bool) {
+func (s *Thread) preToolUseHook(ctx context.Context, name string, input map[string]any) (newInput map[string]any, denyReason string, denied bool) {
 	if !s.hooksActive(hooks.EventPreToolUse) {
 		return nil, "", false
 	}
@@ -139,7 +139,7 @@ func (s *Session) preToolUseHook(ctx context.Context, name string, input map[str
 // postToolUseHook fires PostToolUse hooks after a tool completes. Sync hooks may
 // append context to the tool result shown to the model; async hooks fire
 // fire-and-forget. Side effects of the tool cannot be undone here.
-func (s *Session) postToolUseHook(ctx context.Context, name string, input map[string]any, result *ToolResult) {
+func (s *Thread) postToolUseHook(ctx context.Context, name string, input map[string]any, result *ToolResult) {
 	if result == nil || !s.hooksActive(hooks.EventPostToolUse) {
 		return
 	}
@@ -168,7 +168,7 @@ func (s *Session) postToolUseHook(ctx context.Context, name string, input map[st
 // userPromptSubmitHook fires UserPromptSubmit hooks before a prompt is added to
 // the conversation. It returns the (possibly rewritten) text, a deny reason
 // when a blocking hook vetoes, and a denied flag.
-func (s *Session) userPromptSubmitHook(ctx context.Context, text string) (newText, denyReason string, denied bool) {
+func (s *Thread) userPromptSubmitHook(ctx context.Context, text string) (newText, denyReason string, denied bool) {
 	if !s.hooksActive(hooks.EventUserPromptSubmit) {
 		return text, "", false
 	}
@@ -200,35 +200,35 @@ func (s *Session) userPromptSubmitHook(ctx context.Context, text string) (newTex
 	return text, "", false
 }
 
-// announceStart rebuilds the resumed client's viewport and fires SessionStart
+// announceStart rebuilds the resumed client's viewport and fires ThreadStart
 // hooks, classified by source. The resume check must be captured before
 // emitReplay runs, because emitReplay clears attachRecord — reordering these
-// would misclassify every resumed session as "startup" (and inflate any
+// would misclassify every resumed thread as "startup" (and inflate any
 // startup-gated hook, e.g. the feedback counter).
-func (s *Session) announceStart() {
+func (s *Thread) announceStart() {
 	resumed := s.attachRecord != nil
 	s.emitReplay()
 	source := "startup"
 	if resumed {
 		source = "resume"
 	}
-	s.fireSessionStart(source)
+	s.fireThreadStart(source)
 }
 
-// fireSessionStart fires SessionStart hooks (observational, fire-and-forget).
-func (s *Session) fireSessionStart(source string) {
-	if !s.hooksActive(hooks.EventSessionStart) {
+// fireThreadStart fires ThreadStart hooks (observational, fire-and-forget).
+func (s *Thread) fireThreadStart(source string) {
+	if !s.hooksActive(hooks.EventThreadStart) {
 		return
 	}
-	syncHooks, asyncHooks := s.hooksReg().Match(hooks.EventSessionStart, source)
-	base := s.buildHookContext(hooks.EventSessionStart, map[string]any{"source": source})
+	syncHooks, asyncHooks := s.hooksReg().Match(hooks.EventThreadStart, source)
+	base := s.buildHookContext(hooks.EventThreadStart, map[string]any{"source": source})
 	for _, h := range append(syncHooks, asyncHooks...) {
 		s.server.fireAsyncHook(h, base)
 	}
 }
 
 // fireStop fires Stop hooks when a turn finishes (observational, fire-and-forget).
-func (s *Session) fireStop() {
+func (s *Thread) fireStop() {
 	if !s.hooksActive(hooks.EventStop) {
 		return
 	}
@@ -242,7 +242,7 @@ func (s *Session) fireStop() {
 // fireSubagentStart fires SubagentStart hooks when a subagent is spawned
 // (observational, fire-and-forget). agentID correlates this fire with the
 // matching SubagentStop; agentType is the matcher field.
-func (s *Session) fireSubagentStart(agentType, agentID, prompt string) {
+func (s *Thread) fireSubagentStart(agentType, agentID, prompt string) {
 	if !s.hooksActive(hooks.EventSubagentStart) {
 		return
 	}
@@ -260,7 +260,7 @@ func (s *Session) fireSubagentStart(agentType, agentID, prompt string) {
 // fireSubagentStop fires SubagentStop hooks when a subagent finishes
 // (observational, fire-and-forget). result is nil when the subagent produced
 // none (e.g. an early error).
-func (s *Session) fireSubagentStop(agentType, agentID string, result *SubagentResult) {
+func (s *Thread) fireSubagentStop(agentType, agentID string, result *SubagentResult) {
 	if !s.hooksActive(hooks.EventSubagentStop) {
 		return
 	}
@@ -281,7 +281,7 @@ func (s *Session) fireSubagentStop(agentType, agentID string, result *SubagentRe
 
 // firePreCompact fires PreCompact hooks just before the conversation prefix is
 // summarized (observational, fire-and-forget). trigger is "auto" or "manual".
-func (s *Session) firePreCompact(trigger string) {
+func (s *Thread) firePreCompact(trigger string) {
 	if !s.hooksActive(hooks.EventPreCompact) {
 		return
 	}
@@ -294,7 +294,7 @@ func (s *Session) firePreCompact(trigger string) {
 
 // firePostCompact fires PostCompact hooks after a successful compaction
 // (observational, fire-and-forget). trigger is "auto" or "manual".
-func (s *Session) firePostCompact(trigger string, summarizedTurns int, fromTokens int64) {
+func (s *Thread) firePostCompact(trigger string, summarizedTurns int, fromTokens int64) {
 	if !s.hooksActive(hooks.EventPostCompact) {
 		return
 	}
@@ -313,7 +313,7 @@ func (s *Session) firePostCompact(trigger string, summarizedTurns int, fromToken
 // asked to confirm a tool call. A blocking hook may deny (skip the prompt and
 // reject the tool); allow / no-opinion falls through to the normal prompt.
 // Async hooks fire fire-and-forget. Returns a deny reason and a denied flag.
-func (s *Session) permissionRequestHook(ctx context.Context, name string, input map[string]any, requestedDirs []string) (denyReason string, denied bool) {
+func (s *Thread) permissionRequestHook(ctx context.Context, name string, input map[string]any, requestedDirs []string) (denyReason string, denied bool) {
 	if !s.hooksActive(hooks.EventPermissionRequest) {
 		return "", false
 	}

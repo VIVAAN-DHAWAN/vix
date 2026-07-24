@@ -79,7 +79,7 @@ func TestResolveFileAttachment_PDFGarbage(t *testing.T) {
 }
 
 func TestAddUserMessage_FileEmbed(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	s.AddUserMessage("summarize this", protocol.Attachment{
 		Type: "file", MediaType: "text/plain", Data: "the file body", Path: "/tmp/doc.pdf",
 	})
@@ -102,7 +102,7 @@ func TestAddUserMessage_FileEmbed(t *testing.T) {
 }
 
 func TestAddUserMessage_ImageStillImageBlock(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	s.AddUserMessage("look", protocol.Attachment{
 		Type: "image", MediaType: "image/png", Data: "AAAA", Path: "/tmp/a.png",
 	})
@@ -116,7 +116,7 @@ func TestAddUserMessage_ImageStillImageBlock(t *testing.T) {
 }
 
 func TestAddUserMessage_EmptyTextKeepsRefs(t *testing.T) {
-	s := &Session{}
+	s := &Thread{}
 	s.AddUserMessage("", protocol.Attachment{
 		Type: "image", MediaType: "image/png", Data: "AAAA", Path: "/tmp/a.png",
 	})
@@ -143,7 +143,7 @@ func TestReadAttachmentFile_AllowedAndDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := newIntegrationSession(t, root, []string{secrets})
+	s := newIntegrationThread(t, root, []string{secrets})
 
 	raw, err := s.readAttachmentFile(ok)
 	if err != nil {
@@ -169,7 +169,7 @@ func TestReadAttachmentFile_OutsideWorkingDirAllowed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := newIntegrationSession(t, root, nil)
+	s := newIntegrationThread(t, root, nil)
 
 	raw, err := s.readAttachmentFile(external)
 	if err != nil {

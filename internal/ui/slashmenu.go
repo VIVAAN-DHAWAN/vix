@@ -15,7 +15,7 @@ var slashGroupOrder = []string{"Conversation", "Skills"}
 
 // slashCommands is the fixed list of built-in slash commands shown in the menu.
 var slashCommands = []Command{
-	{Name: "fork", Description: "Fork a new session from a turn (/fork N)", Action: "slash_fork", Group: "Conversation"},
+	{Name: "fork", Description: "Fork a new thread from a turn (/fork N)", Action: "slash_fork", Group: "Conversation"},
 	{Name: "trim", Description: "Delete all messages AFTER a turn (/trim N)", Action: "slash_trim", Group: "Conversation"},
 	{Name: "copy", Description: "Copy a turn, or the whole conversation (/copy [N])", Action: "slash_copy", Group: "Conversation"},
 	{Name: "goto", Description: "Scroll to a turn's start (/goto N)", Action: "slash_goto", Group: "Conversation"},
@@ -46,10 +46,10 @@ func slashCommandInsertText(action string) (string, bool) {
 	return "", false
 }
 
-// sessionSlashCommands returns the built-in slash commands followed by one
+// threadSlashCommands returns the built-in slash commands followed by one
 // entry per loaded skill, so skills autocomplete alongside built-ins. Selecting
 // a skill inserts "/<name> " for the user to add arguments and submit.
-func sessionSlashCommands(sess *SessionState) []Command {
+func threadSlashCommands(sess *ThreadState) []Command {
 	if sess == nil || len(sess.skills) == 0 {
 		return slashCommands
 	}

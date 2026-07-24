@@ -7,7 +7,7 @@ import (
 )
 
 func TestMarkCancelledReadyForInput(t *testing.T) {
-	sess := &SessionState{
+	sess := &ThreadState{
 		agentState:   StateToolExecuting,
 		input:        newInput(),
 		focus:        FocusChat,
@@ -40,7 +40,7 @@ func TestHandleEnterWhileBusyStillQueuesSteeringPrompt(t *testing.T) {
 		styles:     s,
 		mdRenderer: NewMarkdownRenderer(80, true, s.CodeBoxBorderStyle),
 	}
-	sess := &SessionState{
+	sess := &ThreadState{
 		agentState: StateStreaming,
 		input:      newInput(),
 		history:    NewHistory(t.TempDir()),
@@ -65,21 +65,21 @@ func TestHandleEnterWhileBusyStillQueuesSteeringPrompt(t *testing.T) {
 
 func TestCancelledTurnDoneDoesNotIdleNewPrompt(t *testing.T) {
 	s := NewStyles(true)
-	sess := &SessionState{
+	sess := &ThreadState{
 		agentState:       StateStreaming,
 		input:            newInput(),
 		focus:            FocusEditor,
 		cancelAckPending: true,
 	}
 	m := Model{
-		activeTab:       TabKindChat,
-		selectedSession: 0,
-		sessions:        []*SessionState{sess},
-		styles:          s,
-		mdRenderer:      NewMarkdownRenderer(80, true, s.CodeBoxBorderStyle),
+		activeTab:      TabKindChat,
+		selectedThread: 0,
+		threads:        []*ThreadState{sess},
+		styles:         s,
+		mdRenderer:     NewMarkdownRenderer(80, true, s.CodeBoxBorderStyle),
 	}
 
-	m.applyEventToSession(0, protocol.SessionEvent{Type: "event.agent_done"})
+	m.applyEventToThread(0, protocol.ThreadEvent{Type: "event.agent_done"})
 
 	if sess.cancelAckPending {
 		t.Fatal("cancelAckPending = true, want consumed")

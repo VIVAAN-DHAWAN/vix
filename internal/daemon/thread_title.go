@@ -11,7 +11,7 @@ import (
 )
 
 // titleEndTurnThreshold is how many completed chat turns (end_turn stops) a
-// session needs before the auto-titling pass runs.
+// thread needs before the auto-titling pass runs.
 const titleEndTurnThreshold = 3
 
 // titleMaxLen caps the generated title length, in runes.
@@ -48,11 +48,11 @@ func countEndTurns(msgs []llm.MessageParam) int {
 	return n
 }
 
-// maybeGenerateTitle kicks off the async auto-titling pass when the session
+// maybeGenerateTitle kicks off the async auto-titling pass when the thread
 // qualifies: user-started, still untitled, at least titleEndTurnThreshold
 // completed turns, a usable LLM client, and no pass already running. Called by
 // the turn loop after persist; never blocks the turn.
-func (s *Session) maybeGenerateTitle() {
+func (s *Thread) maybeGenerateTitle() {
 	if s.origin == "vix" || s.llm == nil || s.endTurnCount < titleEndTurnThreshold {
 		return
 	}
@@ -69,9 +69,9 @@ func (s *Session) maybeGenerateTitle() {
 }
 
 // generateTitle runs the one-shot, tool-free summarization call and publishes
-// the result (record, session event, sessions-list broadcast). Failures are
+// the result (record, thread event, threads-list broadcast). Failures are
 // logged and leave the title empty — the next completed turn retries.
-func (s *Session) generateTitle(transcript string) {
+func (s *Thread) generateTitle(transcript string) {
 	defer func() {
 		s.mu.Lock()
 		s.titleGenInFlight = false
@@ -82,12 +82,12 @@ func (s *Session) generateTitle(transcript string) {
 	msgs := []llm.MessageParam{llm.NewUserMessage(llm.NewTextBlock(promptText))}
 	msg, _, err := s.llm.StreamMessage(s.ctx, nil, msgs, nil, func(string) {}, func(string) {})
 	if err != nil {
-		LogError("title generation for session %s: %v", s.id, err)
+		LogError("title generation for thread %s: %v", s.id, err)
 		return
 	}
 	title := sanitizeTitle(msg.TextContent)
 	if title == "" {
-		LogError("title generation for session %s: empty result", s.id)
+		LogError("title generation for thread %s: empty result", s.id)
 		return
 	}
 
@@ -102,14 +102,14 @@ func (s *Session) generateTitle(transcript string) {
 	s.persist()
 	s.emit("event.title_updated", protocol.EventTitleUpdated{Title: title})
 	if s.server != nil {
-		s.server.broadcastSessionsChanged()
+		s.server.broadcastThreadsChanged()
 	}
 }
 
 // loadTitlePrompt resolves prompts/summarization.md across the config layers
 // (highest precedence first) and substitutes $(transcript). Falls back to a
 // built-in prompt when the file is missing everywhere.
-func (s *Session) loadTitlePrompt(transcript string) string {
+func (s *Thread) loadTitlePrompt(transcript string) string {
 	vars := map[string]string{"transcript": transcript}
 	for _, dir := range s.searchDirsSlice() {
 		path := filepath.Join(dir, "prompts", "summarization.md")

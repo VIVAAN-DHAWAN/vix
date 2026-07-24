@@ -52,7 +52,7 @@ type Pool struct {
 
 	// done is closed by Shutdown so the per-pool ctx watcher goroutine exits
 	// when the pool is replaced (InitPool is called on every brain.init);
-	// without it one watcher leaked per session for the daemon's lifetime.
+	// without it one watcher leaked per thread for the daemon's lifetime.
 	done      chan struct{}
 	closeOnce sync.Once
 }

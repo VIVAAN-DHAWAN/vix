@@ -30,7 +30,7 @@ type anthropicClient struct {
 // NewAnthropic constructs an Anthropic adapter from cfg.
 func NewAnthropic(cfg Config) (Client, error) {
 	// Disable the SDK's built-in retry loop. Vix runs its own retry at a
-	// higher level (session.streamWithRetry / workflow retry), and the SDK's
+	// higher level (thread.streamWithRetry / workflow retry), and the SDK's
 	// retry uses an uninterruptible time.Sleep which delays cancellation.
 	allOpts := []option.RequestOption{option.WithMaxRetries(0)}
 	allOpts = append(allOpts, cfg.Credential.RequestOptions()...)

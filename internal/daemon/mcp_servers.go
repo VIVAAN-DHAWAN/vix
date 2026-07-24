@@ -114,7 +114,7 @@ func mcpNormalizedType(cfg mcp.ServerConfig) string {
 // SetMCPEnabled toggles the `enabled` field of the named MCP server in the home
 // settings.json (a surgical in-place edit that preserves every other key) and
 // notifies attached instances so the MCP tab refreshes. The change takes effect
-// for sessions started afterwards. Errors when the server is not found.
+// for threads started afterwards. Errors when the server is not found.
 func (s *Server) SetMCPEnabled(name string, enabled bool) error {
 	path := s.homeSettingsPath()
 	data, err := os.ReadFile(path)
@@ -163,5 +163,5 @@ func (s *Server) SetMCPEnabled(name string, enabled bool) error {
 // broadcastMCPChanged pushes event.mcp_changed to every live instance control
 // connection so open MCP tabs re-fetch mcp.list.
 func (s *Server) broadcastMCPChanged() {
-	s.BroadcastToInstances(protocol.SessionEvent{Type: "event.mcp_changed", Data: protocol.EventMCPChanged{}})
+	s.BroadcastToInstances(protocol.ThreadEvent{Type: "event.mcp_changed", Data: protocol.EventMCPChanged{}})
 }

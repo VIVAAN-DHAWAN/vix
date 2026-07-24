@@ -7,12 +7,12 @@ import (
 	"github.com/get-vix/vix/internal/daemon/llm"
 )
 
-// newRestoreGateSession builds a minimal session for exercising the read-gate
+// newRestoreGateThread builds a minimal thread for exercising the read-gate
 // rebuild path. Directory access is automatic so resolvePathInAllowed never
 // rejects an absolute path under the temp cwd.
-func newRestoreGateSession(t *testing.T) *Session {
+func newRestoreGateThread(t *testing.T) *Thread {
 	t.Helper()
-	return &Session{
+	return &Thread{
 		cwd:                            t.TempDir(),
 		enableAutomaticDirectoryAccess: true,
 		readFiles:                      make(map[string]bool),
@@ -23,11 +23,11 @@ func toolUse(id, name, path string) llm.ContentBlock {
 	return llm.NewToolUseBlock(id, name, map[string]any{"path": path})
 }
 
-// TestRebuildReadFilesFromHistory verifies that restoring a session's history
+// TestRebuildReadFilesFromHistory verifies that restoring a thread's history
 // re-marks files that were successfully read/edited/written, while leaving
 // errored calls and calls with no result unmarked.
 func TestRebuildReadFilesFromHistory(t *testing.T) {
-	s := newRestoreGateSession(t)
+	s := newRestoreGateThread(t)
 
 	readOK := filepath.Join(s.cwd, "read_ok.go")
 	editOK := filepath.Join(s.cwd, "edit_ok.go")
@@ -80,7 +80,7 @@ func TestRebuildReadFilesFromHistory(t *testing.T) {
 // after restoring history that read a file, enforceReadGate no longer blocks an
 // edit on it, whereas an unread file is still gated.
 func TestRebuildReadFilesFromHistory_UngatesEdit(t *testing.T) {
-	s := newRestoreGateSession(t)
+	s := newRestoreGateThread(t)
 
 	seen := filepath.Join(s.cwd, "seen.go")
 	unseen := filepath.Join(s.cwd, "unseen.go")

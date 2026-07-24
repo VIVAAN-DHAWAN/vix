@@ -668,7 +668,7 @@ func TestStateAppendRunCapsAndOrders(t *testing.T) {
 }
 
 // TestSchedulerRecordsRecentRuns verifies that finished runs accumulate in
-// State.RecentRuns with their status, session id, and a duration string.
+// State.RecentRuns with their status, thread id, and a duration string.
 func TestSchedulerRecordsRecentRuns(t *testing.T) {
 	dir := t.TempDir()
 	writeSpec(t, dir, validSpec("rec"))
@@ -676,8 +676,8 @@ func TestSchedulerRecordsRecentRuns(t *testing.T) {
 	sched := newTestScheduler(t, dir, runner)
 	sched.reconcile(time.Now())
 
-	sched.applyResult(validSpec("rec"), RunResult{Status: StatusOK, SessionID: "s1"}, false, 1500*time.Millisecond)
-	sched.applyResult(validSpec("rec"), RunResult{Status: StatusError, Err: "boom", SessionID: "s2"}, false, 2*time.Second)
+	sched.applyResult(validSpec("rec"), RunResult{Status: StatusOK, ThreadID: "s1"}, false, 1500*time.Millisecond)
+	sched.applyResult(validSpec("rec"), RunResult{Status: StatusError, Err: "boom", ThreadID: "s2"}, false, 2*time.Second)
 
 	sched.mu.Lock()
 	runs := append([]RunRecord(nil), sched.state["rec"].RecentRuns...)
@@ -686,10 +686,10 @@ func TestSchedulerRecordsRecentRuns(t *testing.T) {
 	if len(runs) != 2 {
 		t.Fatalf("RecentRuns len = %d, want 2", len(runs))
 	}
-	if runs[0].Status != StatusOK || runs[0].SessionID != "s1" || runs[0].Duration != "1.5s" {
+	if runs[0].Status != StatusOK || runs[0].ThreadID != "s1" || runs[0].Duration != "1.5s" {
 		t.Fatalf("run[0] = %+v, want ok/s1/1.5s", runs[0])
 	}
-	if runs[1].Status != StatusError || runs[1].Error != "boom" || runs[1].SessionID != "s2" {
+	if runs[1].Status != StatusError || runs[1].Error != "boom" || runs[1].ThreadID != "s2" {
 		t.Fatalf("run[1] = %+v, want error/boom/s2", runs[1])
 	}
 	if runs[0].At.IsZero() {
@@ -705,10 +705,10 @@ func TestSchedulerRecentRunsPersist(t *testing.T) {
 	runner := newTestRunner(nil)
 	sched := newTestScheduler(t, dir, runner)
 	sched.reconcile(time.Now())
-	sched.applyResult(validSpec("rec"), RunResult{Status: StatusOK, SessionID: "s1"}, false, time.Second)
+	sched.applyResult(validSpec("rec"), RunResult{Status: StatusOK, ThreadID: "s1"}, false, time.Second)
 
 	st := NewStore(dir).LoadState()["rec"]
-	if st == nil || len(st.RecentRuns) != 1 || st.RecentRuns[0].SessionID != "s1" {
+	if st == nil || len(st.RecentRuns) != 1 || st.RecentRuns[0].ThreadID != "s1" {
 		t.Fatalf("loaded RecentRuns = %+v, want one record for s1", st)
 	}
 }
@@ -724,12 +724,12 @@ func TestSchedulerManualRunRecordsRecentRun(t *testing.T) {
 	sched := newTestScheduler(t, dir, runner)
 	sched.reconcile(time.Now())
 
-	sched.applyResult(s, RunResult{Status: StatusOK, SessionID: "m1"}, true, time.Second)
+	sched.applyResult(s, RunResult{Status: StatusOK, ThreadID: "m1"}, true, time.Second)
 
 	sched.mu.Lock()
 	st := sched.state["once"]
 	sched.mu.Unlock()
-	if len(st.RecentRuns) != 1 || st.RecentRuns[0].SessionID != "m1" {
+	if len(st.RecentRuns) != 1 || st.RecentRuns[0].ThreadID != "m1" {
 		t.Fatalf("manual run not recorded: %+v", st.RecentRuns)
 	}
 	if st.Completed {

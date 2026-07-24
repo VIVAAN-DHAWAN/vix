@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-// State is the global, non-project-scoped session bookkeeping persisted to
+// State is the global, non-project-scoped thread bookkeeping persisted to
 // state.json (see VixPaths.StateFile). Keep fields additive and tolerant of
 // absence.
 type State struct {

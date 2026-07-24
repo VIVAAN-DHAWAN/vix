@@ -67,7 +67,7 @@ func TestCombineTailDoesNotMutateCache(t *testing.T) {
 
 func TestCachedChatLines(t *testing.T) {
 	s := NewStyles(true)
-	sess := &SessionState{chatMessages: []ChatMessage{{Type: MsgUser, Rendered: "u1\n"}}}
+	sess := &ThreadState{chatMessages: []ChatMessage{{Type: MsgUser, Rendered: "u1\n"}}}
 
 	lines, _ := sess.cachedChatLines(s, 40)
 	if lines[0] != "u1" {

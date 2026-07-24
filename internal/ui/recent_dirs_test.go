@@ -35,8 +35,8 @@ func TestLatestWorkDir_MostRecentThenFallback(t *testing.T) {
 	}
 }
 
-func draftForNav() *SessionState {
-	return &SessionState{focus: FocusChat, phase: phaseDraft}
+func draftForNav() *ThreadState {
+	return &ThreadState{focus: FocusChat, phase: phaseDraft}
 }
 
 func TestWelcomeDirNav_UpDownClampAndEnterApplies(t *testing.T) {
@@ -68,19 +68,19 @@ func TestWelcomeDirNav_IgnoredWhenNotFocusedDraft(t *testing.T) {
 	m := &Model{recentDirs: []protocol.DirUsage{{Path: "/a"}}}
 
 	// Not focused on the welcome area.
-	blurred := &SessionState{focus: FocusEditor, phase: phaseDraft}
+	blurred := &ThreadState{focus: FocusEditor, phase: phaseDraft}
 	if m.welcomeDirNav(blurred, "down") {
 		t.Error("nav should be ignored when the editor is focused")
 	}
 
-	// Live session (not a draft).
-	live := &SessionState{focus: FocusChat, phase: phaseLive}
+	// Live thread (not a draft).
+	live := &ThreadState{focus: FocusChat, phase: phaseLive}
 	if m.welcomeDirNav(live, "down") {
-		t.Error("nav should be ignored for a live session")
+		t.Error("nav should be ignored for a live thread")
 	}
 
 	// Draft with a non-empty transcript (welcome not showing).
-	started := &SessionState{focus: FocusChat, phase: phaseDraft, chatMessages: []ChatMessage{{}}}
+	started := &ThreadState{focus: FocusChat, phase: phaseDraft, chatMessages: []ChatMessage{{}}}
 	if m.welcomeDirNav(started, "down") {
 		t.Error("nav should be ignored once the transcript is non-empty")
 	}

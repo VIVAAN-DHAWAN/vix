@@ -32,8 +32,8 @@ func GenerateSwift() ([]byte, error) {
 	b.WriteString("// Regenerate with `make mac-models` after changing internal/protocol.\n")
 	b.WriteString("//\n")
 	b.WriteString("// These types mirror the vix daemon\u21c4client wire protocol\n")
-	b.WriteString("// (internal/protocol). They decode the `data` payload of a SessionEvent\n")
-	b.WriteString("// and encode the `data` of a SessionCommand.\n\n")
+	b.WriteString("// (internal/protocol). They decode the `data` payload of a ThreadEvent\n")
+	b.WriteString("// and encode the `data` of a ThreadCommand.\n\n")
 	b.WriteString("import Foundation\n")
 
 	for _, name := range names {

@@ -1426,7 +1426,7 @@ func TestRunBashWithContextTimeout(t *testing.T) {
 	}
 	// runBashWithContext returns ctx.Err() on cancellation; the parent is
 	// still alive so the workflow caller can distinguish step-timeout from
-	// session-cancel via `parent.Err() == nil`.
+	// thread-cancel via `parent.Err() == nil`.
 	if err != context.DeadlineExceeded {
 		t.Errorf("expected err DeadlineExceeded from runBashWithContext, got %v", err)
 	}

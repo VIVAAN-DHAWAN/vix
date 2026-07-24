@@ -57,43 +57,43 @@ func RegisterBuiltinHandlers(s *Server) {
 		return handler(map[string]any{"params": map[string]any{"project_path": path}})
 	})
 
-	// session.list returns every persisted open session, regardless of the
-	// requesting cwd. The global store (~/.vix/sessions) is surfaced whole so
-	// the TUI can group sessions by working directory; cwd scoping (for which
-	// sessions to auto-attach on launch) is applied by the client, not here.
-	s.RegisterHandler("session.list", func(data map[string]any) (map[string]any, error) {
+	// thread.list returns every persisted open thread, regardless of the
+	// requesting cwd. The global store (~/.vix/threads) is surfaced whole so
+	// the TUI can group threads by working directory; cwd scoping (for which
+	// threads to auto-attach on launch) is applied by the client, not here.
+	s.RegisterHandler("thread.list", func(data map[string]any) (map[string]any, error) {
 		cwd, _ := data["cwd"].(string)
 		configDir, _ := data["config_dir"].(string)
 		paths := config.NewVixPaths(configDir, s.homeVixDir, cwd)
-		recs := listOpenSessionRecords(paths)
-		summaries := make([]protocol.SessionSummary, 0, len(recs))
+		recs := listOpenThreadRecords(paths)
+		summaries := make([]protocol.ThreadSummary, 0, len(recs))
 		for _, r := range recs {
 			sum := r.summary()
-			// Mark sessions currently live in this daemon so the launching
+			// Mark threads currently live in this daemon so the launching
 			// client can skip the ones another instance already owns.
-			s.sessionMu.Lock()
-			_, sum.Attached = s.sessions[r.ID]
-			s.sessionMu.Unlock()
+			s.threadMu.Lock()
+			_, sum.Attached = s.threads[r.ID]
+			s.threadMu.Unlock()
 			summaries = append(summaries, sum)
 		}
-		return map[string]any{"status": "ok", "sessions": summaries}, nil
+		return map[string]any{"status": "ok", "threads": summaries}, nil
 	})
 
-	// session.dirs ranks the working directories used by open user sessions
-	// (across all projects, unlike session.list which is cwd-scoped). Powers the
+	// thread.dirs ranks the working directories used by open user threads
+	// (across all projects, unlike thread.list which is cwd-scoped). Powers the
 	// welcome screen's recent-directories list and the default working directory
-	// for new sessions.
-	s.RegisterHandler("session.dirs", func(data map[string]any) (map[string]any, error) {
+	// for new threads.
+	s.RegisterHandler("thread.dirs", func(data map[string]any) (map[string]any, error) {
 		configDir, _ := data["config_dir"].(string)
 		cwd, _ := data["cwd"].(string)
 		paths := config.NewVixPaths(configDir, s.homeVixDir, cwd)
-		dirs := aggregateSessionDirs(listOpenSessionRecords(paths))
+		dirs := aggregateThreadDirs(listOpenThreadRecords(paths))
 		return map[string]any{"status": "ok", "dirs": dirs}, nil
 	})
 
 	// attachment.validate checks, at drop time, whether a user-attached file can
 	// be turned into prompt text: it authorizes the path against the owning
-	// session's access policy + deny list, enforces the size cap, and (for PDFs)
+	// thread's access policy + deny list, enforces the size cap, and (for PDFs)
 	// confirms the built-in reader can extract a text layer. The file is re-read
 	// and converted at send time; this is a fast up-front gate so the TUI can add
 	// a chip ("ok") or alert and drop it ("invalid").
@@ -102,12 +102,12 @@ func RegisterBuiltinHandlers(s *Server) {
 		if path == "" {
 			return map[string]any{"status": "error", "message": "missing 'path'"}, nil
 		}
-		sessionID, _ := data["session_id"].(string)
-		s.sessionMu.Lock()
-		sess := s.sessions[sessionID]
-		s.sessionMu.Unlock()
+		threadID, _ := data["thread_id"].(string)
+		s.threadMu.Lock()
+		sess := s.threads[threadID]
+		s.threadMu.Unlock()
 		if sess == nil {
-			return map[string]any{"status": "error", "message": "unknown session"}, nil
+			return map[string]any{"status": "error", "message": "unknown thread"}, nil
 		}
 		raw, err := sess.readAttachmentFile(path)
 		if err != nil {
@@ -117,85 +117,85 @@ func RegisterBuiltinHandlers(s *Server) {
 		return map[string]any{"status": status, "reason": reason}, nil
 	})
 
-	// session.dismiss archives a persisted session record (open/ → closed/)
+	// thread.dismiss archives a persisted thread record (open/ → closed/)
 	// without attaching it. Used by the TUI to dismiss vix-initiated run
-	// records from the sessions list. Refuses sessions currently live in a
+	// records from the threads list. Refuses threads currently live in a
 	// connection.
-	s.RegisterHandler("session.dismiss", func(data map[string]any) (map[string]any, error) {
+	s.RegisterHandler("thread.dismiss", func(data map[string]any) (map[string]any, error) {
 		id, _ := data["id"].(string)
 		if id == "" {
 			return map[string]any{"status": "error", "message": "missing 'id'"}, nil
 		}
-		s.sessionMu.Lock()
-		_, live := s.sessions[id]
-		s.sessionMu.Unlock()
+		s.threadMu.Lock()
+		_, live := s.threads[id]
+		s.threadMu.Unlock()
 		if live {
-			return map[string]any{"status": "error", "message": "session is open in another connection"}, nil
+			return map[string]any{"status": "error", "message": "thread is open in another connection"}, nil
 		}
 		cwd, _ := data["cwd"].(string)
 		configDir, _ := data["config_dir"].(string)
 		paths := config.NewVixPaths(configDir, s.homeVixDir, cwd)
-		if err := moveSessionToClosed(paths, id); err != nil {
+		if err := moveThreadToClosed(paths, id); err != nil {
 			return map[string]any{"status": "error", "message": err.Error()}, nil
 		}
-		s.broadcastSessionsChanged()
+		s.broadcastThreadsChanged()
 		return map[string]any{"status": "ok"}, nil
 	})
 
-	// message.create materialises a Vix-initiated message session from a whole
-	// JSON spec (MessageSessionSpec) carried in the "session" field. It backs
-	// `vix session create`, letting external callers (notably command hooks)
+	// message.create materialises a Vix-initiated message thread from a whole
+	// JSON spec (MessageThreadSpec) carried in the "thread" field. It backs
+	// `vix thread create`, letting external callers (notably command hooks)
 	// surface a one-message conversation under "Vix-initiated" without
-	// re-encoding the on-disk session record.
+	// re-encoding the on-disk thread record.
 	s.RegisterHandler("message.create", func(data map[string]any) (map[string]any, error) {
-		raw, ok := data["session"]
+		raw, ok := data["thread"]
 		if !ok {
-			return map[string]any{"status": "error", "message": "missing 'session'"}, nil
+			return map[string]any{"status": "error", "message": "missing 'thread'"}, nil
 		}
 		b, err := json.Marshal(raw)
 		if err != nil {
-			return map[string]any{"status": "error", "message": "invalid session payload"}, nil
+			return map[string]any{"status": "error", "message": "invalid thread payload"}, nil
 		}
-		var spec MessageSessionSpec
+		var spec MessageThreadSpec
 		if err := json.Unmarshal(b, &spec); err != nil {
-			return map[string]any{"status": "error", "message": fmt.Sprintf("invalid session payload: %v", err)}, nil
+			return map[string]any{"status": "error", "message": fmt.Sprintf("invalid thread payload: %v", err)}, nil
 		}
-		id, err := s.createMessageSession(spec)
+		id, err := s.createMessageThread(spec)
 		if err != nil {
 			return map[string]any{"status": "error", "message": err.Error()}, nil
 		}
-		return map[string]any{"status": "ok", "session_id": id}, nil
+		return map[string]any{"status": "ok", "thread_id": id}, nil
 	})
 
 	// job.run fires a scheduled job immediately by id, out of band from its
-	// schedule (backs `vix job run <id>`). Returns the run's session id; the run
+	// schedule (backs `vix job run <id>`). Returns the run's thread id; the run
 	// proceeds in the background and lands under "Vix-initiated".
 	s.RegisterHandler("job.run", func(data map[string]any) (map[string]any, error) {
 		id, _ := data["id"].(string)
 		if id == "" {
 			return map[string]any{"status": "error", "message": "missing 'id'"}, nil
 		}
-		sessionID, err := s.RunJob(id)
+		threadID, err := s.RunJob(id)
 		if err != nil {
 			return map[string]any{"status": "error", "message": err.Error()}, nil
 		}
-		return map[string]any{"status": "ok", "session_id": sessionID}, nil
+		return map[string]any{"status": "ok", "thread_id": threadID}, nil
 	})
 
 	// hook.trigger fires a lifecycle hook immediately by id, out of band from its
 	// event (backs `vix hook trigger <id>`). Workflow/prompt hooks run in an
-	// isolated session (its id is returned); command hooks have no session, so
+	// isolated thread (its id is returned); command hooks have no thread, so
 	// only the fire id is returned.
 	s.RegisterHandler("hook.trigger", func(data map[string]any) (map[string]any, error) {
 		id, _ := data["id"].(string)
 		if id == "" {
 			return map[string]any{"status": "error", "message": "missing 'id'"}, nil
 		}
-		sessionID, fireID, err := s.TriggerHook(id)
+		threadID, fireID, err := s.TriggerHook(id)
 		if err != nil {
 			return map[string]any{"status": "error", "message": err.Error()}, nil
 		}
-		return map[string]any{"status": "ok", "session_id": sessionID, "fire_id": fireID}, nil
+		return map[string]any{"status": "ok", "thread_id": threadID, "fire_id": fireID}, nil
 	})
 
 	// job.list returns the scheduled jobs (enabled and disabled), powering the

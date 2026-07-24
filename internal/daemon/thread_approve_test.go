@@ -5,7 +5,7 @@ import (
 )
 
 func TestApprovedWriteFiles_BasicFlow(t *testing.T) {
-	s := &Session{cwd: t.TempDir()}
+	s := &Thread{cwd: t.TempDir()}
 
 	absPath := s.cwd + "/foo.go"
 
@@ -28,18 +28,18 @@ func TestApprovedWriteFiles_BasicFlow(t *testing.T) {
 	}
 }
 
-func TestApprovedWriteFiles_SessionIsolation(t *testing.T) {
-	s1 := &Session{cwd: t.TempDir()}
-	s2 := &Session{cwd: t.TempDir()}
+func TestApprovedWriteFiles_ThreadIsolation(t *testing.T) {
+	s1 := &Thread{cwd: t.TempDir()}
+	s2 := &Thread{cwd: t.TempDir()}
 
 	absPath := "/tmp/shared.go"
 
 	s1.addApprovedWriteFile(absPath)
 
 	if !s1.isWriteApproved(absPath) {
-		t.Fatal("expected file approved in session 1")
+		t.Fatal("expected file approved in thread 1")
 	}
 	if s2.isWriteApproved(absPath) {
-		t.Fatal("expected file NOT approved in session 2")
+		t.Fatal("expected file NOT approved in thread 2")
 	}
 }

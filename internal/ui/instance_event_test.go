@@ -50,17 +50,17 @@ func newInstanceEventTestModel() Model {
 	}
 }
 
-// TestInstanceEvent_SessionsChanged: a sessions_changed control event dispatches
-// both a vix-sessions refresh and a recent-dirs refresh.
-func TestInstanceEvent_SessionsChanged(t *testing.T) {
+// TestInstanceEvent_ThreadsChanged: a threads_changed control event dispatches
+// both a vix-threads refresh and a recent-dirs refresh.
+func TestInstanceEvent_ThreadsChanged(t *testing.T) {
 	m := newInstanceEventTestModel()
-	_, cmd := m.updateInner(instanceEventMsg{event: protocol.SessionEvent{Type: "event.sessions_changed"}})
+	_, cmd := m.updateInner(instanceEventMsg{event: protocol.ThreadEvent{Type: "event.threads_changed"}})
 	msgs := runCmdMsgs(cmd)
-	if !hasMsgType[vixSessionsMsg](msgs) {
-		t.Error("sessions_changed should dispatch fetchVixSessions (vixSessionsMsg)")
+	if !hasMsgType[vixThreadsMsg](msgs) {
+		t.Error("threads_changed should dispatch fetchVixThreads (vixThreadsMsg)")
 	}
 	if !hasMsgType[recentDirsMsg](msgs) {
-		t.Error("sessions_changed should dispatch fetchRecentDirs (recentDirsMsg)")
+		t.Error("threads_changed should dispatch fetchRecentDirs (recentDirsMsg)")
 	}
 }
 
@@ -70,7 +70,7 @@ func TestInstanceEvent_JobsChanged(t *testing.T) {
 	// Active Jobs tab → refresh dispatched.
 	m := newInstanceEventTestModel()
 	m.activeTab = TabKindJobs
-	_, cmd := m.updateInner(instanceEventMsg{event: protocol.SessionEvent{Type: "event.jobs_changed"}})
+	_, cmd := m.updateInner(instanceEventMsg{event: protocol.ThreadEvent{Type: "event.jobs_changed"}})
 	if !hasMsgType[jobsListMsg](runCmdMsgs(cmd)) {
 		t.Error("jobs_changed on the Jobs tab should dispatch fetchJobsAndHooks (jobsListMsg)")
 	}
@@ -78,7 +78,7 @@ func TestInstanceEvent_JobsChanged(t *testing.T) {
 	// Any other tab → no fetch.
 	m2 := newInstanceEventTestModel()
 	m2.activeTab = TabKindChat
-	_, cmd2 := m2.updateInner(instanceEventMsg{event: protocol.SessionEvent{Type: "event.jobs_changed"}})
+	_, cmd2 := m2.updateInner(instanceEventMsg{event: protocol.ThreadEvent{Type: "event.jobs_changed"}})
 	if hasMsgType[jobsListMsg](runCmdMsgs(cmd2)) {
 		t.Error("jobs_changed off the Jobs tab should not fetch")
 	}
@@ -87,7 +87,7 @@ func TestInstanceEvent_JobsChanged(t *testing.T) {
 // TestInstanceEvent_Quit: a quit control event asks Bubble Tea to quit.
 func TestInstanceEvent_Quit(t *testing.T) {
 	m := newInstanceEventTestModel()
-	_, cmd := m.updateInner(instanceEventMsg{event: protocol.SessionEvent{Type: "event.quit"}})
+	_, cmd := m.updateInner(instanceEventMsg{event: protocol.ThreadEvent{Type: "event.quit"}})
 	if !hasMsgType[tea.QuitMsg](runCmdMsgs(cmd)) {
 		t.Error("quit control event should dispatch tea.Quit (tea.QuitMsg)")
 	}

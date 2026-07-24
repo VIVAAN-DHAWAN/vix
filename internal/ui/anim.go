@@ -30,7 +30,7 @@ var (
 // animStepMsg triggers the next animation frame.
 // anim must point to the ThinkingAnim that scheduled the tick, and gen must
 // match its current generation. Together they ensure ticks from a different
-// session (same gen by coincidence) and stale ticks from a previous Start/Stop
+// thread (same gen by coincidence) and stale ticks from a previous Start/Stop
 // cycle are both silently dropped.
 type animStepMsg struct {
 	gen  int
@@ -43,13 +43,13 @@ type tabBlinkMsg struct{ gen int }
 
 const tabBlinkHalfPeriod = 500 * time.Millisecond
 
-// sessionsSpinnerMsg advances the sessions-list loading spinner.
-// gen must match Model.sessionsSpinnerGen; stale ticks are silently dropped.
-type sessionsSpinnerMsg struct{ gen int }
+// threadsSpinnerMsg advances the threads-list loading spinner.
+// gen must match Model.threadsSpinnerGen; stale ticks are silently dropped.
+type threadsSpinnerMsg struct{ gen int }
 
-// sessionsSpinnerPeriod sets the sessions-list spinner cadence. A list spinner
+// threadsSpinnerPeriod sets the threads-list spinner cadence. A list spinner
 // doesn't need the chat spinner's 30fps; 12fps reads as smooth and is cheap.
-const sessionsSpinnerPeriod = time.Second / 12
+const threadsSpinnerPeriod = time.Second / 12
 
 // ThinkingAnim renders a spinner row: each character cycles through braille
 // spinner frames with a phase offset so a wave ripples across the bar.
@@ -103,7 +103,7 @@ func (a *ThinkingAnim) Resume() tea.Cmd {
 
 // Advance moves to the next frame if msg belongs to this instance and the
 // current generation, and returns a tick command. Ticks from a different
-// ThinkingAnim (cross-session collision) or a stale generation are dropped.
+// ThinkingAnim (cross-thread collision) or a stale generation are dropped.
 func (a *ThinkingAnim) Advance(msg animStepMsg) tea.Cmd {
 	if msg.anim != a || !a.active || msg.gen != a.gen {
 		return nil

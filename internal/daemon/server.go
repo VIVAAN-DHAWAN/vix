@@ -23,8 +23,8 @@ import (
 // HandlerFunc is the type for daemon request handlers.
 type HandlerFunc func(data map[string]any) (map[string]any, error)
 
-// SessionInfo holds a snapshot of a live session for external consumers.
-type SessionInfo struct {
+// ThreadInfo holds a snapshot of a live thread for external consumers.
+type ThreadInfo struct {
 	ID            string  `json:"id"`
 	CWD           string  `json:"cwd"`
 	Model         string  `json:"model,omitempty"`
@@ -42,18 +42,18 @@ type SessionInfo struct {
 
 // Server is the Unix socket daemon server with a handler registry.
 type Server struct {
-	mu        sync.RWMutex
-	handlers  map[string]HandlerFunc
-	sockPath  string
-	accessDB  *sql.DB // Access stats database (nil if init failed)
-	sessionID string  // Unique ID for this daemon session
+	mu       sync.RWMutex
+	handlers map[string]HandlerFunc
+	sockPath string
+	accessDB *sql.DB // Access stats database (nil if init failed)
+	threadID string  // Unique ID for this daemon thread
 
-	// Agent session support
+	// Agent thread support
 	cred      config.Credential
 	model     string
 	plugins   PluginSource
-	sessions  map[string]*Session
-	sessionMu sync.Mutex
+	threads   map[string]*Thread
+	threadMu  sync.Mutex
 	serverCtx context.Context
 
 	// User-level config directory (~/.vix/)
@@ -68,7 +68,7 @@ type Server struct {
 	// vixBin is the path to the vix CLI binary, resolved once at construction as
 	// the sibling of the running vixd executable (falling back to "vix" on
 	// PATH). Exposed to hooks via the context envelope so a hook can call back
-	// into this daemon (e.g. `vix session create`) without guessing the path.
+	// into this daemon (e.g. `vix thread create`) without guessing the path.
 	vixBin string
 
 	// Shared-secret token validated on every incoming socket message. Loaded
@@ -95,15 +95,15 @@ type Server struct {
 
 	// instances holds the live instance control connections — one per vix
 	// window, opened at launch and held for the process lifetime (see
-	// handleInstance). Process-level events (sessions_changed, jobs_changed,
+	// handleInstance). Process-level events (threads_changed, jobs_changed,
 	// quit) are pushed to each exactly once via BroadcastToInstances,
-	// independent of any chat session, so a draft window with no session still
+	// independent of any chat thread, so a draft window with no thread still
 	// receives them. Guarded by instanceRegMu.
 	instanceRegMu sync.Mutex
 	instances     map[*instanceConn]struct{}
 
-	// version is the daemon build version (vixd's main.Version). Sessions from
-	// clients with a different version are refused (see handleSession). Empty
+	// version is the daemon build version (vixd's main.Version). Threads from
+	// clients with a different version are refused (see handleThread). Empty
 	// in in-process test embeddings, which disables the gate.
 	version string
 
@@ -124,7 +124,7 @@ type Server struct {
 
 	// Update status: the latest GitHub release seen by the once-per-day check,
 	// versus the running daemon Version. Populated by a background goroutine in
-	// vixd's main and read when emitting event.update_available at session init.
+	// vixd's main and read when emitting event.update_available at thread init.
 	// Guarded by mu.
 	updateCurrent string
 	updateLatest  string // "" when up-to-date / check disabled / unreachable
@@ -134,7 +134,7 @@ type Server struct {
 	// Tool backends resolved once at daemon start in RegisterToolHandlers.
 	// *Effective names reflect PATH fallback (e.g. configured "fd" resolves to
 	// "builtin" when fd is absent); *Configured records the requested backend
-	// so the Settings tab can flag a fallback. Set once before any session
+	// so the Settings tab can flag a fallback. Set once before any thread
 	// starts, then read-only.
 	grepBackendEffective  string
 	grepBackendConfigured string
@@ -143,7 +143,7 @@ type Server struct {
 }
 
 // SetUpdateStatus records the result of the daily release check so it can be
-// emitted to every session at init. Safe for concurrent use.
+// emitted to every thread at init. Safe for concurrent use.
 func (s *Server) SetUpdateStatus(current, latest, url, method string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -160,13 +160,13 @@ func (s *Server) UpdateStatus() (current, latest, url, method string) {
 	return s.updateCurrent, s.updateLatest, s.updateURL, s.updateMethod
 }
 
-// BroadcastEvent pushes ev onto every live session's event channel (best-effort,
+// BroadcastEvent pushes ev onto every live thread's event channel (best-effort,
 // non-blocking). Used to reach all attached TUIs at once — e.g. the coordinated
 // quit-all that follows an in-app update.
-func (s *Server) BroadcastEvent(ev protocol.SessionEvent) {
-	s.sessionMu.Lock()
-	defer s.sessionMu.Unlock()
-	for _, sess := range s.sessions {
+func (s *Server) BroadcastEvent(ev protocol.ThreadEvent) {
+	s.threadMu.Lock()
+	defer s.threadMu.Unlock()
+	for _, sess := range s.threads {
 		select {
 		case sess.eventChan <- ev:
 		default:
@@ -204,9 +204,9 @@ func (s *Server) deregisterInstanceConn(ic *instanceConn) {
 
 // BroadcastToInstances pushes ev to every live instance control connection
 // (best-effort, non-blocking, once per window). Process-level events
-// (sessions_changed, jobs_changed, quit) travel this path so they reach every
-// window exactly once — including a launch-time draft that has no session yet.
-func (s *Server) BroadcastToInstances(ev protocol.SessionEvent) {
+// (threads_changed, jobs_changed, quit) travel this path so they reach every
+// window exactly once — including a launch-time draft that has no thread yet.
+func (s *Server) BroadcastToInstances(ev protocol.ThreadEvent) {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		LogError("Marshal instance event error: %v", err)
@@ -230,7 +230,7 @@ func (s *Server) BroadcastToInstances(ev protocol.SessionEvent) {
 // flush the quit event onto their sockets before the context is cancelled.
 func (s *Server) QuitAll() {
 	LogInfo("update: broadcasting quit to all instances, then shutting down")
-	s.BroadcastToInstances(protocol.SessionEvent{Type: "event.quit"})
+	s.BroadcastToInstances(protocol.ThreadEvent{Type: "event.quit"})
 	time.AfterFunc(500*time.Millisecond, func() {
 		if s.cancel != nil {
 			s.cancel()
@@ -255,15 +255,15 @@ func resolveVixBin() string {
 }
 
 // NewServer creates a new daemon server.
-func NewServer(sockPath string, cred config.Credential, sessionID, model string, daemonConfig *config.DaemonConfig, plugins PluginSource) *Server {
+func NewServer(sockPath string, cred config.Credential, threadID, model string, daemonConfig *config.DaemonConfig, plugins PluginSource) *Server {
 	s := &Server{
 		handlers:   make(map[string]HandlerFunc),
 		sockPath:   sockPath,
-		sessionID:  sessionID,
+		threadID:   threadID,
 		cred:       cred,
 		model:      model,
 		plugins:    plugins,
-		sessions:   make(map[string]*Session),
+		threads:    make(map[string]*Thread),
 		instances:  make(map[*instanceConn]struct{}),
 		homeVixDir: daemonConfig.HomeVixDir,
 		authToken:  daemonConfig.AuthToken,
@@ -281,8 +281,8 @@ func NewServer(sockPath string, cred config.Credential, sessionID, model string,
 	return s
 }
 
-// SetVersion records the daemon build version. Sessions started by clients
-// whose version differs are refused (hard gate, see handleSession). Must be
+// SetVersion records the daemon build version. Threads started by clients
+// whose version differs are refused (hard gate, see handleThread). Must be
 // called before ListenAndServe. Leaving it unset (in-process test embeddings)
 // disables the gate.
 func (s *Server) SetVersion(v string) {
@@ -321,7 +321,7 @@ func (s *Server) LogAccess(toolName string, params map[string]any) {
 	if s.accessDB == nil {
 		return
 	}
-	logToolAccess(s.accessDB, s.sessionID, toolName, params)
+	logToolAccess(s.accessDB, s.threadID, toolName, params)
 }
 
 // RegisterHandler registers a handler for the given command.
@@ -376,12 +376,12 @@ func (s *Server) EnableJobScheduler() {
 		return
 	}
 	notify := func(eventType string, data any) {
-		ev := protocol.SessionEvent{Type: eventType, Data: data}
+		ev := protocol.ThreadEvent{Type: eventType, Data: data}
 		// Process-level events go to the instance control channels (once per
-		// window); session-scoped events (job_run/job_done status lines) stay on
-		// the per-session fan-out.
+		// window); thread-scoped events (job_run/job_done status lines) stay on
+		// the per-thread fan-out.
 		switch eventType {
-		case "event.sessions_changed", "event.jobs_changed":
+		case "event.threads_changed", "event.jobs_changed":
 			s.BroadcastToInstances(ev)
 		default:
 			s.BroadcastEvent(ev)
@@ -409,7 +409,7 @@ func (s *Server) EnableHooks() {
 	// (not directory existence) so the hook's own state dir can be pre-created
 	// without suppressing the seed, and so it never resurrects after the user
 	// edits/disables/deletes it. Skipped on an auth-enabled daemon, where the
-	// feedback hook's `vix session create` callback can't present the secret.
+	// feedback hook's `vix thread create` callback can't present the secret.
 	if s.authToken == "" {
 		sentinel := filepath.Join(dir, feedbackSeedSentinel)
 		if _, err := os.Stat(sentinel); os.IsNotExist(err) {
@@ -477,7 +477,7 @@ heartbeat to work, for example:
   recent backup failed.
 
 When a check finds nothing to report, the agent answers HEARTBEAT_OK and the
-run leaves no trace. Anything else shows up in the Sessions tab under
+run leaves no trace. Anything else shows up in the Threads tab under
 "Vix-initiated".
 -->
 `
@@ -512,10 +512,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	s.serverCtx = ctx
 
 	// Refuse to hijack a socket a live daemon already owns. Unconditionally
-	// removing it would orphan the running daemon's in-flight sessions and
+	// removing it would orphan the running daemon's in-flight threads and
 	// silently point new client dials at this (possibly different-store)
-	// process — the exact failure where sessions vanish from the list and new
-	// sessions report "daemon is not responding".
+	// process — the exact failure where threads vanish from the list and new
+	// threads report "daemon is not responding".
 	if daemonAlreadyListening(s.sockPath) {
 		return fmt.Errorf("another vixd is already listening on %s — stop it first (vix daemon stop) or use a different --socket-path", s.sockPath)
 	}
@@ -549,14 +549,20 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// number of days at startup, then once a day while the daemon is up.
 	go s.runLogSweepLoop(ctx)
 
-	// One-shot stale trim of closed session records in the default global
-	// store (~/.vix/sessions/closed). Retention comes from settings.json
-	// (sessions.closed_retention_minutes, default one week, 0 = never).
+	// One-time migration of the pre-rename global store (~/.vix/sessions ->
+	// ~/.vix/threads). Runs synchronously before the accept loop so no
+	// connection reads/writes the store mid-move. Config-dir override stores are
+	// not touched, mirroring the closed-record trim below.
+	migrateLegacyThreadsDir(config.NewVixPaths("", config.HomeVixDir(), ""))
+
+	// One-shot stale trim of closed thread records in the default global
+	// store (~/.vix/threads/closed). Retention comes from settings.json
+	// (threads.closed_retention_minutes, default one week, 0 = never).
 	// Config-dir override stores are not touched.
 	go func() {
-		mins := config.ClosedSessionRetentionMinutes()
+		mins := config.ClosedThreadRetentionMinutes()
 		paths := config.NewVixPaths("", config.HomeVixDir(), "")
-		trimStaleClosedSessions(paths, time.Duration(mins)*time.Minute)
+		trimStaleClosedThreads(paths, time.Duration(mins)*time.Minute)
 	}()
 
 	// Accept loop with context cancellation
@@ -592,24 +598,24 @@ func (s *Server) handleClient(conn net.Conn) {
 	}
 	line := scanner.Bytes()
 
-	// Check if this is a session.start message — upgrade to persistent session
-	var cmd protocol.SessionCommand
-	if err := json.Unmarshal(line, &cmd); err == nil && cmd.Type == "session.start" {
-		// Auth gate: drop the connection before any session resources are
-		// allocated. handleSession's per-message reader-loop check covers
+	// Check if this is a thread.start message — upgrade to persistent thread
+	var cmd protocol.ThreadCommand
+	if err := json.Unmarshal(line, &cmd); err == nil && cmd.Type == "thread.start" {
+		// Auth gate: drop the connection before any thread resources are
+		// allocated. handleThread's per-message reader-loop check covers
 		// follow-ups; this one covers the initial start.
 		if !s.authOK(cmd.AuthToken) {
-			LogError("Session start rejected: auth_token mismatch")
+			LogError("Thread start rejected: auth_token mismatch")
 			s.writeError(conn, "auth")
 			return
 		}
-		s.handleSession(conn, scanner, cmd)
+		s.handleThread(conn, scanner, cmd)
 		return
 	}
 
 	// instance.register: a vix process holds this connection open for its whole
 	// lifetime so the daemon can count attached instances independently of
-	// sessions. Block until the connection closes, then decrement.
+	// threads. Block until the connection closes, then decrement.
 	if cmd.Type == "instance.register" {
 		if !s.authOK(cmd.AuthToken) {
 			LogError("Instance register rejected: auth_token mismatch")
@@ -627,7 +633,7 @@ func (s *Server) handleClient(conn net.Conn) {
 	}
 
 	// Auth gate for one-shot RPCs (ping, tool.*, etc.). Same token shape as
-	// SessionCommand.AuthToken; flat field on the request map.
+	// ThreadCommand.AuthToken; flat field on the request map.
 	reqToken, _ := request["auth_token"].(string)
 	if !s.authOK(reqToken) {
 		LogError("RPC rejected: auth_token mismatch")
@@ -668,7 +674,7 @@ func (s *Server) handleClient(conn net.Conn) {
 
 // handleInstance holds an instance.register connection open for the lifetime of
 // a vix process. It counts the instance (web-UI vitals) and registers a
-// bidirectional control channel: process-level events (sessions_changed,
+// bidirectional control channel: process-level events (threads_changed,
 // jobs_changed, quit) are pushed to it via BroadcastToInstances, one serialized
 // writer goroutine per connection. It blocks reading until the peer closes the
 // connection (clean exit or process death both deliver EOF on a local Unix
@@ -701,10 +707,10 @@ func (s *Server) handleInstance(conn net.Conn, scanner *bufio.Scanner) {
 	<-writerDone
 }
 
-// handleSession upgrades a connection to a persistent bidirectional session.
-func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd protocol.SessionCommand) {
-	// Parse session start data
-	var startData protocol.SessionStartData
+// handleThread upgrades a connection to a persistent bidirectional thread.
+func (s *Server) handleThread(conn net.Conn, scanner *bufio.Scanner, startCmd protocol.ThreadCommand) {
+	// Parse thread start data
+	var startData protocol.ThreadStartData
 	json.Unmarshal(startCmd.Data, &startData)
 
 	// Version gate: a long-lived daemon must never serve a client from a
@@ -712,8 +718,8 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 	// in-process test embedding (gate off). Old clients that predate the gate
 	// send no ClientVersion and are refused like any other mismatch.
 	if s.version != "" && startData.ClientVersion != s.version {
-		LogError("Session refused: client version %q != daemon version %q", startData.ClientVersion, s.version)
-		s.writeEvent(conn, protocol.SessionEvent{
+		LogError("Thread refused: client version %q != daemon version %q", startData.ClientVersion, s.version)
+		s.writeEvent(conn, protocol.ThreadEvent{
 			Type: "event.error",
 			Data: protocol.EventError{
 				Message: fmt.Sprintf("vix %s cannot talk to vixd %s. Restart the daemon: vix daemon stop && vix daemon start", startData.ClientVersion, s.version),
@@ -734,31 +740,31 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 		model = s.model
 	}
 
-	// The session resolves its own LLM client from the authoritative model
+	// The thread resolves its own LLM client from the authoritative model
 	// (chat-agent frontmatter, falling back to this initial spec) in initBrain.
-	// We pass nil here; if no credential is available the session enters its
+	// We pass nil here; if no credential is available the thread enters its
 	// unconfigured state rather than fabricating a doomed client.
 	var llmClient LLM
 
-	// Attach: resume a persisted session by ID instead of minting a new one.
+	// Attach: resume a persisted thread by ID instead of minting a new one.
 	// Load the record up front so we can reuse its ID and seed history; a
 	// missing record is reported with a machine-readable code so the client can
-	// orphan the session (offer /copy) rather than retry forever. Only open/
+	// orphan the thread (offer /copy) rather than retry forever. Only open/
 	// records are attachable — a record in closed/ was explicitly closed by the
 	// user and must not be resurrected by a stale reconnect.
-	var attachRec *sessionRecord
-	if startData.AttachSessionID != "" {
+	var attachRec *threadRecord
+	if startData.AttachThreadID != "" {
 		p := config.NewVixPaths(startData.ConfigDir, s.homeVixDir, cwd)
-		rec, found, err := loadOpenSessionRecord(p, startData.AttachSessionID)
+		rec, found, err := loadOpenThreadRecord(p, startData.AttachThreadID)
 		if err != nil {
-			LogError("attach: failed to load session %s: %v", startData.AttachSessionID, err)
+			LogError("attach: failed to load thread %s: %v", startData.AttachThreadID, err)
 		}
 		if !found {
-			s.writeEvent(conn, protocol.SessionEvent{
+			s.writeEvent(conn, protocol.ThreadEvent{
 				Type: "event.error",
 				Data: protocol.EventError{
-					Message: "session not found",
-					Code:    "session_not_found",
+					Message: "thread not found",
+					Code:    "thread_not_found",
 				},
 			})
 			return
@@ -766,46 +772,46 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 		attachRec = &rec
 	}
 
-	sessionID := generateSessionID()
+	threadID := generateThreadID()
 	if attachRec != nil {
-		sessionID = attachRec.ID
+		threadID = attachRec.ID
 	}
-	session := NewSession(sessionID, s, llmClient, model, cwd, startData.ConfigDir, startData.ForceInit, startData.EnableAutomaticWritePermission, startData.EnableAutomaticDirectoryAccess, startData.Headless, s.serverCtx)
+	thread := NewThread(threadID, s, llmClient, model, cwd, startData.ConfigDir, startData.ForceInit, startData.EnableAutomaticWritePermission, startData.EnableAutomaticDirectoryAccess, startData.Headless, s.serverCtx)
 
 	if attachRec != nil {
-		session.seedFromRecord(attachRec)
+		thread.seedFromRecord(attachRec)
 	}
 
-	// Seed conversation history from a forked session if requested.
-	// Must be done before session.Run() starts processing commands.
-	if startData.ForkSessionID != "" {
-		s.sessionMu.Lock()
-		forkSrc := s.sessions[startData.ForkSessionID]
-		s.sessionMu.Unlock()
+	// Seed conversation history from a forked thread if requested.
+	// Must be done before thread.Run() starts processing commands.
+	if startData.ForkThreadID != "" {
+		s.threadMu.Lock()
+		forkSrc := s.threads[startData.ForkThreadID]
+		s.threadMu.Unlock()
 		if forkSrc != nil {
 			if msgs := forkSrc.snapshotMessagesForFork(startData.ForkTurnIdx); len(msgs) > 0 {
-				session.messages = msgs
+				thread.messages = msgs
 				// Rebuild the read-gate set from the forked history so the new
-				// session can edit files the parent had already read.
-				session.rebuildReadFilesFromHistory(msgs)
-				// Rebuild the fork snapshots so this seeded session is itself
+				// thread can edit files the parent had already read.
+				thread.rebuildReadFilesFromHistory(msgs)
+				// Rebuild the fork snapshots so this seeded thread is itself
 				// forkable/trimmable — otherwise a duplicate-of-a-duplicate would
 				// find no history to copy and start empty.
-				session.turnSnapshots = rebuildTurnSnapshots(msgs)
+				thread.turnSnapshots = rebuildTurnSnapshots(msgs)
 			}
 		}
-		session.parentID = startData.ForkSessionID
-		session.forkTurnIdx = startData.ForkTurnIdx
+		thread.parentID = startData.ForkThreadID
+		thread.forkTurnIdx = startData.ForkTurnIdx
 	}
 
-	// Initialize access stats database for this session.
-	// The path depends on the session's config-dir override, if any, so we
-	// resolve it via session.paths after construction.
-	// Guard with the server mutex so concurrent sessions for the same project
+	// Initialize access stats database for this thread.
+	// The path depends on the thread's config-dir override, if any, so we
+	// resolve it via thread.paths after construction.
+	// Guard with the server mutex so concurrent threads for the same project
 	// share one connection instead of racing to overwrite s.accessDB.
 	s.mu.Lock()
 	if s.accessDB == nil {
-		db, err := initAccessStatsDB(session.paths.AccessStatsDB())
+		db, err := initAccessStatsDB(thread.paths.AccessStatsDB())
 		if err != nil {
 			LogError("Failed to initialize access stats DB (continuing without stats): %v", err)
 		} else {
@@ -813,7 +819,7 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 		}
 	}
 	s.mu.Unlock()
-	// Register the session, enforcing exclusive ownership: a persisted session
+	// Register the thread, enforcing exclusive ownership: a persisted thread
 	// may be attached by only one connection at a time. If another live
 	// connection already owns this ID (e.g. a second vix instance, or a stale
 	// reconnect), refuse with a machine-readable code so the client can react
@@ -821,72 +827,72 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 	// divergent in-memory copy that races to persist. The check and the insert
 	// are done under the same lock so two concurrent attaches can't both win.
 	// Ownership is released automatically when the owning connection drops (the
-	// delete(s.sessions, …) in the teardown below).
-	s.sessionMu.Lock()
+	// delete(s.threads, …) in the teardown below).
+	s.threadMu.Lock()
 	if attachRec != nil {
-		if _, live := s.sessions[sessionID]; live {
-			s.sessionMu.Unlock()
-			LogInfo("Attach refused: session %s is already open in another connection", sessionID)
-			s.writeEvent(conn, protocol.SessionEvent{
+		if _, live := s.threads[threadID]; live {
+			s.threadMu.Unlock()
+			LogInfo("Attach refused: thread %s is already open in another connection", threadID)
+			s.writeEvent(conn, protocol.ThreadEvent{
 				Type: "event.error",
 				Data: protocol.EventError{
-					Message: "session is already open in another window",
-					Code:    "session_busy",
+					Message: "thread is already open in another window",
+					Code:    "thread_busy",
 				},
 			})
 			return
 		}
 	}
-	s.sessions[sessionID] = session
-	s.sessionMu.Unlock()
+	s.threads[threadID] = thread
+	s.threadMu.Unlock()
 	s.notifySubscribers()
 
-	// Persist the freshly-created (or attached) session to open/ so it survives
-	// a crash and is reopened on next launch. Attached sessions are already on
-	// disk; this is a no-op-equivalent rewrite. Forked/duplicated sessions carry
+	// Persist the freshly-created (or attached) thread to open/ so it survives
+	// a crash and is reopened on next launch. Attached threads are already on
+	// disk; this is a no-op-equivalent rewrite. Forked/duplicated threads carry
 	// seeded history and are persisted too.
 	//
-	// A brand-new session with NO messages is deliberately NOT persisted here:
+	// A brand-new thread with NO messages is deliberately NOT persisted here:
 	// doing so leaves a ghost empty record if the connection drops before the
 	// first message ever arrives (the user quits, or a turn is cancelled in the
-	// connect→first-turn window). The session's first turn persists it
+	// connect→first-turn window). The thread's first turn persists it
 	// (s.persist() after the turn), so nothing with real content is ever lost.
-	if attachRec != nil || len(session.messages) > 0 {
-		session.persist()
+	if attachRec != nil || len(thread.messages) > 0 {
+		thread.persist()
 	}
 
-	LogInfo("Session %s started (cwd=%s, model=%s)", sessionID, cwd, model)
+	LogInfo("Thread %s started (cwd=%s, model=%s)", threadID, cwd, model)
 
-	// Send session started event
-	s.writeEvent(conn, protocol.SessionEvent{
-		Type: "event.session_started",
-		Data: protocol.EventSessionStarted{
-			SessionID:   sessionID,
-			StartedAt:   session.startTime.Format(time.RFC3339),
-			ParentID:    session.parentID,
-			ForkTurnIdx: session.forkTurnIdx,
+	// Send thread started event
+	s.writeEvent(conn, protocol.ThreadEvent{
+		Type: "event.thread_started",
+		Data: protocol.EventThreadStarted{
+			ThreadID:    threadID,
+			StartedAt:   thread.startTime.Format(time.RFC3339),
+			ParentID:    thread.parentID,
+			ForkTurnIdx: thread.forkTurnIdx,
 		},
 	})
 
-	// Writer goroutine: reads from session.eventChan, writes NDJSON to socket
+	// Writer goroutine: reads from thread.eventChan, writes NDJSON to socket
 	writerDone := make(chan struct{})
 	go func() {
 		defer func() {
-			LogInfo("Session %s: writer exited", sessionID)
+			LogInfo("Thread %s: writer exited", threadID)
 			close(writerDone)
 		}()
 		for {
 			select {
-			case event, ok := <-session.eventChan:
+			case event, ok := <-thread.eventChan:
 				if !ok {
 					return
 				}
 				s.writeEvent(conn, event)
-			case <-session.ctx.Done():
+			case <-thread.ctx.Done():
 				// Drain remaining events
 				for {
 					select {
-					case event := <-session.eventChan:
+					case event := <-thread.eventChan:
 						s.writeEvent(conn, event)
 					default:
 						return
@@ -896,68 +902,68 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 		}
 	}()
 
-	// Watchdog: close the conn when the session context is canceled so the
+	// Watchdog: close the conn when the thread context is canceled so the
 	// reader goroutine (blocked on scanner.Scan()) can unblock. Without this,
-	// a recovered panic inside session.Run() would leak the reader and hang
-	// handleSession forever on <-readerDone.
+	// a recovered panic inside thread.Run() would leak the reader and hang
+	// handleThread forever on <-readerDone.
 	go func() {
-		<-session.ctx.Done()
+		<-thread.ctx.Done()
 		conn.Close()
 	}()
 
-	// Reader goroutine: reads NDJSON from socket, feeds session.commandChan
+	// Reader goroutine: reads NDJSON from socket, feeds thread.commandChan
 	readerDone := make(chan struct{})
 	go func() {
 		defer func() {
-			LogInfo("Session %s: reader exited (scanner.Err=%v)", sessionID, scanner.Err())
+			LogInfo("Thread %s: reader exited (scanner.Err=%v)", threadID, scanner.Err())
 			close(readerDone)
 		}()
 		for scanner.Scan() {
-			var cmd protocol.SessionCommand
+			var cmd protocol.ThreadCommand
 			if err := json.Unmarshal(scanner.Bytes(), &cmd); err != nil {
-				LogError("Session %s: invalid command JSON: %v", sessionID, err)
+				LogError("Thread %s: invalid command JSON: %v", threadID, err)
 				continue
 			}
 
 			// Per-message auth: a connection that authenticated for
-			// session.start cannot then send unauthenticated follow-ups.
-			// Mismatch → close the connection (and the session); the
+			// thread.start cannot then send unauthenticated follow-ups.
+			// Mismatch → close the connection (and the thread); the
 			// watchdog at line ~275 already cleans up on conn close.
 			if !s.authOK(cmd.AuthToken) {
-				LogError("Session %s: command auth_token mismatch (type=%s) — closing", sessionID, cmd.Type)
+				LogError("Thread %s: command auth_token mismatch (type=%s) — closing", threadID, cmd.Type)
 				conn.Close()
 				return
 			}
 
-			if cmd.Type == "session.cancel" {
+			if cmd.Type == "thread.cancel" {
 				// Cancel the active stream immediately
-				if session.cancelStream != nil {
-					session.cancelStream()
+				if thread.cancelStream != nil {
+					thread.cancelStream()
 				}
 				// Cancel an active plan/workflow
-				if session.planCancel != nil {
-					session.planCancel()
+				if thread.planCancel != nil {
+					thread.planCancel()
 				}
 				// Cancel any in-flight background subagents
-				session.backgroundTasks.CancelAll()
+				thread.backgroundTasks.CancelAll()
 				// Reap any detached bash-tool jobs (`background: true`).
-				session.bashJobs.KillAll()
+				thread.bashJobs.KillAll()
 			}
 
-			if cmd.Type == "session.workflow_message" {
-				var msgData protocol.SessionWorkflowMessageData
+			if cmd.Type == "thread.workflow_message" {
+				var msgData protocol.ThreadWorkflowMessageData
 				json.Unmarshal(cmd.Data, &msgData)
 				if msgData.Text != "" {
 					// Non-blocking send: drop an older pending message if the channel is full
 					select {
-					case session.workflowMsgChan <- msgData.Text:
+					case thread.workflowMsgChan <- msgData.Text:
 					default:
 						// Replace the existing pending message with the newer one
 						select {
-						case <-session.workflowMsgChan:
+						case <-thread.workflowMsgChan:
 						default:
 						}
-						session.workflowMsgChan <- msgData.Text
+						thread.workflowMsgChan <- msgData.Text
 					}
 				}
 				// Do not forward to commandChan — the workflow loop polls workflowMsgChan directly
@@ -973,67 +979,67 @@ func (s *Server) handleSession(conn net.Conn, scanner *bufio.Scanner, startCmd p
 			}
 
 			select {
-			case session.commandChan <- cmd:
-			case <-session.ctx.Done():
+			case thread.commandChan <- cmd:
+			case <-thread.ctx.Done():
 				return
 			}
 
-			if cmd.Type == "session.close" {
+			if cmd.Type == "thread.close" {
 				return
 			}
 		}
-		// Socket closed — cancel session
-		session.cancel()
+		// Socket closed — cancel thread
+		thread.cancel()
 	}()
 
 	// Run the agent loop (blocking)
-	session.Run()
+	thread.Run()
 
 	// Wait for reader/writer to finish
-	session.cancel()
+	thread.cancel()
 	<-readerDone
 	<-writerDone
 
-	// Reap any detached bash-tool jobs before we drop the session — otherwise
+	// Reap any detached bash-tool jobs before we drop the thread — otherwise
 	// a leaked `john` / `cargo build` would keep chewing CPU until the
 	// container dies. Mirrors the Ctrl-C branch above.
 	//
 	// Opt-out for hosts that deliberately outlive the vix client and rely on
 	// background jobs (e.g. a pypi-server or web server) staying alive for a
 	// post-agent verifier. The Ctrl-C branch above still reaps on cancel —
-	// this only affects clean session close.
-	if os.Getenv("VIX_KEEP_BG_ON_SESSION_END") != "1" {
-		session.bashJobs.KillAll()
+	// this only affects clean thread close.
+	if os.Getenv("VIX_KEEP_BG_ON_THREAD_END") != "1" {
+		thread.bashJobs.KillAll()
 	}
 
-	// Remove session from map
-	s.sessionMu.Lock()
-	delete(s.sessions, sessionID)
-	s.sessionMu.Unlock()
+	// Remove thread from map
+	s.threadMu.Lock()
+	delete(s.threads, threadID)
+	s.threadMu.Unlock()
 	s.notifySubscribers()
 
-	// An explicit user close (the "x" action sends session.close) moves the
+	// An explicit user close (the "x" action sends thread.close) moves the
 	// record open/ -> closed/ so it is not reopened on next launch. A bare
 	// disconnect leaves it in open/ so the TUI restores it next run. Empty
 	// conversations (no turn ever happened) are deleted outright — there is
 	// nothing worth archiving.
-	if session.closedByUser {
-		session.mu.Lock()
-		empty := len(session.messages) == 0
-		session.mu.Unlock()
+	if thread.closedByUser {
+		thread.mu.Lock()
+		empty := len(thread.messages) == 0
+		thread.mu.Unlock()
 		if empty {
-			if err := deleteSessionRecord(session.paths, sessionID); err != nil {
-				LogError("close session %s: delete empty record failed: %v", sessionID, err)
+			if err := deleteThreadRecord(thread.paths, threadID); err != nil {
+				LogError("close thread %s: delete empty record failed: %v", threadID, err)
 			}
-		} else if err := moveSessionToClosed(session.paths, sessionID); err != nil {
-			LogError("close session %s: move to closed failed: %v", sessionID, err)
+		} else if err := moveThreadToClosed(thread.paths, threadID); err != nil {
+			LogError("close thread %s: move to closed failed: %v", threadID, err)
 		}
 	}
 
-	LogInfo("Session %s ended (run returned, reader done, writer done)", sessionID)
+	LogInfo("Thread %s ended (run returned, reader done, writer done)", threadID)
 }
 
-func (s *Server) writeEvent(conn net.Conn, event protocol.SessionEvent) {
+func (s *Server) writeEvent(conn net.Conn, event protocol.ThreadEvent) {
 	data, err := json.Marshal(event)
 	if err != nil {
 		LogError("Marshal event error: %v", err)
@@ -1093,13 +1099,13 @@ func (s *Server) notifySubscribers() {
 	}
 }
 
-// Sessions returns a snapshot of live sessions plus persisted open sessions.
-func (s *Server) Sessions() []SessionInfo {
-	s.sessionMu.Lock()
-	infos := make([]SessionInfo, 0, len(s.sessions))
-	liveIDs := make(map[string]struct{}, len(s.sessions))
-	for _, sess := range s.sessions {
-		info := SessionInfo{
+// Threads returns a snapshot of live threads plus persisted open threads.
+func (s *Server) Threads() []ThreadInfo {
+	s.threadMu.Lock()
+	infos := make([]ThreadInfo, 0, len(s.threads))
+	liveIDs := make(map[string]struct{}, len(s.threads))
+	for _, sess := range s.threads {
+		info := ThreadInfo{
 			ID:           sess.id,
 			CWD:          sess.cwd,
 			Model:        sess.model,
@@ -1120,14 +1126,14 @@ func (s *Server) Sessions() []SessionInfo {
 		infos = append(infos, info)
 		liveIDs[sess.id] = struct{}{}
 	}
-	s.sessionMu.Unlock()
+	s.threadMu.Unlock()
 
 	paths := config.NewVixPaths("", s.homeVixDir, "")
-	for _, rec := range listOpenSessionRecords(paths) {
+	for _, rec := range listOpenThreadRecords(paths) {
 		if _, live := liveIDs[rec.ID]; live {
 			continue
 		}
-		info := SessionInfo{
+		info := ThreadInfo{
 			ID:           rec.ID,
 			CWD:          rec.CWD,
 			Model:        rec.Model,
@@ -1301,38 +1307,38 @@ func (s *Server) CreateJob(spec jobs.Spec) (string, error) {
 }
 
 // RunJob fires the job with the given id immediately, out of band from the
-// schedule, mirroring `vix job run <id>`. It generates the run's session id up
+// schedule, mirroring `vix job run <id>`. It generates the run's thread id up
 // front and returns it once the run has been accepted; the run itself proceeds
-// in the background (its outcome lands under "Vix-initiated" sessions and the
+// in the background (its outcome lands under "Vix-initiated" threads and the
 // run log). Errors surface synchronously for an unknown id, a run already in
 // flight, or a disabled jobs engine.
 func (s *Server) RunJob(id string) (string, error) {
 	if s.jobScheduler == nil {
 		return "", fmt.Errorf("jobs engine is disabled")
 	}
-	runID := generateSessionID()
+	runID := generateThreadID()
 	if err := s.jobScheduler.RunNow(s.serverCtx, id, runID); err != nil {
 		return "", err
 	}
 	return runID, nil
 }
 
-func (s *Server) getSession(id string) *Session {
-	s.sessionMu.Lock()
-	defer s.sessionMu.Unlock()
-	return s.sessions[id]
+func (s *Server) getThread(id string) *Thread {
+	s.threadMu.Lock()
+	defer s.threadMu.Unlock()
+	return s.threads[id]
 }
 
-// sessionForWebCall returns a live session when one is attached, otherwise it
-// restores an open persisted session into a short-lived headless session for
+// threadForWebCall returns a live thread when one is attached, otherwise it
+// restores an open persisted thread into a short-lived headless thread for
 // web-only operations such as whiteboard code exploration.
-func (s *Server) sessionForWebCall(id string) (*Session, func(), error) {
-	if sess := s.getSession(id); sess != nil {
+func (s *Server) threadForWebCall(id string) (*Thread, func(), error) {
+	if sess := s.getThread(id); sess != nil {
 		return sess, nil, nil
 	}
 
 	paths := config.NewVixPaths("", s.homeVixDir, "")
-	rec, found, err := loadOpenSessionRecord(paths, id)
+	rec, found, err := loadOpenThreadRecord(paths, id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1359,7 +1365,7 @@ func (s *Server) sessionForWebCall(id string) (*Session, func(), error) {
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
-	sess := NewSession(rec.ID, s, nil, model, cwd, "", false, false, false, true, parentCtx)
+	sess := NewThread(rec.ID, s, nil, model, cwd, "", false, false, false, true, parentCtx)
 	sess.seedFromRecord(&rec)
 
 	drained := make(chan struct{})

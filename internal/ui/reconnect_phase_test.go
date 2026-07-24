@@ -6,28 +6,28 @@ import (
 	"github.com/get-vix/vix/internal/daemon"
 )
 
-// A duplicated/forked session is created as a draft and connected through
+// A duplicated/forked thread is created as a draft and connected through
 // connectFork → reconnectSuccessMsg. That handler must promote it to phaseLive:
 // otherwise its first follow-up message falls into the draft-commit branch and
-// connectDraft a fresh, empty daemon session — throwing away the fork-seeded
+// connectDraft a fresh, empty daemon thread — throwing away the fork-seeded
 // history (the "duplicate-of-a-duplicate starts empty" regression).
 func TestReconnectSuccess_PromotesDraftToLive(t *testing.T) {
 	cfg := testCfg(t.TempDir())
-	sess := newSessionState(cfg, nil) // phaseDraft, daemonSessionID ""
+	sess := newThreadState(cfg, nil) // phaseDraft, daemonThreadID ""
 	sess.reconnecting = true
 	sess.chatMessages = []ChatMessage{{}} // seeded copy (non-empty)
-	m := &Model{cfg: cfg, sessions: []*SessionState{sess}, selectedSession: 0, width: 100}
+	m := &Model{cfg: cfg, threads: []*ThreadState{sess}, selectedThread: 0, width: 100}
 
-	client := daemon.NewSessionClient(cfg.SocketPath)
-	m.updateInner(reconnectSuccessMsg{daemonSessionID: "", client: client})
+	client := daemon.NewThreadClient(cfg.SocketPath)
+	m.updateInner(reconnectSuccessMsg{daemonThreadID: "", client: client})
 
 	if sess.phase != phaseLive {
-		t.Fatalf("reconnected session must be promoted to phaseLive, got %v", sess.phase)
+		t.Fatalf("reconnected thread must be promoted to phaseLive, got %v", sess.phase)
 	}
 	if sess.reconnecting {
-		t.Fatal("reconnected session must clear reconnecting")
+		t.Fatal("reconnected thread must clear reconnecting")
 	}
 	if sess.client != client {
-		t.Fatal("reconnected session must adopt the new client")
+		t.Fatal("reconnected thread must adopt the new client")
 	}
 }

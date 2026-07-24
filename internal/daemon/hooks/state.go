@@ -8,16 +8,16 @@ const maxRecentRuns = 10
 // RunRecord is one entry in a hook's recent-fire history (State.RecentRuns).
 // Status carries the resolved outcome: for synchronous hooks it is the
 // decision behavior (allow | deny | context | modify); for asynchronous hooks
-// it is done | error. SessionID is set only for workflow/prompt hooks that ran
-// in their own session (command hooks have none).
+// it is done | error. ThreadID is set only for workflow/prompt hooks that ran
+// in their own thread (command hooks have none).
 type RunRecord struct {
-	At        time.Time `json:"at"`
-	Status    string    `json:"status"`
-	Async     bool      `json:"async"`
-	Event     string    `json:"event,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	SessionID string    `json:"session_id,omitempty"`
-	Duration  string    `json:"duration,omitempty"` // Go duration string
+	At       time.Time `json:"at"`
+	Status   string    `json:"status"`
+	Async    bool      `json:"async"`
+	Event    string    `json:"event,omitempty"`
+	Error    string    `json:"error,omitempty"`
+	ThreadID string    `json:"session_id,omitempty"`
+	Duration string    `json:"duration,omitempty"` // Go duration string
 }
 
 // State is the machine-written runtime state of one hook, persisted as

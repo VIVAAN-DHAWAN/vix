@@ -187,9 +187,9 @@ func renderAlertDialog(width, height int, s Styles, text string) string {
 	return s.CommandPaletteStyle.Width(dialogWidth).Render(content)
 }
 
-// renderSessionCloseDialog renders the session-close confirmation as a centered overlay box.
+// renderThreadCloseDialog renders the thread-close confirmation as a centered overlay box.
 // selected: 0 = Yes, 1 = No.
-func renderSessionCloseDialog(width, height int, s Styles, selected int, sessionID string) string {
+func renderThreadCloseDialog(width, height int, s Styles, selected int, threadID string) string {
 	dialogWidth := 52
 	if dialogWidth > width-4 {
 		dialogWidth = width - 4
@@ -198,13 +198,13 @@ func renderSessionCloseDialog(width, height int, s Styles, selected int, session
 
 	title := lipgloss.NewStyle().Bold(true).Foreground(colorPrimary).
 		Width(innerWidth).Align(lipgloss.Center).
-		Render("Close session?")
+		Render("Close thread?")
 
 	sep := s.CommandPaletteSepStyle.Width(innerWidth).Render(strings.Repeat("─", innerWidth))
 
-	body := "The session will be terminated."
-	if sessionID != "" {
-		body = body + "\n" + lipgloss.NewStyle().Foreground(s.ColorDimGray).Render(sessionID)
+	body := "The thread will be terminated."
+	if threadID != "" {
+		body = body + "\n" + lipgloss.NewStyle().Foreground(s.ColorDimGray).Render(threadID)
 	}
 	msg := lipgloss.NewStyle().Foreground(s.ColorDimGray).
 		Width(innerWidth).Align(lipgloss.Center).
@@ -230,7 +230,7 @@ func renderSessionCloseDialog(width, height int, s Styles, selected int, session
 
 // renderQuitDialog renders the quit confirmation as a centered overlay box,
 // styled like the command palette. width/height are the terminal dimensions.
-// selected: 0 = Yes, 1 = No. closeAll is the "close all sessions" checkbox
+// selected: 0 = Yes, 1 = No. closeAll is the "close all threads" checkbox
 // state (toggled with space, persisted as a preference).
 func renderQuitDialog(width, height int, s Styles, selected int, closeAll bool) string {
 	dialogWidth := 50
@@ -245,9 +245,9 @@ func renderQuitDialog(width, height int, s Styles, selected int, closeAll bool) 
 
 	sep := s.CommandPaletteSepStyle.Width(innerWidth).Render(strings.Repeat("─", innerWidth))
 
-	body := "Sessions will be restored on next launch."
+	body := "Threads will be restored on next launch."
 	if closeAll {
-		body = "All sessions will be closed."
+		body = "All threads will be closed."
 	}
 	msg := lipgloss.NewStyle().Foreground(s.ColorDimGray).
 		Width(innerWidth).Align(lipgloss.Center).
@@ -260,7 +260,7 @@ func renderQuitDialog(width, height int, s Styles, selected int, closeAll bool) 
 		checkboxStyle = checkboxStyle.Foreground(colorSecondary)
 	}
 	checkbox := lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).
-		Render(checkboxStyle.Render(box+" Close all sessions") +
+		Render(checkboxStyle.Render(box+" Close all threads") +
 			lipgloss.NewStyle().Foreground(s.ColorDimGray).Render(" (space)"))
 
 	yesStyle := lipgloss.NewStyle().Bold(true).Foreground(s.ColorDimGray)

@@ -13,15 +13,15 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-// testPaths returns a VixPaths whose Sessions() resolves under a fresh temp dir
-// (via config-dir override mode, which routes all session state into one dir).
+// testPaths returns a VixPaths whose Threads() resolves under a fresh temp dir
+// (via config-dir override mode, which routes all thread state into one dir).
 func testPaths(t *testing.T) config.VixPaths {
 	t.Helper()
 	return config.NewVixPaths(t.TempDir(), "", "/work")
 }
 
-func sampleRecord() sessionRecord {
-	return sessionRecord{
+func sampleRecord() threadRecord {
+	return threadRecord{
 		ID:    "sess-abc",
 		CWD:   "/work",
 		Model: "anthropic/claude-x",
@@ -36,9 +36,50 @@ func sampleRecord() sessionRecord {
 		TodoList: []protocol.TodoItem{
 			{ID: "a", Content: "do it", Status: protocol.TodoPending},
 		},
-		SessionMode:   "chat",
+		ThreadMode:    "chat",
 		StartedAt:     time.Now().Add(-time.Hour).Truncate(time.Second),
 		LastRequestAt: time.Now().Truncate(time.Second),
+	}
+}
+
+// TestMigrateLegacyThreadsDir covers the one-time sessions/ -> threads/ move:
+// a legacy record (written with the pre-rename "session_mode" key) is relocated
+// intact and still decodes its mode, and the migration is a no-op once threads/
+// exists.
+func TestMigrateLegacyThreadsDir(t *testing.T) {
+	paths := testPaths(t)
+	legacyOpen := filepath.Join(paths.LegacyThreads(), "open")
+	if err := os.MkdirAll(legacyOpen, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A record shaped like the old on-disk format (note "session_mode").
+	legacyJSON := `{"schema_version":1,"id":"leg-1","cwd":"/work","session_mode":"workflow","messages":[]}`
+	if err := os.WriteFile(filepath.Join(legacyOpen, "leg-1.json"), []byte(legacyJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateLegacyThreadsDir(paths)
+
+	// Legacy dir is gone; the record now lives under threads/open.
+	if _, err := os.Stat(paths.LegacyThreads()); !os.IsNotExist(err) {
+		t.Fatalf("legacy sessions/ dir still present after migration (err=%v)", err)
+	}
+	rec, found, err := loadOpenThreadRecord(paths, "leg-1")
+	if err != nil || !found {
+		t.Fatalf("record not found under threads/ after migration (found=%v err=%v)", found, err)
+	}
+	if rec.ThreadMode != "workflow" {
+		t.Errorf("ThreadMode = %q, want %q (legacy session_mode tag must still decode)", rec.ThreadMode, "workflow")
+	}
+
+	// Idempotent: a second run with threads/ already present is a no-op and does
+	// not recreate or touch a (re-seeded) legacy dir.
+	if err := os.MkdirAll(legacyOpen, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	migrateLegacyThreadsDir(paths)
+	if _, err := os.Stat(legacyOpen); err != nil {
+		t.Errorf("second migration should be a no-op leaving the legacy dir untouched, got err=%v", err)
 	}
 }
 
@@ -46,11 +87,11 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	paths := testPaths(t)
 	rec := sampleRecord()
 
-	if err := saveSessionRecord(paths, rec); err != nil {
+	if err := saveThreadRecord(paths, rec); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	got, found, err := loadOpenSessionRecord(paths, rec.ID)
+	got, found, err := loadOpenThreadRecord(paths, rec.ID)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -60,8 +101,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.ID != rec.ID || got.CWD != rec.CWD || got.Model != rec.Model {
 		t.Errorf("metadata mismatch: %+v", got)
 	}
-	if got.SchemaVersion != sessionRecordSchemaVersion {
-		t.Errorf("schema version = %d, want %d", got.SchemaVersion, sessionRecordSchemaVersion)
+	if got.SchemaVersion != threadRecordSchemaVersion {
+		t.Errorf("schema version = %d, want %d", got.SchemaVersion, threadRecordSchemaVersion)
 	}
 	if len(got.Messages) != 3 {
 		t.Fatalf("messages = %d, want 3", len(got.Messages))
@@ -78,10 +119,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 func TestSaveAtomicNoTempLeftover(t *testing.T) {
 	paths := testPaths(t)
-	if err := saveSessionRecord(paths, sampleRecord()); err != nil {
+	if err := saveThreadRecord(paths, sampleRecord()); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	entries, err := os.ReadDir(paths.SessionsOpen())
+	entries, err := os.ReadDir(paths.ThreadsOpen())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,23 +136,23 @@ func TestSaveAtomicNoTempLeftover(t *testing.T) {
 func TestMoveToClosed(t *testing.T) {
 	paths := testPaths(t)
 	rec := sampleRecord()
-	if err := saveSessionRecord(paths, rec); err != nil {
+	if err := saveThreadRecord(paths, rec); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := moveSessionToClosed(paths, rec.ID); err != nil {
+	if err := moveThreadToClosed(paths, rec.ID); err != nil {
 		t.Fatalf("move: %v", err)
 	}
 
 	// No longer in open/.
-	if _, err := os.Stat(sessionRecordPath(paths.SessionsOpen(), rec.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(threadRecordPath(paths.ThreadsOpen(), rec.ID)); !os.IsNotExist(err) {
 		t.Error("record still present in open/ after move")
 	}
 	// Present in closed/.
-	if _, err := os.Stat(sessionRecordPath(paths.SessionsClosed(), rec.ID)); err != nil {
+	if _, err := os.Stat(threadRecordPath(paths.ThreadsClosed(), rec.ID)); err != nil {
 		t.Errorf("record not in closed/: %v", err)
 	}
 	// No longer attachable: a closed record must not be resurrected.
-	_, found, err := loadOpenSessionRecord(paths, rec.ID)
+	_, found, err := loadOpenThreadRecord(paths, rec.ID)
 	if err != nil {
 		t.Fatalf("load after move: %v", err)
 	}
@@ -120,11 +161,11 @@ func TestMoveToClosed(t *testing.T) {
 	}
 }
 
-// TestSessionListReturnsAllDirs: session.list returns every persisted open
-// session regardless of the requesting cwd, so the TUI can group sessions by
-// working directory. cwd scoping (which sessions to auto-attach on launch) is
+// TestThreadListReturnsAllDirs: thread.list returns every persisted open
+// thread regardless of the requesting cwd, so the TUI can group threads by
+// working directory. cwd scoping (which threads to auto-attach on launch) is
 // applied by the client, not by this handler.
-func TestSessionListReturnsAllDirs(t *testing.T) {
+func TestThreadListReturnsAllDirs(t *testing.T) {
 	dir := t.TempDir()
 	paths := config.NewVixPaths(dir, "", "/work")
 
@@ -142,23 +183,23 @@ func TestSessionListReturnsAllDirs(t *testing.T) {
 	vixRun.Origin = "vix"
 	vixRun.Trigger = &protocol.TriggerInfo{Type: "cron", Ref: "job-1"}
 
-	for _, r := range []sessionRecord{userSame, userOther, vixRun} {
-		if err := saveSessionRecord(paths, r); err != nil {
+	for _, r := range []threadRecord{userSame, userOther, vixRun} {
+		if err := saveThreadRecord(paths, r); err != nil {
 			t.Fatalf("save %s: %v", r.ID, err)
 		}
 	}
 
 	srv := newInstanceTestServer(t)
 	RegisterBuiltinHandlers(srv)
-	resp, err := srv.GetHandler("session.list")(map[string]any{
+	resp, err := srv.GetHandler("thread.list")(map[string]any{
 		"cwd": "/work", "config_dir": dir,
 	})
 	if err != nil {
-		t.Fatalf("session.list: %v", err)
+		t.Fatalf("thread.list: %v", err)
 	}
-	sums, ok := resp["sessions"].([]protocol.SessionSummary)
+	sums, ok := resp["threads"].([]protocol.ThreadSummary)
 	if !ok {
-		t.Fatalf("sessions has unexpected type %T", resp["sessions"])
+		t.Fatalf("threads has unexpected type %T", resp["threads"])
 	}
 
 	got := map[string]bool{}
@@ -166,13 +207,13 @@ func TestSessionListReturnsAllDirs(t *testing.T) {
 		got[s.ID] = true
 	}
 	if !got["user-same-cwd"] {
-		t.Error("user session for the requesting cwd missing")
+		t.Error("user thread for the requesting cwd missing")
 	}
 	if !got["user-other-cwd"] {
-		t.Error("user session for another cwd missing: session.list must return all directories")
+		t.Error("user thread for another cwd missing: thread.list must return all directories")
 	}
 	if !got["vix-run"] {
-		t.Error("vix-initiated session missing")
+		t.Error("vix-initiated thread missing")
 	}
 }
 
@@ -188,16 +229,16 @@ func TestListOpenExcludesClosed(t *testing.T) {
 	closed := sampleRecord()
 	closed.ID = "closed-1"
 
-	for _, r := range []sessionRecord{open1, open2, closed} {
-		if err := saveSessionRecord(paths, r); err != nil {
+	for _, r := range []threadRecord{open1, open2, closed} {
+		if err := saveThreadRecord(paths, r); err != nil {
 			t.Fatalf("save %s: %v", r.ID, err)
 		}
 	}
-	if err := moveSessionToClosed(paths, closed.ID); err != nil {
+	if err := moveThreadToClosed(paths, closed.ID); err != nil {
 		t.Fatalf("move: %v", err)
 	}
 
-	recs := listOpenSessionRecords(paths)
+	recs := listOpenThreadRecords(paths)
 	if len(recs) != 2 {
 		t.Fatalf("open count = %d, want 2", len(recs))
 	}
@@ -208,15 +249,15 @@ func TestListOpenExcludesClosed(t *testing.T) {
 }
 
 func TestPersistenceDisabledNoHome(t *testing.T) {
-	// Normal mode with empty home => Sessions() empty => save is a no-op.
+	// Normal mode with empty home => Threads() empty => save is a no-op.
 	paths := config.NewVixPaths("", "", "/work")
-	if paths.SessionsOpen() != "" {
-		t.Fatalf("expected empty SessionsOpen with no home, got %q", paths.SessionsOpen())
+	if paths.ThreadsOpen() != "" {
+		t.Fatalf("expected empty ThreadsOpen with no home, got %q", paths.ThreadsOpen())
 	}
-	if err := saveSessionRecord(paths, sampleRecord()); err != nil {
+	if err := saveThreadRecord(paths, sampleRecord()); err != nil {
 		t.Errorf("save should be a no-op (nil), got %v", err)
 	}
-	_, found, err := loadOpenSessionRecord(paths, "sess-abc")
+	_, found, err := loadOpenThreadRecord(paths, "sess-abc")
 	if err != nil || found {
 		t.Errorf("load on disabled store: found=%v err=%v", found, err)
 	}
@@ -323,7 +364,7 @@ func TestBuildReplayMessagesInterleavesFailureNotices(t *testing.T) {
 
 func TestBuildReplayMessagesFailureNoticeWithoutMessages(t *testing.T) {
 	// A run that aborts before any message still surfaces its failure notice,
-	// anchored before everything (-1), so an opened session isn't blank.
+	// anchored before everything (-1), so an opened thread isn't blank.
 	failures := []failureNoticeRecord{{AfterIdx: -1, StepID: "detect", Reason: "workflow failed: step 'detect' bash failed"}}
 	out := buildReplayMessages(nil, nil, failures)
 	if len(out) != 1 {
@@ -369,18 +410,18 @@ func TestBuildReplayMessagesTimestamp(t *testing.T) {
 	}
 }
 
-// newReplaySession builds a minimal Session wired for emitReplay (eventChan +
+// newReplayThread builds a minimal Thread wired for emitReplay (eventChan +
 // ctx). Persistence is disabled (empty paths) so persist() is a no-op.
-func newReplaySession(t *testing.T, rec *sessionRecord) *Session {
+func newReplayThread(t *testing.T, rec *threadRecord) *Thread {
 	t.Helper()
-	s := &Session{
-		id:          rec.ID,
-		model:       "anthropic/new-default",
-		eventChan:   make(chan protocol.SessionEvent, 4),
-		sessionMode: rec.SessionMode,
+	s := &Thread{
+		id:         rec.ID,
+		model:      "anthropic/new-default",
+		eventChan:  make(chan protocol.ThreadEvent, 4),
+		threadMode: rec.ThreadMode,
 	}
-	if s.sessionMode == "" {
-		s.sessionMode = "chat"
+	if s.threadMode == "" {
+		s.threadMode = "chat"
 	}
 	s.activeWorkflow = rec.ActiveWorkflow
 	s.messages = append([]llm.MessageParam(nil), rec.Messages...)
@@ -389,7 +430,7 @@ func newReplaySession(t *testing.T, rec *sessionRecord) *Session {
 	return s
 }
 
-func captureReplay(t *testing.T, s *Session) protocol.EventReplay {
+func captureReplay(t *testing.T, s *Thread) protocol.EventReplay {
 	t.Helper()
 	s.emitReplay()
 	select {
@@ -411,7 +452,7 @@ func captureReplay(t *testing.T, s *Session) protocol.EventReplay {
 func TestEmitReplayModelChangedWarning(t *testing.T) {
 	rec := sampleRecord()
 	rec.Model = "anthropic/old-saved"
-	s := newReplaySession(t, &rec) // s.model = anthropic/new-default
+	s := newReplayThread(t, &rec) // s.model = anthropic/new-default
 
 	rep := captureReplay(t, s)
 	if len(rep.Warnings) != 1 {
@@ -428,7 +469,7 @@ func TestEmitReplayModelChangedWarning(t *testing.T) {
 func TestEmitReplayNoWarningWhenModelSame(t *testing.T) {
 	rec := sampleRecord()
 	rec.Model = "anthropic/new-default"
-	s := newReplaySession(t, &rec)
+	s := newReplayThread(t, &rec)
 
 	rep := captureReplay(t, s)
 	if len(rep.Warnings) != 0 {
@@ -439,17 +480,17 @@ func TestEmitReplayNoWarningWhenModelSame(t *testing.T) {
 func TestEmitReplayWorkflowMissingFallsBackToChat(t *testing.T) {
 	rec := sampleRecord()
 	rec.Model = "anthropic/new-default" // avoid model warning
-	rec.SessionMode = "workflow"
+	rec.ThreadMode = "workflow"
 	rec.ActiveWorkflow = "ghost-workflow"
-	s := newReplaySession(t, &rec)
+	s := newReplayThread(t, &rec)
 	// s.workflows is empty -> workflow no longer exists.
 
 	rep := captureReplay(t, s)
-	if rep.SessionMode != "chat" || rep.ActiveWorkflow != "" {
-		t.Errorf("expected fallback to chat: mode=%q wf=%q", rep.SessionMode, rep.ActiveWorkflow)
+	if rep.ThreadMode != "chat" || rep.ActiveWorkflow != "" {
+		t.Errorf("expected fallback to chat: mode=%q wf=%q", rep.ThreadMode, rep.ActiveWorkflow)
 	}
-	if s.sessionMode != "chat" || s.activeWorkflow != "" {
-		t.Errorf("session state not updated: mode=%q wf=%q", s.sessionMode, s.activeWorkflow)
+	if s.threadMode != "chat" || s.activeWorkflow != "" {
+		t.Errorf("thread state not updated: mode=%q wf=%q", s.threadMode, s.activeWorkflow)
 	}
 	if len(rep.Warnings) != 1 {
 		t.Fatalf("warnings = %v, want 1 (workflow missing)", rep.Warnings)
@@ -459,74 +500,74 @@ func TestEmitReplayWorkflowMissingFallsBackToChat(t *testing.T) {
 func TestEmitReplayWorkflowPresentKept(t *testing.T) {
 	rec := sampleRecord()
 	rec.Model = "anthropic/new-default"
-	rec.SessionMode = "workflow"
+	rec.ThreadMode = "workflow"
 	rec.ActiveWorkflow = "build"
-	s := newReplaySession(t, &rec)
+	s := newReplayThread(t, &rec)
 	s.workflows = []*WorkflowDef{{Name: "build"}}
 
 	rep := captureReplay(t, s)
-	if rep.SessionMode != "workflow" || rep.ActiveWorkflow != "build" {
-		t.Errorf("workflow should be kept: mode=%q wf=%q", rep.SessionMode, rep.ActiveWorkflow)
+	if rep.ThreadMode != "workflow" || rep.ActiveWorkflow != "build" {
+		t.Errorf("workflow should be kept: mode=%q wf=%q", rep.ThreadMode, rep.ActiveWorkflow)
 	}
 	if len(rep.Warnings) != 0 {
 		t.Errorf("warnings = %v, want none", rep.Warnings)
 	}
 }
 
-func TestDeleteSessionRecord(t *testing.T) {
+func TestDeleteThreadRecord(t *testing.T) {
 	paths := testPaths(t)
 
 	// Record in open/ is removed.
 	open := sampleRecord()
 	open.ID = "del-open"
-	if err := saveSessionRecord(paths, open); err != nil {
+	if err := saveThreadRecord(paths, open); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := deleteSessionRecord(paths, open.ID); err != nil {
+	if err := deleteThreadRecord(paths, open.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := os.Stat(sessionRecordPath(paths.SessionsOpen(), open.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(threadRecordPath(paths.ThreadsOpen(), open.ID)); !os.IsNotExist(err) {
 		t.Error("record still present in open/ after delete")
 	}
 
 	// Record in closed/ is removed too.
 	closed := sampleRecord()
 	closed.ID = "del-closed"
-	if err := saveSessionRecord(paths, closed); err != nil {
+	if err := saveThreadRecord(paths, closed); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := moveSessionToClosed(paths, closed.ID); err != nil {
+	if err := moveThreadToClosed(paths, closed.ID); err != nil {
 		t.Fatalf("move: %v", err)
 	}
-	if err := deleteSessionRecord(paths, closed.ID); err != nil {
+	if err := deleteThreadRecord(paths, closed.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := os.Stat(sessionRecordPath(paths.SessionsClosed(), closed.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(threadRecordPath(paths.ThreadsClosed(), closed.ID)); !os.IsNotExist(err) {
 		t.Error("record still present in closed/ after delete")
 	}
 
 	// Missing record and disabled persistence are no-ops.
-	if err := deleteSessionRecord(paths, "no-such-id"); err != nil {
+	if err := deleteThreadRecord(paths, "no-such-id"); err != nil {
 		t.Errorf("delete missing: %v", err)
 	}
-	if err := deleteSessionRecord(config.NewVixPaths("", "", "/work"), "x"); err != nil {
+	if err := deleteThreadRecord(config.NewVixPaths("", "", "/work"), "x"); err != nil {
 		t.Errorf("delete with persistence disabled: %v", err)
 	}
 }
 
 // writeClosedRecord saves rec and moves it to closed/, returning its path.
-func writeClosedRecord(t *testing.T, paths config.VixPaths, rec sessionRecord) string {
+func writeClosedRecord(t *testing.T, paths config.VixPaths, rec threadRecord) string {
 	t.Helper()
-	if err := saveSessionRecord(paths, rec); err != nil {
+	if err := saveThreadRecord(paths, rec); err != nil {
 		t.Fatalf("save %s: %v", rec.ID, err)
 	}
-	if err := moveSessionToClosed(paths, rec.ID); err != nil {
+	if err := moveThreadToClosed(paths, rec.ID); err != nil {
 		t.Fatalf("move %s: %v", rec.ID, err)
 	}
-	return sessionRecordPath(paths.SessionsClosed(), rec.ID)
+	return threadRecordPath(paths.ThreadsClosed(), rec.ID)
 }
 
-func TestTrimStaleClosedSessions(t *testing.T) {
+func TestTrimStaleClosedThreads(t *testing.T) {
 	paths := testPaths(t)
 	week := 7 * 24 * time.Hour
 
@@ -548,7 +589,7 @@ func TestTrimStaleClosedSessions(t *testing.T) {
 	staleStartPath := writeClosedRecord(t, paths, staleStart)
 
 	// Corrupt file with an old mtime falls back to mtime and is trimmed.
-	corruptOld := filepath.Join(paths.SessionsClosed(), "corrupt-old.json")
+	corruptOld := filepath.Join(paths.ThreadsClosed(), "corrupt-old.json")
 	if err := os.WriteFile(corruptOld, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +599,7 @@ func TestTrimStaleClosedSessions(t *testing.T) {
 	}
 
 	// Corrupt file with a fresh mtime is kept.
-	corruptFresh := filepath.Join(paths.SessionsClosed(), "corrupt-fresh.json")
+	corruptFresh := filepath.Join(paths.ThreadsClosed(), "corrupt-fresh.json")
 	if err := os.WriteFile(corruptFresh, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -567,25 +608,25 @@ func TestTrimStaleClosedSessions(t *testing.T) {
 	openStale := sampleRecord()
 	openStale.ID = "open-stale"
 	openStale.LastRequestAt = time.Now().Add(-2 * week)
-	if err := saveSessionRecord(paths, openStale); err != nil {
+	if err := saveThreadRecord(paths, openStale); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	trimStaleClosedSessions(paths, week)
+	trimStaleClosedThreads(paths, week)
 
 	for _, p := range []string{stalePath, staleStartPath, corruptOld} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("%s should have been trimmed", filepath.Base(p))
 		}
 	}
-	for _, p := range []string{freshPath, corruptFresh, sessionRecordPath(paths.SessionsOpen(), openStale.ID)} {
+	for _, p := range []string{freshPath, corruptFresh, threadRecordPath(paths.ThreadsOpen(), openStale.ID)} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("%s should have been kept: %v", filepath.Base(p), err)
 		}
 	}
 }
 
-func TestTrimStaleClosedSessionsNever(t *testing.T) {
+func TestTrimStaleClosedThreadsNever(t *testing.T) {
 	paths := testPaths(t)
 
 	stale := sampleRecord()
@@ -594,8 +635,8 @@ func TestTrimStaleClosedSessionsNever(t *testing.T) {
 	p := writeClosedRecord(t, paths, stale)
 
 	// maxAge <= 0 means retention disabled ("never"): nothing is removed.
-	trimStaleClosedSessions(paths, 0)
-	trimStaleClosedSessions(paths, -time.Hour)
+	trimStaleClosedThreads(paths, 0)
+	trimStaleClosedThreads(paths, -time.Hour)
 
 	if _, err := os.Stat(p); err != nil {
 		t.Errorf("record should have been kept with retention disabled: %v", err)
@@ -604,17 +645,17 @@ func TestTrimStaleClosedSessionsNever(t *testing.T) {
 
 // ── Unread flag ──
 
-// TestUnreadRoundTrip: the session-global unread flag persists and surfaces in
+// TestUnreadRoundTrip: the thread-global unread flag persists and surfaces in
 // summaries; legacy records without the field read as seen.
 func TestUnreadRoundTrip(t *testing.T) {
 	paths := testPaths(t)
 
 	rec := sampleRecord()
 	rec.Unread = true
-	if err := saveSessionRecord(paths, rec); err != nil {
+	if err := saveThreadRecord(paths, rec); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	got, found, _ := loadOpenSessionRecord(paths, rec.ID)
+	got, found, _ := loadOpenThreadRecord(paths, rec.ID)
 	if !found || !got.Unread {
 		t.Fatalf("unread flag lost: found=%v rec=%+v", found, got)
 	}
@@ -625,33 +666,33 @@ func TestUnreadRoundTrip(t *testing.T) {
 	// Legacy record: no unread field on disk → read.
 	legacy := sampleRecord()
 	legacy.ID = "sess-legacy"
-	if err := saveSessionRecord(paths, legacy); err != nil {
+	if err := saveThreadRecord(paths, legacy); err != nil {
 		t.Fatalf("save legacy: %v", err)
 	}
-	got, _, _ = loadOpenSessionRecord(paths, legacy.ID)
+	got, _, _ = loadOpenThreadRecord(paths, legacy.ID)
 	if got.Unread || got.summary().Unread {
 		t.Fatal("legacy record must read as seen")
 	}
 }
 
-// TestMarkReadCommandClearsUnread: buildRecord reflects the session flag, and
+// TestMarkReadCommandClearsUnread: buildRecord reflects the thread flag, and
 // the mark_read transition persists.
 func TestMarkReadCommandClearsUnread(t *testing.T) {
 	paths := testPaths(t)
 	srv := NewServer("/tmp/unused.sock", config.Credential{}, "t", "m", &config.DaemonConfig{}, nil)
-	sess := NewSession("sess-mr", srv, nil, "m", "/work", paths.Override(), false, true, true, true, context.Background())
+	sess := NewThread("sess-mr", srv, nil, "m", "/work", paths.Override(), false, true, true, true, context.Background())
 
 	sess.unread = true
 	sess.persist()
-	got, found, _ := loadOpenSessionRecord(sess.paths, "sess-mr")
+	got, found, _ := loadOpenThreadRecord(sess.paths, "sess-mr")
 	if !found || !got.Unread {
 		t.Fatalf("turn-end persist must carry unread, got %+v", got)
 	}
 
-	// What the session.mark_read command handler does:
+	// What the thread.mark_read command handler does:
 	sess.unread = false
 	sess.persist()
-	got, _, _ = loadOpenSessionRecord(sess.paths, "sess-mr")
+	got, _, _ = loadOpenThreadRecord(sess.paths, "sess-mr")
 	if got.Unread {
 		t.Fatal("mark_read must clear the persisted flag")
 	}
@@ -663,12 +704,12 @@ func TestSweepExemptsUnreadRuns(t *testing.T) {
 	paths := testPaths(t)
 	trig := &protocol.TriggerInfo{Type: "cron", Ref: "job-x"}
 	mk := func(id string, age time.Duration, status string, unread bool) {
-		rec := sessionRecord{
+		rec := threadRecord{
 			ID: id, CWD: "/work", Origin: "vix", Trigger: trig,
 			JobStatus: status, Unread: unread,
-			SessionMode: "chat", StartedAt: time.Now().Add(-age),
+			ThreadMode: "chat", StartedAt: time.Now().Add(-age),
 		}
-		if err := saveSessionRecord(paths, rec); err != nil {
+		if err := saveThreadRecord(paths, rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -684,7 +725,7 @@ func TestSweepExemptsUnreadRuns(t *testing.T) {
 	sweepJobRunRecords(paths, "job-x")
 
 	openIDs := map[string]bool{}
-	for _, r := range listSessionRecordsIn(paths.SessionsOpen()) {
+	for _, r := range listThreadRecordsIn(paths.ThreadsOpen()) {
 		openIDs[r.ID] = true
 	}
 	for _, want := range []string{"r1", "r2", "r3", "r4", "r5"} {

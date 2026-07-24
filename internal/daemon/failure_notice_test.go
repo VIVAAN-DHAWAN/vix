@@ -26,7 +26,7 @@ func TestWorkflowStepIDFromError(t *testing.T) {
 }
 
 func TestRecordFailureNotice_EmptyReasonIgnored(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	s.recordFailureNotice("deny", "   ")
 	if len(s.failureNotices) != 0 {
 		t.Fatalf("blank reason should be ignored, got %+v", s.failureNotices)
@@ -34,7 +34,7 @@ func TestRecordFailureNotice_EmptyReasonIgnored(t *testing.T) {
 }
 
 func TestRecordFailureNotice_AnchorsAtEnd(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	s.recordFailureNotice("detect", "workflow failed: step 'detect' bash failed")
 	if len(s.failureNotices) != 1 {
 		t.Fatalf("expected 1 failure notice, got %d", len(s.failureNotices))
@@ -50,9 +50,9 @@ func TestRecordFailureNotice_AnchorsAtEnd(t *testing.T) {
 
 // A real workflow that aborts at a failing bash preflight step yields an error
 // naming the step, which the runWorkflow path turns into a persisted failure
-// notice so the reopened session is not blank.
+// notice so the reopened thread is not blank.
 func TestExecuteWorkflow_FailingBashStepRecordsFailureNotice(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	wf := &WorkflowDef{
 		Name:       "preflight",
 		EntryPoint: StepRef{ID: "deny"},
@@ -81,7 +81,7 @@ func TestExecuteWorkflow_FailingBashStepRecordsFailureNotice(t *testing.T) {
 		t.Errorf("persisted failure notice wrong: %+v", rec.FailureNotices[0])
 	}
 
-	// The reopened session replays the failure as a system/error block instead
+	// The reopened thread replays the failure as a system/error block instead
 	// of a blank transcript.
 	out := buildReplayMessages(rec.Messages, rec.RetryNotices, rec.FailureNotices)
 	var sawError bool

@@ -26,7 +26,7 @@ var readTrackingTools = map[string]bool{
 	"write_minified_file": true,
 }
 
-func (s *Session) markFileRead(absPath string) {
+func (s *Thread) markFileRead(absPath string) {
 	s.readFilesMu.Lock()
 	defer s.readFilesMu.Unlock()
 	if s.readFiles == nil {
@@ -35,16 +35,16 @@ func (s *Session) markFileRead(absPath string) {
 	s.readFiles[absPath] = true
 }
 
-func (s *Session) hasBeenRead(absPath string) bool {
+func (s *Thread) hasBeenRead(absPath string) bool {
 	s.readFilesMu.RLock()
 	defer s.readFilesMu.RUnlock()
 	return s.readFiles[absPath]
 }
 
 // enforceReadGate returns a non-nil ToolResult (with IsError=true) when an
-// edit call targets a file the session has never read. Returns nil when the
+// edit call targets a file the thread has never read. Returns nil when the
 // call is allowed to proceed.
-func (s *Session) enforceReadGate(name string, params map[string]any) *ToolResult {
+func (s *Thread) enforceReadGate(name string, params map[string]any) *ToolResult {
 	if !readGatedEditTools[name] {
 		return nil
 	}
@@ -61,7 +61,7 @@ func (s *Session) enforceReadGate(name string, params map[string]any) *ToolResul
 	}
 	return &ToolResult{
 		Output: fmt.Sprintf(
-			"error: %s was blocked because %q has not been read in this session yet. Call read_file (or read_minified_file) on this path first so your change is based on the current on-disk contents.",
+			"error: %s was blocked because %q has not been read in this thread yet. Call read_file (or read_minified_file) on this path first so your change is based on the current on-disk contents.",
 			name, pathStr,
 		),
 		IsError: true,
@@ -70,7 +70,7 @@ func (s *Session) enforceReadGate(name string, params map[string]any) *ToolResul
 
 // maybeMarkRead records a successful read/edit/write so that future edits
 // on the same file see it as known-to-the-LLM.
-func (s *Session) maybeMarkRead(name string, params map[string]any, isError bool) {
+func (s *Thread) maybeMarkRead(name string, params map[string]any, isError bool) {
 	if isError {
 		return
 	}
@@ -89,14 +89,14 @@ func (s *Session) maybeMarkRead(name string, params map[string]any, isError bool
 }
 
 // rebuildReadFilesFromHistory reconstructs the read-gate set from a restored
-// conversation history. Session persistence carries s.messages but not the
-// in-memory readFiles map, so a resumed session would otherwise treat every
+// conversation history. Thread persistence carries s.messages but not the
+// in-memory readFiles map, so a resumed thread would otherwise treat every
 // previously-read file as unread and block edits on it. We replay the history
 // applying the same rules as the live path (maybeMarkRead): a read/edit/write
 // tool_use marks its target path as read only when its matching tool_result is
 // non-error. A tool_use with no matching result (e.g. an interrupted final
 // turn) is treated conservatively and left unmarked.
-func (s *Session) rebuildReadFilesFromHistory(msgs []llm.MessageParam) {
+func (s *Thread) rebuildReadFilesFromHistory(msgs []llm.MessageParam) {
 	// Collect tool_result outcomes by tool_use ID first, since a tool_use and
 	// its result live in separate (adjacent) messages.
 	resultErr := make(map[string]bool)

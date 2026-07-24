@@ -11,12 +11,12 @@ import (
 	"github.com/get-vix/vix/internal/protocol"
 )
 
-// MessageSessionSpec is the public, stable schema for creating a Vix-initiated
-// message session — a one-message conversation that lands in the Sessions tab
+// MessageThreadSpec is the public, stable schema for creating a Vix-initiated
+// message thread — a one-message conversation that lands in the Threads tab
 // under "Vix-initiated". It is the payload of the message.create RPC and the
-// `vix session create` CLI. Deliberately a small surface (not the internal
-// sessionRecord) so the on-disk format can evolve independently.
-type MessageSessionSpec struct {
+// `vix thread create` CLI. Deliberately a small surface (not the internal
+// threadRecord) so the on-disk format can evolve independently.
+type MessageThreadSpec struct {
 	// Message is the assistant text shown to the user. Required unless
 	// MessageFile is set (exactly one of the two).
 	Message string `json:"message"`
@@ -25,9 +25,9 @@ type MessageSessionSpec struct {
 	// (e.g. a hook delivering markdown). The file must exist and be non-empty.
 	MessageFile string `json:"message_file,omitempty"`
 	// CWD is the project the conversation is scoped to. Required; must be an
-	// existing directory. The session surfaces in any TUI launched there.
+	// existing directory. The thread surfaces in any TUI launched there.
 	CWD string `json:"cwd"`
-	// Title is the Sessions-tab display title. Optional; empty falls back to
+	// Title is the Threads-tab display title. Optional; empty falls back to
 	// the first message.
 	Title string `json:"title,omitempty"`
 	// Unread controls the unread dot. Optional; defaults to true.
@@ -36,12 +36,12 @@ type MessageSessionSpec struct {
 	Trigger *protocol.TriggerInfo `json:"trigger,omitempty"`
 }
 
-// createMessageSession materialises a Vix-initiated message session from spec
-// and persists it to open/, returning the new session id. Origin is always
+// createMessageThread materialises a Vix-initiated message thread from spec
+// and persists it to open/, returning the new thread id. Origin is always
 // "vix" (so it groups under Vix-initiated and never re-triggers hooks). This is
-// the single implementation behind writeJobAlertSession, the message.create
-// RPC, and `vix session create`.
-func (s *Server) createMessageSession(spec MessageSessionSpec) (string, error) {
+// the single implementation behind writeJobAlertThread, the message.create
+// RPC, and `vix thread create`.
+func (s *Server) createMessageThread(spec MessageThreadSpec) (string, error) {
 	message := spec.Message
 	if spec.MessageFile != "" {
 		if strings.TrimSpace(spec.Message) != "" {
@@ -68,8 +68,8 @@ func (s *Server) createMessageSession(spec MessageSessionSpec) (string, error) {
 		unread = *spec.Unread
 	}
 
-	rec := sessionRecord{
-		ID:      generateSessionID(),
+	rec := threadRecord{
+		ID:      generateThreadID(),
 		CWD:     spec.CWD,
 		Title:   spec.Title,
 		Origin:  "vix",
@@ -79,14 +79,14 @@ func (s *Server) createMessageSession(spec MessageSessionSpec) (string, error) {
 			Role:    llm.RoleAssistant,
 			Content: []llm.ContentBlock{{Type: llm.BlockText, Text: message}},
 		}},
-		SessionMode: "chat",
-		StartedAt:   time.Now(),
+		ThreadMode: "chat",
+		StartedAt:  time.Now(),
 	}
 
 	paths := config.NewVixPaths("", s.homeVixDir, spec.CWD)
-	if err := saveSessionRecord(paths, rec); err != nil {
+	if err := saveThreadRecord(paths, rec); err != nil {
 		return "", err
 	}
-	s.broadcastSessionsChanged()
+	s.broadcastThreadsChanged()
 	return rec.ID, nil
 }

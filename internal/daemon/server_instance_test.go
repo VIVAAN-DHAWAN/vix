@@ -20,7 +20,7 @@ func newInstanceTestServer(t *testing.T) *Server {
 	t.Helper()
 	sock := filepath.Join("/tmp", fmt.Sprintf("vixd-inst-%d.sock", time.Now().UnixNano()))
 	t.Cleanup(func() { os.Remove(sock) })
-	return NewServer(sock, config.Credential{}, "test-session", "test-model", &config.DaemonConfig{}, nil)
+	return NewServer(sock, config.Credential{}, "test-thread", "test-model", &config.DaemonConfig{}, nil)
 }
 
 // serve starts the server in a goroutine and waits until it is accepting
@@ -56,7 +56,7 @@ func registerInstance(t *testing.T, sock string) net.Conn {
 		t.Fatalf("dial: %v", err)
 	}
 	data, _ := json.Marshal(protocol.InstanceRegisterData{Mode: "tui"})
-	cmd := protocol.SessionCommand{Type: "instance.register", Data: data}
+	cmd := protocol.ThreadCommand{Type: "instance.register", Data: data}
 	payload, _ := json.Marshal(cmd)
 	payload = append(payload, '\n')
 	if _, err := conn.Write(payload); err != nil {
@@ -141,23 +141,23 @@ func TestDaemonStopRPC(t *testing.T) {
 	}
 }
 
-// TestSessionVersionGate: a session start from a mismatched client build is
+// TestThreadVersionGate: a thread start from a mismatched client build is
 // refused with code "version_mismatch"; only an exact match passes.
-func TestSessionVersionGate(t *testing.T) {
+func TestThreadVersionGate(t *testing.T) {
 	srv := newInstanceTestServer(t)
 	srv.SetVersion("v1.2.3")
 	_, cancel := serve(t, srv)
 	defer cancel()
 
-	startSession := func(clientVersion string) protocol.SessionEvent {
+	startThread := func(clientVersion string) protocol.ThreadEvent {
 		t.Helper()
 		conn, err := net.Dial("unix", srv.sockPath)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
-		data, _ := json.Marshal(protocol.SessionStartData{CWD: "/tmp", ClientVersion: clientVersion})
-		cmd := protocol.SessionCommand{Type: "session.start", Data: data}
+		data, _ := json.Marshal(protocol.ThreadStartData{CWD: "/tmp", ClientVersion: clientVersion})
+		cmd := protocol.ThreadCommand{Type: "thread.start", Data: data}
 		payload, _ := json.Marshal(cmd)
 		payload = append(payload, '\n')
 		if _, err := conn.Write(payload); err != nil {
@@ -165,7 +165,7 @@ func TestSessionVersionGate(t *testing.T) {
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		dec := json.NewDecoder(conn)
-		var ev protocol.SessionEvent
+		var ev protocol.ThreadEvent
 		if err := dec.Decode(&ev); err != nil {
 			t.Fatalf("read event: %v", err)
 		}
@@ -173,7 +173,7 @@ func TestSessionVersionGate(t *testing.T) {
 	}
 
 	// Mismatched client → refused.
-	ev := startSession("v9.9.9")
+	ev := startThread("v9.9.9")
 	if ev.Type != "event.error" {
 		t.Fatalf("mismatched client: got event %q, want event.error", ev.Type)
 	}
@@ -185,19 +185,19 @@ func TestSessionVersionGate(t *testing.T) {
 	}
 
 	// Empty client version (pre-gate build) → refused too.
-	ev = startSession("")
+	ev = startThread("")
 	if ev.Type != "event.error" {
 		t.Fatalf("empty client version: got event %q, want event.error", ev.Type)
 	}
 
-	// Matching client → session starts.
-	ev = startSession("v1.2.3")
-	if ev.Type != "event.session_started" {
-		t.Fatalf("matching client: got event %q, want event.session_started", ev.Type)
+	// Matching client → thread starts.
+	ev = startThread("v1.2.3")
+	if ev.Type != "event.thread_started" {
+		t.Fatalf("matching client: got event %q, want event.thread_started", ev.Type)
 	}
 
 	// Dev client against a stamped daemon → refused like any other mismatch.
-	ev = startSession("dev")
+	ev = startThread("dev")
 	if ev.Type != "event.error" {
 		t.Fatalf("dev client: got event %q, want event.error", ev.Type)
 	}
@@ -205,10 +205,10 @@ func TestSessionVersionGate(t *testing.T) {
 
 // readInstanceEvent reads one event from ic with a deadline, failing the test on
 // timeout or error.
-func readInstanceEvent(t *testing.T, ic *InstanceClient) protocol.SessionEvent {
+func readInstanceEvent(t *testing.T, ic *InstanceClient) protocol.ThreadEvent {
 	t.Helper()
 	type res struct {
-		ev  protocol.SessionEvent
+		ev  protocol.ThreadEvent
 		err error
 	}
 	ch := make(chan res, 1)
@@ -224,14 +224,14 @@ func readInstanceEvent(t *testing.T, ic *InstanceClient) protocol.SessionEvent {
 		return r.ev
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for instance event")
-		return protocol.SessionEvent{}
+		return protocol.ThreadEvent{}
 	}
 }
 
 // expectNoInstanceEvent asserts ic delivers no event within a short window.
 func expectNoInstanceEvent(t *testing.T, ic *InstanceClient) {
 	t.Helper()
-	ch := make(chan protocol.SessionEvent, 1)
+	ch := make(chan protocol.ThreadEvent, 1)
 	go func() {
 		ev, err := ic.ReadEvent()
 		if err == nil {
@@ -245,9 +245,9 @@ func expectNoInstanceEvent(t *testing.T, ic *InstanceClient) {
 	}
 }
 
-// TestBroadcastToInstancesNoSession: a process-level broadcast reaches a
-// registered instance even when no chat session exists (the Group-2 fix).
-func TestBroadcastToInstancesNoSession(t *testing.T) {
+// TestBroadcastToInstancesNoThread: a process-level broadcast reaches a
+// registered instance even when no chat thread exists (the Group-2 fix).
+func TestBroadcastToInstancesNoThread(t *testing.T) {
 	srv := newInstanceTestServer(t)
 	_, cancel := serve(t, srv)
 	defer cancel()
@@ -259,16 +259,16 @@ func TestBroadcastToInstancesNoSession(t *testing.T) {
 	defer ic.Close()
 	waitInstanceCount(t, srv, 1)
 
-	srv.broadcastSessionsChanged()
+	srv.broadcastThreadsChanged()
 
 	ev := readInstanceEvent(t, ic)
-	if ev.Type != "event.sessions_changed" {
-		t.Fatalf("got event %q, want event.sessions_changed", ev.Type)
+	if ev.Type != "event.threads_changed" {
+		t.Fatalf("got event %q, want event.threads_changed", ev.Type)
 	}
 }
 
 // TestBroadcastToInstancesEachOnce: two registered instances each receive a
-// single broadcast exactly once (removing the N-sessions → N-notifications
+// single broadcast exactly once (removing the N-threads → N-notifications
 // duplication).
 func TestBroadcastToInstancesEachOnce(t *testing.T) {
 	srv := newInstanceTestServer(t)
@@ -299,24 +299,24 @@ func TestBroadcastToInstancesEachOnce(t *testing.T) {
 	}
 }
 
-// TestBroadcastToInstancesNotOnSessions: a session-carrying window is not
+// TestBroadcastToInstancesNotOnThreads: a thread-carrying window is not
 // double-notified — process-level broadcasts go to the instance channel only,
-// never onto a live session's event channel.
-func TestBroadcastToInstancesNotOnSessions(t *testing.T) {
+// never onto a live thread's event channel.
+func TestBroadcastToInstancesNotOnThreads(t *testing.T) {
 	srv := newInstanceTestServer(t)
 
-	// A live session with a buffered event channel: if the broadcast leaked onto
-	// the session fan-out, this channel would receive it.
-	sess := &Session{eventChan: make(chan protocol.SessionEvent, 8)}
-	srv.sessionMu.Lock()
-	srv.sessions["s1"] = sess
-	srv.sessionMu.Unlock()
+	// A live thread with a buffered event channel: if the broadcast leaked onto
+	// the thread fan-out, this channel would receive it.
+	sess := &Thread{eventChan: make(chan protocol.ThreadEvent, 8)}
+	srv.threadMu.Lock()
+	srv.threads["s1"] = sess
+	srv.threadMu.Unlock()
 
-	srv.broadcastSessionsChanged()
+	srv.broadcastThreadsChanged()
 
 	select {
 	case ev := <-sess.eventChan:
-		t.Fatalf("session was double-notified with %q", ev.Type)
+		t.Fatalf("thread was double-notified with %q", ev.Type)
 	case <-time.After(100 * time.Millisecond):
 	}
 }
@@ -339,7 +339,7 @@ func TestBroadcastToInstancesConcurrent(t *testing.T) {
 	const n = 50
 	go func() {
 		for i := 0; i < n; i++ {
-			go srv.BroadcastToInstances(protocol.SessionEvent{Type: "event.sessions_changed"})
+			go srv.BroadcastToInstances(protocol.ThreadEvent{Type: "event.threads_changed"})
 		}
 	}()
 
@@ -350,7 +350,7 @@ func TestBroadcastToInstancesConcurrent(t *testing.T) {
 	got := 0
 	for time.Now().Before(deadline) {
 		type res struct {
-			ev  protocol.SessionEvent
+			ev  protocol.ThreadEvent
 			err error
 		}
 		ch := make(chan res, 1)
@@ -363,7 +363,7 @@ func TestBroadcastToInstancesConcurrent(t *testing.T) {
 			if r.err != nil {
 				t.Fatalf("ReadEvent after %d frames: %v", got, r.err)
 			}
-			if r.ev.Type != "event.sessions_changed" {
+			if r.ev.Type != "event.threads_changed" {
 				t.Fatalf("garbled frame: got %q", r.ev.Type)
 			}
 			got++

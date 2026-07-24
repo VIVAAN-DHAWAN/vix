@@ -78,8 +78,8 @@ func TestJobRunHandlerSuccess(t *testing.T) {
 	if resp["status"] != "ok" {
 		t.Fatalf("status = %v, want ok (resp=%v)", resp["status"], resp)
 	}
-	if sid, _ := resp["session_id"].(string); sid == "" {
-		t.Fatalf("expected a non-empty session_id, got %v", resp)
+	if sid, _ := resp["thread_id"].(string); sid == "" {
+		t.Fatalf("expected a non-empty thread_id, got %v", resp)
 	}
 
 	// Let the background run finish writing state before TempDir cleanup.

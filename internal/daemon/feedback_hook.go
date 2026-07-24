@@ -11,14 +11,14 @@ import (
 // feedbackHookID is the id (and filename stem) of the shipped feedback hook.
 const feedbackHookID = "feedback-at-10"
 
-// feedbackScript is the shipped SessionStart command hook. It counts fresh
-// sessions in its own hook dir (hooks/feedback-at-10/count.log) and, on the
+// feedbackScript is the shipped ThreadStart command hook. It counts fresh
+// threads in its own hook dir (hooks/feedback-at-10/count.log) and, on the
 // 10th, opens a one-time conversation (guarded by the
 // hooks/feedback-at-10/asked marker) by calling back into the daemon via
-// `vix session create`. vix_bin and socket_path come from the hook context on
+// `vix thread create`. vix_bin and socket_path come from the hook context on
 // stdin, so it works regardless of PATH or socket path.
 const feedbackScript = `#!/usr/bin/env bash
-# Shipped by vix. After 10 fresh sessions, open a one-time conversation asking
+# Shipped by vix. After 10 fresh threads, open a one-time conversation asking
 # for feedback. Counts in this hook's own dir (count.log) and fires exactly once
 # (guarded by the asked marker). To change the copy, edit message.md next to
 # this script. To turn it off, set "enabled": false in hook.json (or delete the
@@ -32,11 +32,11 @@ echo 1 >> "$dir/count.log"
 n=$(wc -l < "$dir/count.log" | tr -d ' ')
 [ "$n" -ge 10 ] || exit 0
 # Once ever: the atomic noclobber create of the marker is the lock, so even
-# concurrent session starts deliver at most one feedback conversation.
+# concurrent thread starts deliver at most one feedback conversation.
 if ( set -o noclobber; : > "$dir/asked" ) 2>/dev/null; then
   vix_bin=$(printf '%s' "$ctx" | sed -n 's/.*"vix_bin":"\([^"]*\)".*/\1/p')
   sock=$(printf '%s' "$ctx" | sed -n 's/.*"socket_path":"\([^"]*\)".*/\1/p')
-  "${vix_bin:-vix}" session create --socket-path "$sock" <<JSON
+  "${vix_bin:-vix}" thread create --socket-path "$sock" <<JSON
 { "message_file": "$self/message.md", "cwd": "$HOME", "title": "vix needs your feedback" }
 JSON
 fi
@@ -69,7 +69,7 @@ const feedbackSeedSentinel = ".feedback-seeded"
 // executable script (script.sh), and the message.md copy. Existing files are
 // left untouched (so a user's edits/disable survive), then a sentinel is
 // written so this runs at most once. Never seeded on an auth-enabled daemon
-// (the script's `vix session create` callback can't present the shared secret).
+// (the script's `vix thread create` callback can't present the shared secret).
 func seedDefaultFeedbackHook(hooksDir string) {
 	hookDir := filepath.Join(hooksDir, feedbackHookID)
 	if err := os.MkdirAll(hookDir, 0o755); err != nil {
@@ -80,9 +80,9 @@ func seedDefaultFeedbackHook(hooksDir string) {
 
 	spec := hooks.Spec{
 		ID:        feedbackHookID,
-		Name:      "Feedback after 10 sessions",
+		Name:      "Feedback after 10 threads",
 		Enabled:   true,
-		Trigger:   hooks.HookTrigger{Event: hooks.EventSessionStart, Matcher: "startup"},
+		Trigger:   hooks.HookTrigger{Event: hooks.EventThreadStart, Matcher: "startup"},
 		Mode:      hooks.ModeAsync,
 		Command:   "bash " + scriptPath,
 		CreatedBy: "vix",

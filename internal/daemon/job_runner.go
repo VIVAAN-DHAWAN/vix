@@ -16,7 +16,7 @@ import (
 
 // heartbeatOKToken is the contract for "nothing needs attention": a job run
 // whose final text is this token (give or take a short ack) is recorded as
-// skipped — no session record, no notification.
+// skipped — no thread record, no notification.
 const heartbeatOKToken = "HEARTBEAT_OK"
 
 // heartbeatOKSlop is how much text may surround the token before the reply
@@ -24,7 +24,7 @@ const heartbeatOKToken = "HEARTBEAT_OK"
 const heartbeatOKSlop = 300
 
 // JobRunner returns the jobs.Runner executing runs in-process: an isolated
-// headless session per run, mirroring `vix -p [-w workflow]` semantics.
+// headless thread per run, mirroring `vix -p [-w workflow]` semantics.
 func (s *Server) JobRunner() jobs.Runner {
 	return s.runJob
 }
@@ -33,17 +33,17 @@ func (s *Server) JobRunner() jobs.Runner {
 const jobTitleTimeFormat = "01/02/2006 3:04 PM"
 
 // runJob drives one scheduled job run to completion. ctx carries the per-run
-// timeout; cancelling it tears the session down.
+// timeout; cancelling it tears the thread down.
 func (s *Server) runJob(ctx context.Context, spec jobs.Spec, resolvedPrompt string) jobs.RunResult {
 	runID := jobs.RunIDFromContext(ctx)
 	if runID == "" {
-		runID = generateSessionID()
+		runID = generateThreadID()
 	}
-	session := NewSession(runID, s, nil, s.model, spec.CWD, "", false,
+	thread := NewThread(runID, s, nil, s.model, spec.CWD, "", false,
 		spec.AutoWrite(), spec.AutoDirs(), true /*headless*/, ctx)
-	session.origin = "vix"
-	session.trigger = &protocol.TriggerInfo{Type: spec.Trigger.Type, Ref: spec.ID}
-	session.title = jobRunTitle(spec, time.Now())
+	thread.origin = "vix"
+	thread.trigger = &protocol.TriggerInfo{Type: spec.Trigger.Type, Ref: spec.ID}
+	thread.title = jobRunTitle(spec, time.Now())
 	// Expose the job's own directory (~/.vix/jobs/<id>) to workflow templates as
 	// $(workflow.dir), so a run can persist state (e.g. a memory file) alongside
 	// its spec. Empty when the home directory is unavailable. Also mark it
@@ -51,49 +51,49 @@ func (s *Server) runJob(ctx context.Context, spec jobs.Spec, resolvedPrompt stri
 	// outside $HOME and cwd (e.g. under a --config-dir override) — this flows to
 	// the file-tool path checks and the bash sandbox's writable set alike.
 	if jobsRoot := config.NewVixPaths("", s.homeVixDir, "").Jobs(); jobsRoot != "" {
-		session.jobDir = filepath.Join(jobsRoot, spec.ID)
-		session.addAllowedDir(session.jobDir)
+		thread.jobDir = filepath.Join(jobsRoot, spec.ID)
+		thread.addAllowedDir(thread.jobDir)
 	}
 
-	// Register so the web UI and session.list see the run while it's live.
-	s.sessionMu.Lock()
-	s.sessions[runID] = session
-	s.sessionMu.Unlock()
-	s.broadcastSessionsChanged()
+	// Register so the web UI and thread.list see the run while it's live.
+	s.threadMu.Lock()
+	s.threads[runID] = thread
+	s.threadMu.Unlock()
+	s.broadcastThreadsChanged()
 	defer func() {
-		s.sessionMu.Lock()
-		delete(s.sessions, runID)
-		s.sessionMu.Unlock()
-		session.cancel()
-		s.broadcastSessionsChanged()
+		s.threadMu.Lock()
+		delete(s.threads, runID)
+		s.threadMu.Unlock()
+		thread.cancel()
+		s.broadcastThreadsChanged()
 	}()
 
-	go session.Run()
+	go thread.Run()
 
 	// Dispatch exactly like headless, resolving the prompt as $(workflow.prompt)
 	// when a workflow is involved:
-	//   - inline workflow → session.workflow carrying the definition (the
-	//     session registers it transiently and runs it);
-	//   - named workflow_id → session.workflow by name;
+	//   - inline workflow → thread.workflow carrying the definition (the
+	//     thread registers it transiently and runs it);
+	//   - named workflow_id → thread.workflow by name;
 	//   - neither → plain chat turn.
-	var startCmd protocol.SessionCommand
+	var startCmd protocol.ThreadCommand
 	switch {
 	case spec.Workflow != nil:
 		raw, _ := json.Marshal(spec.Workflow)
-		data, _ := json.Marshal(protocol.SessionWorkflowData{Name: spec.Workflow.Name, Text: resolvedPrompt, Workflow: raw})
-		startCmd = protocol.SessionCommand{Type: "session.workflow", Data: data}
+		data, _ := json.Marshal(protocol.ThreadWorkflowData{Name: spec.Workflow.Name, Text: resolvedPrompt, Workflow: raw})
+		startCmd = protocol.ThreadCommand{Type: "thread.workflow", Data: data}
 	case spec.WorkflowID != "":
-		data, _ := json.Marshal(protocol.SessionWorkflowData{Name: spec.WorkflowID, Text: resolvedPrompt})
-		startCmd = protocol.SessionCommand{Type: "session.workflow", Data: data}
+		data, _ := json.Marshal(protocol.ThreadWorkflowData{Name: spec.WorkflowID, Text: resolvedPrompt})
+		startCmd = protocol.ThreadCommand{Type: "thread.workflow", Data: data}
 	default:
-		data, _ := json.Marshal(protocol.SessionInputData{Text: resolvedPrompt})
-		startCmd = protocol.SessionCommand{Type: "session.input", Data: data}
+		data, _ := json.Marshal(protocol.ThreadInputData{Text: resolvedPrompt})
+		startCmd = protocol.ThreadCommand{Type: "thread.input", Data: data}
 	}
-	if !session.pushCommand(ctx, startCmd) {
+	if !thread.pushCommand(ctx, startCmd) {
 		return jobs.RunResult{
 			Status: jobs.StatusError,
-			Err:    "session refused start command",
-			Errors: []jobs.RunError{{Source: "start_refused", Message: "session refused start command"}},
+			Err:    "thread refused start command",
+			Errors: []jobs.RunError{{Source: "start_refused", Message: "thread refused start command"}},
 		}
 	}
 
@@ -112,7 +112,7 @@ func (s *Server) runJob(ctx context.Context, spec jobs.Spec, resolvedPrompt stri
 consume:
 	for {
 		select {
-		case ev := <-session.eventChan:
+		case ev := <-thread.eventChan:
 			switch ev.Type {
 			case "event.stream_chunk":
 				finalText.WriteString(decodeJobEvent[protocol.EventStreamChunk](ev.Data).Text)
@@ -121,8 +121,8 @@ consume:
 			case "event.confirm_request":
 				cr := decodeJobEvent[protocol.EventConfirmRequest](ev.Data)
 				denials = append(denials, cr.ToolName)
-				data, _ := json.Marshal(protocol.SessionConfirmData{Approved: false})
-				session.pushCommand(ctx, protocol.SessionCommand{Type: "session.confirm", Data: data})
+				data, _ := json.Marshal(protocol.ThreadConfirmData{Approved: false})
+				thread.pushCommand(ctx, protocol.ThreadCommand{Type: "thread.confirm", Data: data})
 			case "event.user_question":
 				uq := decodeJobEvent[protocol.EventUserQuestion](ev.Data)
 				answer := ""
@@ -131,11 +131,11 @@ consume:
 				} else if len(uq.Options) > 0 {
 					answer = uq.Options[0]
 				}
-				data, _ := json.Marshal(protocol.SessionUserAnswerData{Answer: answer})
-				session.pushCommand(ctx, protocol.SessionCommand{Type: "session.user_answer", Data: data})
+				data, _ := json.Marshal(protocol.ThreadUserAnswerData{Answer: answer})
+				thread.pushCommand(ctx, protocol.ThreadCommand{Type: "thread.user_answer", Data: data})
 			case "event.plan_proposed":
-				data, _ := json.Marshal(protocol.SessionPlanActionData{Action: "approve"})
-				session.pushCommand(ctx, protocol.SessionCommand{Type: "session.plan_action", Data: data})
+				data, _ := json.Marshal(protocol.ThreadPlanActionData{Action: "approve"})
+				thread.pushCommand(ctx, protocol.ThreadCommand{Type: "thread.plan_action", Data: data})
 			case "event.error":
 				hadError = true
 				errMsg = decodeJobEvent[protocol.EventError](ev.Data).Message
@@ -143,22 +143,22 @@ consume:
 				break consume
 			}
 		case <-ctx.Done():
-			// Timeout or daemon shutdown: the session ctx (derived from ctx)
+			// Timeout or daemon shutdown: the thread ctx (derived from ctx)
 			// is collapsing; persist what we have and report.
-			session.persist()
+			thread.persist()
 			return jobs.RunResult{
 				Status:     jobs.StatusTimeout,
 				Err:        "run cancelled: " + ctx.Err().Error(),
-				SessionID:  runID,
+				ThreadID:   runID,
 				AgentTurns: agentTurns,
 				Errors:     []jobs.RunError{{Source: "timeout", Message: "run cancelled: " + ctx.Err().Error()}},
 			}
-		case <-session.ctx.Done():
+		case <-thread.ctx.Done():
 			break consume
 		}
 	}
 
-	res := jobs.RunResult{Status: jobs.StatusOK, SessionID: runID, AgentTurns: agentTurns, Denials: denials}
+	res := jobs.RunResult{Status: jobs.StatusOK, ThreadID: runID, AgentTurns: agentTurns, Denials: denials}
 	if hadError {
 		res.Status = jobs.StatusError
 		res.Err = errMsg
@@ -176,41 +176,41 @@ consume:
 	//   gate didn't pass — bash steps never call the LLM);
 	//   heartbeat OK: the model said nothing needs attention.
 	if res.Status == jobs.StatusOK && (agentTurns == 0 || isHeartbeatOK(finalText.String())) {
-		deleteSessionRecord(session.paths, runID)
-		return jobs.RunResult{Status: jobs.StatusSkipped, SessionID: runID, AgentTurns: agentTurns}
+		deleteThreadRecord(thread.paths, runID)
+		return jobs.RunResult{Status: jobs.StatusSkipped, ThreadID: runID, AgentTurns: agentTurns}
 	}
 
 	// Every other finished run lands in open/: visible in the Vix-initiated
-	// sessions group until the user dismisses it (or retention sweeps it).
-	session.jobStatus = res.Status
+	// threads group until the user dismisses it (or retention sweeps it).
+	thread.jobStatus = res.Status
 	// Successful GitHub runs open their findings with a deterministic header line
-	// naming the item they picked; turn that into a per-item session title:
+	// naming the item they picked; turn that into a per-item thread title:
 	// plan runs -> "[Plan GitHub issues (get-vix/vix)] Addressing issue #29 — …";
 	// triage/review runs -> "[get-vix/vix] Triage GitHub issues #53 - <title>…".
 	// Other jobs (and the "nothing new"/error branches) keep the static title.
 	if res.Status == jobs.StatusOK {
 		if title, ok := issuePlanTitle(spec, finalText.String()); ok {
-			session.mu.Lock()
-			session.title = title
-			session.mu.Unlock()
+			thread.mu.Lock()
+			thread.title = title
+			thread.mu.Unlock()
 		} else if title, ok := githubItemTitle(spec, finalText.String()); ok {
-			session.mu.Lock()
-			session.title = title
-			session.mu.Unlock()
+			thread.mu.Lock()
+			thread.title = title
+			thread.mu.Unlock()
 		}
 	}
-	session.persist()
-	sweepJobRunRecords(session.paths, spec.ID)
+	thread.persist()
+	sweepJobRunRecords(thread.paths, spec.ID)
 
-	// Failures nobody saw get a synthetic explainer session on top of the run
+	// Failures nobody saw get a synthetic explainer thread on top of the run
 	// record, so the next TUI launch surfaces them.
 	if res.Status != jobs.StatusOK && !s.hasAttachedInstances() {
-		s.writeJobAlertSession(spec, res)
+		s.writeJobAlertThread(spec, res)
 	}
 	return res
 }
 
-// jobRunTitle builds the display title of a job-run session, e.g.
+// jobRunTitle builds the display title of a job-run thread, e.g.
 // "Heartbeat - 06/12/2026 9:30 AM".
 func jobRunTitle(spec jobs.Spec, t time.Time) string {
 	name := spec.Name
@@ -230,7 +230,7 @@ func jobRunTitle(spec jobs.Spec, t time.Time) string {
 // stays on the header line.
 var issuePlanHeaderRe = regexp.MustCompile(`Hi, I investigated (issue|pull request) #(\d+) — (.+?) — on GitHub\.`)
 
-// issuePlanTitle derives a per-item session title from a GitHub-plan run's
+// issuePlanTitle derives a per-item thread title from a GitHub-plan run's
 // final text, e.g. "[Plan GitHub issues (get-vix/vix)] Addressing issue #29 — …".
 // Returns ok=false when the deterministic header is absent (any non-plan job, or
 // the "nothing new to plan"/error branches), so the caller keeps the static
@@ -266,7 +266,7 @@ var githubItemHeaderRe = regexp.MustCompile(`(?:Triaging issue|Reviewing pull re
 // "Triage GitHub issues (get-vix/vix)" -> ("Triage GitHub issues", "get-vix/vix").
 var jobNameRepoRe = regexp.MustCompile(`^(.*?)\s*\(([^)]+)\)\s*$`)
 
-// githubItemTitle derives a per-item session title for a GitHub triage/review
+// githubItemTitle derives a per-item thread title for a GitHub triage/review
 // run from its findings, e.g.
 // "[get-vix/vix] Triage GitHub issues #53 - Fix the flaky retry backoff…".
 // The item title is trimmed to its first six words (with an ellipsis only when
@@ -305,9 +305,9 @@ func first6Words(s string) string {
 	return strings.Join(fields[:6], " ") + "…"
 }
 
-// pushCommand feeds a command to the session loop, giving up when either
+// pushCommand feeds a command to the thread loop, giving up when either
 // context dies. Returns false when the command was not delivered.
-func (s *Session) pushCommand(ctx context.Context, cmd protocol.SessionCommand) bool {
+func (s *Thread) pushCommand(ctx context.Context, cmd protocol.ThreadCommand) bool {
 	select {
 	case s.commandChan <- cmd:
 		return true
@@ -325,11 +325,11 @@ func (s *Server) hasAttachedInstances() bool {
 	return s.instanceCount > 0
 }
 
-// broadcastSessionsChanged tells every attached instance (over the control
+// broadcastThreadsChanged tells every attached instance (over the control
 // channel, once per window) and the web UI subscribers that the persisted
-// sessions list changed outside their own connection.
-func (s *Server) broadcastSessionsChanged() {
-	s.BroadcastToInstances(protocol.SessionEvent{Type: "event.sessions_changed", Data: protocol.EventSessionsChanged{}})
+// threads list changed outside their own connection.
+func (s *Server) broadcastThreadsChanged() {
+	s.BroadcastToInstances(protocol.ThreadEvent{Type: "event.threads_changed", Data: protocol.EventThreadsChanged{}})
 	s.notifySubscribers()
 }
 
@@ -338,14 +338,14 @@ func (s *Server) broadcastSessionsChanged() {
 // changed — a run started/finished, a spec was enabled/disabled, or the spec
 // directory was reloaded — so the Jobs & Triggers tab re-fetches.
 func (s *Server) broadcastJobsChanged() {
-	s.BroadcastToInstances(protocol.SessionEvent{Type: "event.jobs_changed", Data: protocol.EventJobsChanged{}})
+	s.BroadcastToInstances(protocol.ThreadEvent{Type: "event.jobs_changed", Data: protocol.EventJobsChanged{}})
 	s.notifySubscribers()
 }
 
-// writeJobAlertSession persists a synthetic one-message session explaining a
+// writeJobAlertThread persists a synthetic one-message thread explaining a
 // failed job run. Zero tokens: the text is canned. It lands in open/ so the
-// next TUI launch lists it under Vix-initiated sessions.
-func (s *Server) writeJobAlertSession(spec jobs.Spec, res jobs.RunResult) {
+// next TUI launch lists it under Vix-initiated threads.
+func (s *Server) writeJobAlertThread(spec jobs.Spec, res jobs.RunResult) {
 	name := spec.Name
 	if name == "" {
 		name = spec.ID
@@ -356,16 +356,16 @@ func (s *Server) writeJobAlertSession(spec jobs.Spec, res jobs.RunResult) {
 	if res.Err != "" {
 		text += "\n\nError: " + res.Err
 	}
-	if res.SessionID != "" {
-		text += fmt.Sprintf("\n\nThe full run is in session %s.", res.SessionID)
+	if res.ThreadID != "" {
+		text += fmt.Sprintf("\n\nThe full run is in thread %s.", res.ThreadID)
 	}
-	if _, err := s.createMessageSession(MessageSessionSpec{
+	if _, err := s.createMessageThread(MessageThreadSpec{
 		Message: text,
 		CWD:     spec.CWD,
 		Title:   jobRunTitle(spec, time.Now()),
 		Trigger: &protocol.TriggerInfo{Type: spec.Trigger.Type, Ref: spec.ID},
 	}); err != nil {
-		LogError("job alert session: %v", err)
+		LogError("job alert thread: %v", err)
 	}
 }
 

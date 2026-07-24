@@ -35,9 +35,9 @@ func (s *Server) runSyncHook(ctx context.Context, spec hooks.Spec, base map[stri
 		}
 		dec = hooks.ParseCommandDecision(code, out, errOut)
 	} else {
-		final, hadErr := s.runHookSession(ctx, spec, hookSessionText(spec, base), cwd, false, "")
+		final, hadErr := s.runHookThread(ctx, spec, hookThreadText(spec, base), cwd, false, "")
 		if hadErr {
-			errMsg = "hook session errored"
+			errMsg = "hook thread errored"
 			s.logHookError(fireID, spec, "agent", errMsg, 0)
 		}
 		dec = hooks.ParseTextDecision(final)
@@ -64,9 +64,9 @@ func (s *Server) fireAsyncHook(spec hooks.Spec, base map[string]any) {
 
 // fireHookAsync runs a hook fire-and-forget, decoupled from any triggering turn
 // (it derives from the server context so it can outlive the caller). For
-// workflow/prompt hooks the run executes in an isolated session whose id is
-// runID (empty = mint a fresh one); command hooks have no session and ignore
-// it. Returns the session id (empty for command hooks) and the fire id, so an
+// workflow/prompt hooks the run executes in an isolated thread whose id is
+// runID (empty = mint a fresh one); command hooks have no thread and ignore
+// it. Returns the thread id (empty for command hooks) and the fire id, so an
 // on-demand trigger can surface them immediately.
 func (s *Server) fireHookAsync(spec hooks.Spec, base map[string]any, runID string) (string, string) {
 	parent := s.serverCtx
@@ -76,7 +76,7 @@ func (s *Server) fireHookAsync(spec hooks.Spec, base map[string]any, runID strin
 	fireID := newFireID()
 	isCommand := spec.Command != ""
 	if !isCommand && runID == "" {
-		runID = generateSessionID()
+		runID = generateThreadID()
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(parent, spec.TimeoutDuration())
@@ -86,7 +86,7 @@ func (s *Server) fireHookAsync(spec hooks.Spec, base map[string]any, runID strin
 		cwd := hookCWD(spec, base)
 		status := "done"
 		var errMsg string
-		sessionID := ""
+		threadID := ""
 		if isCommand {
 			stdin, _ := json.Marshal(base)
 			code, _, errOut := runHookCommand(ctx, spec, cwd, stdin)
@@ -96,10 +96,10 @@ func (s *Server) fireHookAsync(spec hooks.Spec, base map[string]any, runID strin
 				status = "error"
 			}
 		} else {
-			sessionID = runID
-			_, hadErr := s.runHookSession(ctx, spec, hookSessionText(spec, base), cwd, true, runID)
+			threadID = runID
+			_, hadErr := s.runHookThread(ctx, spec, hookThreadText(spec, base), cwd, true, runID)
 			if hadErr {
-				errMsg = "hook session errored"
+				errMsg = "hook thread errored"
 				s.logHookError(fireID, spec, "agent", errMsg, 0)
 				status = "error"
 			}
@@ -107,13 +107,13 @@ func (s *Server) fireHookAsync(spec hooks.Spec, base map[string]any, runID strin
 		dur := time.Since(start)
 		s.logHookFinished(fireID, spec, status, dur)
 		s.recordHookRun(spec, hooks.RunRecord{
-			At:        start,
-			Status:    status,
-			Async:     true,
-			Event:     spec.Trigger.Event,
-			Error:     errMsg,
-			SessionID: sessionID,
-			Duration:  dur.String(),
+			At:       start,
+			Status:   status,
+			Async:    true,
+			Event:    spec.Trigger.Event,
+			Error:    errMsg,
+			ThreadID: threadID,
+			Duration: dur.String(),
 		})
 	}()
 	if isCommand {
@@ -126,7 +126,7 @@ func (s *Server) fireHookAsync(spec hooks.Spec, base map[string]any, runID strin
 // event (backs `vix hook trigger <id>`). A manual trigger has no triggering
 // action to veto, so it always runs fire-and-forget regardless of the hook's
 // mode, even when the hook is disabled. It synthesizes a minimal context
-// envelope and returns the run's session id (empty for command hooks) and the
+// envelope and returns the run's thread id (empty for command hooks) and the
 // fire id. Errors surface synchronously for an unknown id or a disabled engine.
 func (s *Server) TriggerHook(id string) (string, string, error) {
 	if s.hookRegistry == nil {
@@ -140,8 +140,8 @@ func (s *Server) TriggerHook(id string) (string, string, error) {
 	if spec.CWD != "" {
 		base["cwd"] = spec.CWD
 	}
-	sessionID, fireID := s.fireHookAsync(spec, base, "")
-	return sessionID, fireID, nil
+	threadID, fireID := s.fireHookAsync(spec, base, "")
+	return threadID, fireID, nil
 }
 
 // recordHookRun appends a fire to the hook's recent-run history via the
@@ -205,55 +205,55 @@ func runHookCommand(ctx context.Context, spec hooks.Spec, cwd string, stdin []by
 	return 0, out.String(), errb.String()
 }
 
-// runHookSession runs a workflow- or prompt-form hook in an isolated headless
-// session (origin "vix" so it can't itself re-trigger hooks). It returns the
+// runHookThread runs a workflow- or prompt-form hook in an isolated headless
+// thread (origin "vix" so it can't itself re-trigger hooks). It returns the
 // concatenated assistant text and whether an error occurred. When persist is
-// true the run is registered/persisted so it appears in the Sessions tab under
+// true the run is registered/persisted so it appears in the Threads tab under
 // "Vix-initiated"; sync veto runs pass false to avoid a record per tool call.
-// runID seeds the session id (empty = mint a fresh one) so callers that need it
+// runID seeds the thread id (empty = mint a fresh one) so callers that need it
 // up front can pre-generate it.
-func (s *Server) runHookSession(ctx context.Context, spec hooks.Spec, text, cwd string, persist bool, runID string) (string, bool) {
+func (s *Server) runHookThread(ctx context.Context, spec hooks.Spec, text, cwd string, persist bool, runID string) (string, bool) {
 	if runID == "" {
-		runID = generateSessionID()
+		runID = generateThreadID()
 	}
-	session := NewSession(runID, s, nil, s.model, cwd, "", false,
+	thread := NewThread(runID, s, nil, s.model, cwd, "", false,
 		spec.AutoWrite(), spec.AutoDirs(), true /*headless*/, ctx)
-	session.origin = "vix"
-	session.trigger = &protocol.TriggerInfo{Type: "hook", Ref: spec.ID}
-	session.title = "Hook: " + hookName(spec)
+	thread.origin = "vix"
+	thread.trigger = &protocol.TriggerInfo{Type: "hook", Ref: spec.ID}
+	thread.title = "Hook: " + hookName(spec)
 
 	if persist {
-		s.sessionMu.Lock()
-		s.sessions[runID] = session
-		s.sessionMu.Unlock()
-		s.broadcastSessionsChanged()
+		s.threadMu.Lock()
+		s.threads[runID] = thread
+		s.threadMu.Unlock()
+		s.broadcastThreadsChanged()
 		defer func() {
-			s.sessionMu.Lock()
-			delete(s.sessions, runID)
-			s.sessionMu.Unlock()
-			session.cancel()
-			s.broadcastSessionsChanged()
+			s.threadMu.Lock()
+			delete(s.threads, runID)
+			s.threadMu.Unlock()
+			thread.cancel()
+			s.broadcastThreadsChanged()
 		}()
 	} else {
-		defer session.cancel()
+		defer thread.cancel()
 	}
 
-	go session.Run()
+	go thread.Run()
 
-	var startCmd protocol.SessionCommand
+	var startCmd protocol.ThreadCommand
 	switch {
 	case spec.Workflow != nil:
 		raw, _ := json.Marshal(spec.Workflow)
-		data, _ := json.Marshal(protocol.SessionWorkflowData{Name: spec.Workflow.Name, Text: text, Workflow: raw})
-		startCmd = protocol.SessionCommand{Type: "session.workflow", Data: data}
+		data, _ := json.Marshal(protocol.ThreadWorkflowData{Name: spec.Workflow.Name, Text: text, Workflow: raw})
+		startCmd = protocol.ThreadCommand{Type: "thread.workflow", Data: data}
 	case spec.WorkflowID != "":
-		data, _ := json.Marshal(protocol.SessionWorkflowData{Name: spec.WorkflowID, Text: text})
-		startCmd = protocol.SessionCommand{Type: "session.workflow", Data: data}
+		data, _ := json.Marshal(protocol.ThreadWorkflowData{Name: spec.WorkflowID, Text: text})
+		startCmd = protocol.ThreadCommand{Type: "thread.workflow", Data: data}
 	default:
-		data, _ := json.Marshal(protocol.SessionInputData{Text: text})
-		startCmd = protocol.SessionCommand{Type: "session.input", Data: data}
+		data, _ := json.Marshal(protocol.ThreadInputData{Text: text})
+		startCmd = protocol.ThreadCommand{Type: "thread.input", Data: data}
 	}
-	if !session.pushCommand(ctx, startCmd) {
+	if !thread.pushCommand(ctx, startCmd) {
 		return "", true
 	}
 
@@ -264,13 +264,13 @@ func (s *Server) runHookSession(ctx context.Context, spec hooks.Spec, text, cwd 
 consume:
 	for {
 		select {
-		case ev := <-session.eventChan:
+		case ev := <-thread.eventChan:
 			switch ev.Type {
 			case "event.stream_chunk":
 				finalText.WriteString(decodeJobEvent[protocol.EventStreamChunk](ev.Data).Text)
 			case "event.confirm_request":
-				data, _ := json.Marshal(protocol.SessionConfirmData{Approved: false})
-				session.pushCommand(ctx, protocol.SessionCommand{Type: "session.confirm", Data: data})
+				data, _ := json.Marshal(protocol.ThreadConfirmData{Approved: false})
+				thread.pushCommand(ctx, protocol.ThreadCommand{Type: "thread.confirm", Data: data})
 			case "event.user_question":
 				uq := decodeJobEvent[protocol.EventUserQuestion](ev.Data)
 				answer := ""
@@ -279,11 +279,11 @@ consume:
 				} else if len(uq.Options) > 0 {
 					answer = uq.Options[0]
 				}
-				data, _ := json.Marshal(protocol.SessionUserAnswerData{Answer: answer})
-				session.pushCommand(ctx, protocol.SessionCommand{Type: "session.user_answer", Data: data})
+				data, _ := json.Marshal(protocol.ThreadUserAnswerData{Answer: answer})
+				thread.pushCommand(ctx, protocol.ThreadCommand{Type: "thread.user_answer", Data: data})
 			case "event.plan_proposed":
-				data, _ := json.Marshal(protocol.SessionPlanActionData{Action: "approve"})
-				session.pushCommand(ctx, protocol.SessionCommand{Type: "session.plan_action", Data: data})
+				data, _ := json.Marshal(protocol.ThreadPlanActionData{Action: "approve"})
+				thread.pushCommand(ctx, protocol.ThreadCommand{Type: "thread.plan_action", Data: data})
 			case "event.error":
 				hadError = true
 			case "event.agent_done":
@@ -291,18 +291,18 @@ consume:
 			}
 		case <-ctx.Done():
 			return finalText.String(), true
-		case <-session.ctx.Done():
+		case <-thread.ctx.Done():
 			break consume
 		}
 	}
 	if persist && !hadError {
-		session.persist()
+		thread.persist()
 	}
 	return finalText.String(), hadError
 }
 
 // hookCWD resolves the working directory for a hook run: the spec's explicit
-// cwd, else the triggering session's cwd from the context envelope.
+// cwd, else the triggering thread's cwd from the context envelope.
 func hookCWD(spec hooks.Spec, base map[string]any) string {
 	if spec.CWD != "" {
 		return spec.CWD
@@ -313,9 +313,9 @@ func hookCWD(spec hooks.Spec, base map[string]any) string {
 	return ""
 }
 
-// hookSessionText builds the message text for a workflow/prompt hook. The
+// hookThreadText builds the message text for a workflow/prompt hook. The
 // context envelope is appended as JSON so the workflow/prompt can inspect it.
-func hookSessionText(spec hooks.Spec, base map[string]any) string {
+func hookThreadText(spec hooks.Spec, base map[string]any) string {
 	b, _ := json.Marshal(base)
 	if spec.Prompt != "" {
 		return spec.Prompt + "\n\nHook context:\n" + string(b)

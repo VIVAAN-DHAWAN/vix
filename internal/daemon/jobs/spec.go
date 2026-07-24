@@ -1,6 +1,6 @@
 // Package jobs implements vixd's scheduled-jobs engine: user-authored job
 // specs (~/.vix/jobs/<id>/job.json) fired by a single timer loop, each run
-// executing a prompt — optionally through a workflow — in an isolated session.
+// executing a prompt — optionally through a workflow — in an isolated thread.
 //
 // The package owns scheduling, persistence, and policy (catch-up, backoff,
 // auto-disable); actual execution is delegated to a Runner installed by the
@@ -41,7 +41,7 @@ type Trigger struct {
 	Time string `json:"time,omitempty"` // RFC3339, type "at" only
 }
 
-// Permissions maps onto the session's automatic-permission flags. Pointers so
+// Permissions maps onto the thread's automatic-permission flags. Pointers so
 // "absent" defaults to true (scheduled runs are unattended; the deny list and
 // workflow deny_tools remain the brakes).
 type Permissions struct {

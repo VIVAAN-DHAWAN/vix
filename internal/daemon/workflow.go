@@ -71,7 +71,7 @@ type AgentRunner struct {
 	Tools    []llm.ToolParam
 	MaxTurns int
 
-	// ToolTimeouts carries the parent session's configured tool-call floor/cap
+	// ToolTimeouts carries the parent thread's configured tool-call floor/cap
 	// so this runner's tool dispatches honour the same settings.json bounds as
 	// the main agent. Populated at construction in NewAgentRunner; zero values
 	// fall back to package defaults in the dispatcher.
@@ -82,7 +82,7 @@ type AgentRunner struct {
 	plugins PluginSource
 
 	// contextInjected guards the one-time injection (by
-	// Session.ensureWorkflowAgentContext) of the session's project-context
+	// Thread.ensureWorkflowAgentContext) of the thread's project-context
 	// system blocks (CLAUDE.md/AGENTS.md + skills metadata) and the `skill`
 	// tool, so a step that calls Send more than once doesn't duplicate them.
 	contextInjected bool
@@ -103,7 +103,7 @@ type WorkflowRun struct {
 	State       *WorkflowRunState       // live persisted position/accounting for this run
 
 	// transcript accumulates the user-visible output of agent steps in
-	// execution order so it can be mirrored into the session's chat transcript
+	// execution order so it can be mirrored into the thread's chat transcript
 	// (s.messages) when the run finalizes — letting a finished run replay and a
 	// follow-up chat turn pick up with real context. Guarded by transcriptMu
 	// because parallel steps append concurrently. retryNotices accumulates the
@@ -134,7 +134,7 @@ type workflowTranscriptEntry struct {
 }
 
 // recordTranscriptEntry captures a visible agent step's output for later mirror
-// into the session transcript. No-op for empty output.
+// into the thread transcript. No-op for empty output.
 func (r *WorkflowRun) recordTranscriptEntry(step WorkflowStepDef, stepID, output string) {
 	if step.Type != "agent" || step.Silent || !step.IsStreamVisible() {
 		return
@@ -204,10 +204,10 @@ func (r *WorkflowRun) snapshotTranscript() []workflowTranscriptEntry {
 // final text — so the persisted conversation reflects what the agent actually
 // did. A follow-up turn is then grounded in those real tool calls rather than a
 // lossy summary. Thinking blocks are dropped (their signatures can't be
-// revalidated once re-sent under the session's own system prompt). A visible
+// revalidated once re-sent under the thread's own system prompt). A visible
 // agent step without an agent instance falls back to a user(anchor)→assistant
 // (text) pair. No-op when nothing visible was produced.
-func (s *Session) appendWorkflowTranscript(anchor string, exec *WorkflowRun) {
+func (s *Thread) appendWorkflowTranscript(anchor string, exec *WorkflowRun) {
 	entries := exec.snapshotTranscript()
 	notices := exec.snapshotRetryNotices()
 	if len(entries) == 0 && len(notices) == 0 {
@@ -362,7 +362,7 @@ type toolTimeoutsFile struct {
 
 // ToolTimeouts is the resolved (validated, defaulted) form of the
 // tool_timeouts block, stored on ProjectConfig and consumed by the tool
-// dispatcher in session.go.
+// dispatcher in thread.go.
 type ToolTimeouts struct {
 	Default time.Duration
 	Max     time.Duration
@@ -393,7 +393,7 @@ type compactionFile struct {
 
 // Compaction is the resolved (validated, defaulted) form of the `compaction`
 // block, stored on ProjectConfig and consumed by the auto-compaction logic and
-// the /compact command in session.go.
+// the /compact command in thread.go.
 type Compaction struct {
 	Threshold      float64 // (0,1]; default 0.8
 	Auto           bool    // default true
@@ -454,9 +454,9 @@ type ProjectConfig struct {
 	AllowedDirectories []string
 	DenyPaths          []string
 	// DenyPathsRel holds the raw (tilde-expanded) relative deny_list.paths
-	// entries, preserved so the session can additionally resolve them against
+	// entries, preserved so the thread can additionally resolve them against
 	// the working directory. See the resolution loop in LoadProjectConfig and
-	// the seeding logic in Session for why both interpretations are unioned.
+	// the seeding logic in Thread for why both interpretations are unioned.
 	DenyPathsRel     []string
 	DenyURLs         []string
 	Features         map[string]bool
@@ -582,7 +582,7 @@ func LoadProjectConfig(configPaths ...string) ProjectConfig {
 		// is expanded to the user's home directory. Absolute entries are used
 		// verbatim. Relative entries are resolved against the config file's
 		// directory (matching the AllowedDirectories convention above) AND
-		// recorded raw in DenyPathsRel so the session can additionally resolve
+		// recorded raw in DenyPathsRel so the thread can additionally resolve
 		// them against the working directory. The dual resolution fixes the
 		// footgun where a `deny_list.paths` entry in `./.vix/settings.json`
 		// (e.g. ".envrc.private") was silently anchored under `.vix/` and never
@@ -823,7 +823,7 @@ func envVars(cwd, model string) map[string]string {
 // NewAgentRunner creates a persistent agent for a workflow.
 // searchDirs is the ordered set of .vix root directories to resolve system
 // prompt includes from, in precedence order (highest first).
-// toolTimeouts carries the parent session's tool_timeouts bounds so the
+// toolTimeouts carries the parent thread's tool_timeouts bounds so the
 // runner's tool dispatches honour the same settings.json floor/cap.
 func NewAgentRunner(config SubagentConfig, cred config.Credential, parentModel, cwd string, plugins PluginSource, toolTimeouts ToolTimeouts, searchDirs ...string) (*AgentRunner, error) {
 	maxTurns := config.MaxTurns
@@ -1308,7 +1308,7 @@ func aggregateToolSummary(name string, acc *toolCallAcc) string {
 }
 
 // executeToolStep runs a tool-type step and returns the next step refs and output text.
-func (s *Session) executeToolStep(ctx context.Context, step WorkflowStepDef, baseVars map[string]string) (nextRefs []StepRef, output string, err error) {
+func (s *Thread) executeToolStep(ctx context.Context, step WorkflowStepDef, baseVars map[string]string) (nextRefs []StepRef, output string, err error) {
 	switch step.Tool {
 	case "ask_question_to_user":
 		question := step.Question
@@ -1335,12 +1335,12 @@ func (s *Session) executeToolStep(ctx context.Context, step WorkflowStepDef, bas
 			Category:    category,
 		})
 
-		cmd, ok := s.waitForCommand(ctx, "session.user_answer")
+		cmd, ok := s.waitForCommand(ctx, "thread.user_answer")
 		if !ok {
 			return nil, "", ctx.Err()
 		}
 
-		var answerData protocol.SessionUserAnswerData
+		var answerData protocol.ThreadUserAnswerData
 		json.Unmarshal(cmd.Data, &answerData)
 		answer := strings.TrimSpace(answerData.Answer)
 
@@ -1391,7 +1391,7 @@ func (s *Session) executeToolStep(ctx context.Context, step WorkflowStepDef, bas
 // executeParallelSteps launches multiple steps in parallel goroutines.
 // It returns the continuation refs chosen by any tool step (e.g. ask_question_to_user),
 // so the caller can follow the user's routing decision after the parallel block completes.
-func (s *Session) executeParallelSteps(
+func (s *Thread) executeParallelSteps(
 	ctx context.Context,
 	refs []StepRef,
 	pf *WorkflowDef,
@@ -1463,7 +1463,7 @@ func (s *Session) executeParallelSteps(
 					s.emitIfVisible(silent, "event.stream_chunk", protocol.EventStreamChunk{Text: line + "\n"})
 				})
 				bashCancel()
-				// Our deadline fired vs. the whole session being cancelled:
+				// Our deadline fired vs. the whole thread being cancelled:
 				// treat the former as a non-fatal step-level timeout so the
 				// parallel batch continues (caller still gets a failed step
 				// event + a step result with captured output).
@@ -1704,7 +1704,7 @@ func (s *Session) executeParallelSteps(
 // the run continues from the persisted cursor: step results, per-step agent
 // conversations, and budget accounting are restored, and the entry point is
 // replaced by resume.CurrentRef.
-func (s *Session) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt string, resume *WorkflowRunState) error {
+func (s *Thread) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt string, resume *WorkflowRunState) error {
 	exec := &WorkflowRun{
 		Def:         pf,
 		StepAgents:  make(map[string]*AgentRunner),
@@ -1806,7 +1806,7 @@ func (s *Session) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt s
 	// workflow.dir is the run's job directory (~/.vix/jobs/<id>) for scheduled
 	// runs, empty otherwise. Always present so the token never leaks unresolved.
 	baseVars["workflow.dir"] = s.jobDir
-	baseVars["session.id"] = s.id
+	baseVars["thread.id"] = s.id
 
 	// Resolve entry point params — or, on resume, pick up at the saved cursor.
 	currentRef := &StepRef{
@@ -1834,7 +1834,7 @@ func (s *Session) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt s
 	// Finalize on every exit path: completed runs clear their persisted state;
 	// interrupted runs (cancel/crash) park as paused, failed ones as blocked —
 	// both resumable from the cursor. Either way the run produced content the
-	// user may not have seen: flag the session unread.
+	// user may not have seen: flag the thread unread.
 	finished := false
 	defer func() {
 		s.unread = true
@@ -1847,11 +1847,11 @@ func (s *Session) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt s
 			s.setWorkflowRunState(nil)
 			// A finished inline (transient) workflow run — e.g. a scheduled job
 			// — has nothing left to resume, and its definition was never
-			// persisted. Leaving the session in "workflow" mode would make a
+			// persisted. Leaving the thread in "workflow" mode would make a
 			// later reopen warn that the workflow "no longer exists" and switch
 			// to chat. Drop straight to chat mode here so that never happens.
 			if s.isInlineWorkflow(pf.Name) {
-				s.sessionMode = "chat"
+				s.threadMode = "chat"
 				s.activeWorkflow = ""
 			}
 			s.persist()
@@ -1867,7 +1867,7 @@ func (s *Session) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt s
 			// later reopen replays the transcript (agent work + retry notices)
 			// instead of warning the workflow "no longer exists".
 			s.setWorkflowRunState(nil)
-			s.sessionMode = "chat"
+			s.threadMode = "chat"
 			s.activeWorkflow = ""
 			s.persist()
 			return
@@ -1977,7 +1977,7 @@ func (s *Session) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt s
 				s.emitIfVisible(silent, "event.stream_chunk", protocol.EventStreamChunk{Text: line + "\n"})
 			})
 			bashCancel()
-			// Distinguish our own deadline firing from the session context
+			// Distinguish our own deadline firing from the thread context
 			// being cancelled — only the former is "carry on"; the latter
 			// still aborts the workflow via the generic cmdErr branch below.
 			timedOut := bashCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil

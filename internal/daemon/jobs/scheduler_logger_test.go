@@ -21,7 +21,7 @@ func (l *fakeRunLogger) Started(spec Spec) {
 	l.started = append(l.started, spec.ID)
 }
 
-func (l *fakeRunLogger) Error(spec Spec, sessionID, source, msg string) {
+func (l *fakeRunLogger) Error(spec Spec, threadID, source, msg string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.errors = append(l.errors, RunError{Source: source, Message: msg})
@@ -45,7 +45,7 @@ func newLoggedScheduler(t *testing.T, runner *testRunner, logger RunLogger) *Sch
 func TestSchedulerLogsStartedAndFinished(t *testing.T) {
 	logger := &fakeRunLogger{}
 	runner := newTestRunner(func(Spec) RunResult {
-		return RunResult{Status: StatusOK, SessionID: "sess-1", AgentTurns: 2}
+		return RunResult{Status: StatusOK, ThreadID: "sess-1", AgentTurns: 2}
 	})
 	s := newLoggedScheduler(t, runner, logger)
 
@@ -59,7 +59,7 @@ func TestSchedulerLogsStartedAndFinished(t *testing.T) {
 	if len(logger.finished) != 1 {
 		t.Fatalf("finished count = %d, want 1", len(logger.finished))
 	}
-	if logger.finished[0].Status != StatusOK || logger.finished[0].SessionID != "sess-1" {
+	if logger.finished[0].Status != StatusOK || logger.finished[0].ThreadID != "sess-1" {
 		t.Errorf("finished = %+v", logger.finished[0])
 	}
 	if len(logger.errors) != 0 {
@@ -71,10 +71,10 @@ func TestSchedulerLogsRunErrors(t *testing.T) {
 	logger := &fakeRunLogger{}
 	runner := newTestRunner(func(Spec) RunResult {
 		return RunResult{
-			Status:    StatusError,
-			Err:       "boom",
-			SessionID: "sess-2",
-			Errors:    []RunError{{Source: "agent", Message: "boom"}},
+			Status:   StatusError,
+			Err:      "boom",
+			ThreadID: "sess-2",
+			Errors:   []RunError{{Source: "agent", Message: "boom"}},
 		}
 	})
 	s := newLoggedScheduler(t, runner, logger)

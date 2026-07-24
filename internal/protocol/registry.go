@@ -5,21 +5,21 @@ package protocol
 // These maps are the single source of truth for the daemon⇄client protocol
 // surface: every message the daemon emits (EventTypes) and every command a
 // client may send (CommandTypes), keyed by the exact discriminator string that
-// travels in SessionEvent.Type / SessionCommand.Type.
+// travels in ThreadEvent.Type / ThreadCommand.Type.
 //
 // The registry drives protocol-schema generation (cmd/protoschema reflects over
 // these payload types to emit vix-protocol.schema.json) and is guarded by tests
 // in this package that assert it stays exhaustive as new events/commands are
 // added. When you add a new wire message, add it here.
 //
-// A nil value means the message carries no data payload — SessionEvent.Data /
-// SessionCommand.Data is null on the wire (e.g. event.agent_done,
-// session.close). A non-nil value is a zero value of the payload struct.
+// A nil value means the message carries no data payload — ThreadEvent.Data /
+// ThreadCommand.Data is null on the wire (e.g. event.agent_done,
+// thread.close). A non-nil value is a zero value of the payload struct.
 
 // EventTypes maps each daemon→client event discriminator to a zero value of its
 // payload struct (nil = no payload).
 var EventTypes = map[string]any{
-	"event.session_started":     EventSessionStarted{},
+	"event.thread_started":      EventThreadStarted{},
 	"event.init_state":          EventInitState{},
 	"event.stream_chunk":        EventStreamChunk{},
 	"event.thinking_chunk":      EventThinkingChunk{},
@@ -44,7 +44,7 @@ var EventTypes = map[string]any{
 	"event.update_available":    EventUpdateAvailable{},
 	"event.job_run":             EventJobRun{},
 	"event.job_done":            EventJobDone{},
-	"event.sessions_changed":    EventSessionsChanged{},
+	"event.threads_changed":     EventThreadsChanged{},
 	"event.jobs_changed":        EventJobsChanged{},
 	"event.mcp_changed":         EventMCPChanged{},
 	"event.workflow_start":      EventWorkflowStart{},
@@ -63,31 +63,31 @@ var EventTypes = map[string]any{
 // CommandTypes maps each client→daemon command discriminator to a zero value of
 // its payload struct (nil = no payload).
 var CommandTypes = map[string]any{
-	"session.start":            SessionStartData{},
-	"session.input":            SessionInputData{},
-	"session.workflow":         SessionWorkflowData{},
-	"session.workflow_message": SessionWorkflowMessageData{},
-	"session.confirm":          SessionConfirmData{},
-	"session.plan_action":      SessionPlanActionData{},
-	"session.user_answer":      SessionUserAnswerData{},
-	"session.set_model":        SessionSetModelData{},
-	"session.trim":             SessionTrimData{},
-	"instance.register":        InstanceRegisterData{},
+	"thread.start":            ThreadStartData{},
+	"thread.input":            ThreadInputData{},
+	"thread.workflow":         ThreadWorkflowData{},
+	"thread.workflow_message": ThreadWorkflowMessageData{},
+	"thread.confirm":          ThreadConfirmData{},
+	"thread.plan_action":      ThreadPlanActionData{},
+	"thread.user_answer":      ThreadUserAnswerData{},
+	"thread.set_model":        ThreadSetModelData{},
+	"thread.trim":             ThreadTrimData{},
+	"instance.register":       InstanceRegisterData{},
 
 	// Payload-less commands (Data == null on the wire).
-	"session.mark_read": nil,
-	"session.cancel":    nil,
-	"session.close":     nil,
-	"update.quit":       nil,
+	"thread.mark_read": nil,
+	"thread.cancel":    nil,
+	"thread.close":     nil,
+	"update.quit":      nil,
 }
 
-// RPCTypes are the projection structs returned by one-shot RPCs (session.list,
+// RPCTypes are the projection structs returned by one-shot RPCs (thread.list,
 // job.list, hook.list). Unlike EventTypes/CommandTypes these are not envelope
 // payloads keyed by a wire discriminator — they are keyed by their own type
 // name — but they are part of the client-facing contract, so they are generated
 // into the schema + Swift models and drift-gated alongside the wire types.
 var RPCTypes = map[string]any{
-	"SessionSummary":   SessionSummary{},
+	"ThreadSummary":    ThreadSummary{},
 	"DirUsage":         DirUsage{},
 	"JobSummary":       JobSummary{},
 	"HookSummary":      HookSummary{},

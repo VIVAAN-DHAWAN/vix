@@ -18,7 +18,7 @@ import (
 // writes one JSON object per line to a daily file under ~/.vix/logs/{jobs,hooks}/
 // (<UTC-date>.jsonl). Three line shapes share a "phase" field:
 //
-//	jobs:  started | error | finished        (correlate by job_id / session_id)
+//	jobs:  started | error | finished        (correlate by job_id / thread_id)
 //	hooks: fired   | error | finished        (correlate by fire_id)
 //
 // Writes are best-effort and never propagate failures into a run: a broken or
@@ -129,7 +129,7 @@ func (s *Server) hooksLogDir() string {
 // newFireID returns a short correlation id tying a hook's fired/error/finished
 // run-log lines together.
 func newFireID() string {
-	id := generateSessionID()
+	id := generateThreadID()
 	if len(id) >= 8 {
 		return id[:8]
 	}
@@ -163,8 +163,8 @@ func (s *Server) logHookFired(fireID string, spec hooks.Spec, async bool, base m
 		"async":    async,
 		"kind":     hookKind(spec),
 	}
-	if v, ok := base["session_id"].(string); ok {
-		entry["session_id"] = v
+	if v, ok := base["thread_id"].(string); ok {
+		entry["thread_id"] = v
 	}
 	if v, ok := base["tool_name"].(string); ok {
 		entry["tool_name"] = v
@@ -227,15 +227,15 @@ func (l jobRunLogger) Started(spec jobs.Spec) {
 	})
 }
 
-func (l jobRunLogger) Error(spec jobs.Spec, sessionID, source, msg string) {
+func (l jobRunLogger) Error(spec jobs.Spec, threadID, source, msg string) {
 	entry := map[string]any{
 		"phase":  "error",
 		"job_id": spec.ID,
 		"source": source,
 		"error":  msg,
 	}
-	if sessionID != "" {
-		entry["session_id"] = sessionID
+	if threadID != "" {
+		entry["thread_id"] = threadID
 	}
 	appendRunLog(l.dir(), entry)
 	LogError("job %q: %s: %s", spec.ID, source, msg)
@@ -251,8 +251,8 @@ func (l jobRunLogger) Finished(spec jobs.Spec, res jobs.RunResult, dur time.Dura
 		"agent_turns": res.AgentTurns,
 		"duration_ms": dur.Milliseconds(),
 	}
-	if res.SessionID != "" {
-		entry["session_id"] = res.SessionID
+	if res.ThreadID != "" {
+		entry["thread_id"] = res.ThreadID
 	}
 	if len(res.Denials) > 0 {
 		entry["denials"] = res.Denials

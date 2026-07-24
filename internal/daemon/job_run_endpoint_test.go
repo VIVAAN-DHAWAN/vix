@@ -40,15 +40,15 @@ func TestHandleRunJob(t *testing.T) {
 	s.jobScheduler = sched
 
 	// Happy path: POST from a loopback origin fires the job and returns a
-	// session id.
+	// thread id.
 	rec := serveRun(s, httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/jobs/j/run", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
 	var body map[string]string
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["session_id"] == "" {
-		t.Fatalf("expected non-empty session_id, got %v", body)
+	if body["thread_id"] == "" {
+		t.Fatalf("expected non-empty thread_id, got %v", body)
 	}
 	waitForFileContains(t, filepath.Join(s.homeVixDir, "jobs", "j", "state.json"), "last_status")
 

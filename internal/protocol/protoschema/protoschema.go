@@ -55,8 +55,8 @@ func buildDoc() map[string]any {
 		"title":       "Vix daemon protocol",
 		"description": "Generated from internal/protocol Go structs by cmd/protoschema. DO NOT EDIT — run `make proto-schema`.",
 		"envelopes": map[string]any{
-			"command": g.schemaFor(reflect.TypeOf(protocol.SessionCommand{})),
-			"event":   g.schemaFor(reflect.TypeOf(protocol.SessionEvent{})),
+			"command": g.schemaFor(reflect.TypeOf(protocol.ThreadCommand{})),
+			"event":   g.schemaFor(reflect.TypeOf(protocol.ThreadEvent{})),
 		},
 		"commands": g.section(protocol.CommandTypes),
 		"events":   g.section(protocol.EventTypes),
@@ -97,7 +97,7 @@ func (g *generator) schemaFor(t reflect.Type) map[string]any {
 		t = t.Elem()
 	}
 
-	// json.RawMessage — opaque embedded JSON (e.g. SessionWorkflowData.Workflow).
+	// json.RawMessage — opaque embedded JSON (e.g. ThreadWorkflowData.Workflow).
 	if t == rawMessageType {
 		return map[string]any{"description": "arbitrary JSON value"}
 	}

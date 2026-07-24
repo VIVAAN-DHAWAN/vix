@@ -16,10 +16,10 @@ import (
 var errVFSUnsupported = errors.New("vfs: unsupported file type")
 
 // defaultLanguagesPaths returns the canonical [home/config/languages.json]
-// list used by stateless tool handlers that don't have a session-level
+// list used by stateless tool handlers that don't have a thread-level
 // VixPaths available. Languages are home-only (not layered with the project),
-// so this is a single-element slice. Per-session config-dir overrides are
-// handled at the session layer.
+// so this is a single-element slice. Per-thread config-dir overrides are
+// handled at the thread layer.
 func defaultLanguagesPaths(homeVixDir string) []string {
 	if homeVixDir == "" {
 		return nil

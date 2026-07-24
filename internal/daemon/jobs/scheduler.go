@@ -35,9 +35,9 @@ const (
 
 // RunResult is what a Runner reports back for one job run.
 type RunResult struct {
-	Status    string // ok | error | skipped | timeout
-	Err       string
-	SessionID string
+	Status   string // ok | error | skipped | timeout
+	Err      string
+	ThreadID string
 
 	// Detail surfaced back to the scheduler's RunLogger so all run-log lines
 	// are emitted from one place. AgentTurns and Denials enrich the "finished"
@@ -54,7 +54,7 @@ type RunError struct {
 	Message string
 }
 
-// Runner executes one job run: an isolated session driving the resolved
+// Runner executes one job run: an isolated thread driving the resolved
 // prompt, through spec.Workflow when set. ctx carries the per-run timeout;
 // implementations must return when it is cancelled.
 type Runner func(ctx context.Context, spec Spec, resolvedPrompt string) RunResult
@@ -66,9 +66,9 @@ type Runner func(ctx context.Context, spec Spec, resolvedPrompt string) RunResul
 type RunLogger interface {
 	// Started is called just before the runner is invoked.
 	Started(spec Spec)
-	// Error records one error encountered during the run. sessionID may be empty
-	// (e.g. a prompt-resolution failure before any session exists).
-	Error(spec Spec, sessionID, source, msg string)
+	// Error records one error encountered during the run. threadID may be empty
+	// (e.g. a prompt-resolution failure before any thread exists).
+	Error(spec Spec, threadID, source, msg string)
 	// Finished is called once the run completes, with its total wall-clock time.
 	Finished(spec Spec, res RunResult, dur time.Duration)
 }
@@ -235,12 +235,12 @@ func (s *Scheduler) CreateJob(spec Spec) error {
 	return nil
 }
 
-// runIDKey carries a pre-generated run/session id through a run's context.
+// runIDKey carries a pre-generated run/thread id through a run's context.
 type runIDKey struct{}
 
-// WithRunID stamps a pre-generated run/session id onto ctx so an on-demand run
+// WithRunID stamps a pre-generated run/thread id onto ctx so an on-demand run
 // adopts it instead of minting its own. The daemon's Runner reads it via
-// RunIDFromContext, letting RunNow's caller learn the session id up front.
+// RunIDFromContext, letting RunNow's caller learn the thread id up front.
 func WithRunID(ctx context.Context, id string) context.Context {
 	if id == "" {
 		return ctx
@@ -259,7 +259,7 @@ func RunIDFromContext(ctx context.Context) string {
 // one-shot — it only records the outcome — and it runs even when the job is
 // disabled or already completed. It refuses only when a run for that id is
 // already in flight. The run executes in the background using runID as its
-// session id (threaded through ctx); validation errors surface synchronously.
+// thread id (threaded through ctx); validation errors surface synchronously.
 func (s *Scheduler) RunNow(ctx context.Context, id, runID string) error {
 	s.mu.Lock()
 	spec, ok := s.specs[id]
@@ -625,7 +625,7 @@ func (s *Scheduler) execute(ctx context.Context, spec Spec, manual bool) {
 		}
 	}
 	for _, e := range res.Errors {
-		s.logError(spec, res.SessionID, e.Source, e.Message)
+		s.logError(spec, res.ThreadID, e.Source, e.Message)
 	}
 	s.logFinished(spec, res, time.Since(start))
 	s.applyResult(spec, res, manual, time.Since(start))
@@ -639,9 +639,9 @@ func (s *Scheduler) logStarted(spec Spec) {
 	}
 }
 
-func (s *Scheduler) logError(spec Spec, sessionID, source, msg string) {
+func (s *Scheduler) logError(spec Spec, threadID, source, msg string) {
 	if s.logger != nil {
-		s.logger.Error(spec, sessionID, source, msg)
+		s.logger.Error(spec, threadID, source, msg)
 	}
 }
 
@@ -669,10 +669,10 @@ func (s *Scheduler) applyResult(spec Spec, res RunResult, manual bool, dur time.
 	}
 	st.LastStatus = res.Status
 	st.LastError = res.Err
-	if res.SessionID != "" {
-		st.LastSessionID = res.SessionID
+	if res.ThreadID != "" {
+		st.LastThreadID = res.ThreadID
 	}
-	rec := RunRecord{At: now, Status: res.Status, Error: res.Err, SessionID: res.SessionID}
+	rec := RunRecord{At: now, Status: res.Status, Error: res.Err, ThreadID: res.ThreadID}
 	if dur > 0 {
 		rec.Duration = dur.String()
 	}
@@ -684,11 +684,11 @@ func (s *Scheduler) applyResult(spec Spec, res RunResult, manual bool, dur time.
 		s.notifyJobsChanged()
 		if res.Status != StatusSkipped {
 			s.notifyEvent("event.job_done", map[string]any{
-				"job_id":     spec.ID,
-				"name":       spec.Name,
-				"status":     res.Status,
-				"error":      res.Err,
-				"session_id": res.SessionID,
+				"job_id":    spec.ID,
+				"name":      spec.Name,
+				"status":    res.Status,
+				"error":     res.Err,
+				"thread_id": res.ThreadID,
 			})
 		}
 		return
@@ -734,15 +734,15 @@ func (s *Scheduler) applyResult(spec Spec, res RunResult, manual bool, dur time.
 	// whiteboard): nothing happened, so nobody is notified.
 	if res.Status != StatusSkipped {
 		s.notifyEvent("event.job_done", map[string]any{
-			"job_id":     spec.ID,
-			"name":       spec.Name,
-			"status":     res.Status,
-			"error":      res.Err,
-			"session_id": res.SessionID,
+			"job_id":    spec.ID,
+			"name":      spec.Name,
+			"status":    res.Status,
+			"error":     res.Err,
+			"thread_id": res.ThreadID,
 		})
 	}
 	if autoDisabled {
-		s.logError(spec, res.SessionID, "auto_disable", "disabled after repeated failures")
+		s.logError(spec, res.ThreadID, "auto_disable", "disabled after repeated failures")
 		s.notifyEvent("event.job_run", map[string]any{
 			"job_id": spec.ID, "name": spec.Name, "status": "auto_disabled",
 			"error": "disabled after repeated failures",

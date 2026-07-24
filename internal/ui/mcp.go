@@ -92,12 +92,12 @@ func renderMCPView(servers []protocol.MCPServerSummary, width, height int, s Sty
 
 	header := fmt.Sprintf("    %-*s  %-*s  %-*s  %-*s",
 		colName, "Name", colType, "Type", colStatus, "Status", colTools, "Tools")
-	headerRule := "  " + sessionHeaderRuleStyle.Render(strings.Repeat("─", min(colBox+colName+colType+colStatus+colTools+8, innerWidth)))
+	headerRule := "  " + threadHeaderRuleStyle.Render(strings.Repeat("─", min(colBox+colName+colType+colStatus+colTools+8, innerWidth)))
 
 	rows = append(rows,
-		"  "+sessionGroupHeaderStyle.Render("MCP Servers"),
+		"  "+threadGroupHeaderStyle.Render("MCP Servers"),
 		"",
-		sessionColumnHeaderStyle.Render(header),
+		threadColumnHeaderStyle.Render(header),
 		headerRule,
 	)
 
@@ -118,7 +118,7 @@ func renderMCPView(servers []protocol.MCPServerSummary, width, height int, s Sty
 			jobsCell(mcpStatusLabel(srv), colStatus) + "  " +
 			jobsCell(tools, colTools)
 		if i == selectedRow {
-			rows = append(rows, sessionRowSelectedStyle.Render("  ")+sessionRowSelectedStyle.Render(plain))
+			rows = append(rows, threadRowSelectedStyle.Render("  ")+threadRowSelectedStyle.Render(plain))
 		} else {
 			rows = append(rows, "  "+plain)
 		}

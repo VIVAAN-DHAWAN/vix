@@ -27,7 +27,7 @@ func TestMessageParamTimestampRoundTrip(t *testing.T) {
 
 // A message persisted without a timestamp (the zero value) or from a record
 // predating this field must round-trip such that IsZero() stays true — that is
-// the gate the replay path uses to omit the "Sent at" line for legacy sessions.
+// the gate the replay path uses to omit the "Sent at" line for legacy threads.
 func TestMessageParamTimestampZeroRoundTripsAsLegacy(t *testing.T) {
 	data, err := json.Marshal(NewUserMessage(NewTextBlock("hi")))
 	if err != nil {

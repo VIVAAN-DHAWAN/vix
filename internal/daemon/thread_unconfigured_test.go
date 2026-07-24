@@ -13,9 +13,9 @@ import (
 
 // drainFor collects events until an event.agent_done arrives (or a timeout),
 // returning every event seen so the caller can assert on them.
-func drainFor(t *testing.T, events chan protocol.SessionEvent) []protocol.SessionEvent {
+func drainFor(t *testing.T, events chan protocol.ThreadEvent) []protocol.ThreadEvent {
 	t.Helper()
-	var got []protocol.SessionEvent
+	var got []protocol.ThreadEvent
 	for {
 		select {
 		case ev := <-events:
@@ -29,7 +29,7 @@ func drainFor(t *testing.T, events chan protocol.SessionEvent) []protocol.Sessio
 	}
 }
 
-// TestHandleInputUnconfigured_NoCredential asserts that an unconfigured session
+// TestHandleInputUnconfigured_NoCredential asserts that an unconfigured thread
 // (no credential for the selected model) refuses to stream and instead emits
 // the friendly, display-name-keyed error pointing the user to set credentials.
 // s.llm is nil, so any attempt to stream would panic — its absence proves the
@@ -37,9 +37,9 @@ func drainFor(t *testing.T, events chan protocol.SessionEvent) []protocol.Sessio
 func TestHandleInputUnconfigured_NoCredential(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	events := make(chan protocol.SessionEvent, 16)
+	events := make(chan protocol.ThreadEvent, 16)
 
-	s := &Session{
+	s := &Thread{
 		ctx:       ctx,
 		eventChan: events,
 		model:     "anthropic/claude-sonnet-4-6",
@@ -59,7 +59,7 @@ func TestHandleInputUnconfigured_NoCredential(t *testing.T) {
 		case "event.agent_done":
 			sawDone = true
 		case "event.stream_chunk", "event.stream_done", "event.thinking_chunk":
-			t.Fatalf("unconfigured session must not stream, got %s", ev.Type)
+			t.Fatalf("unconfigured thread must not stream, got %s", ev.Type)
 		}
 	}
 	if !sawDone {
@@ -78,9 +78,9 @@ func TestHandleInputUnconfigured_NoCredential(t *testing.T) {
 func TestHandleInputUnconfigured_OtherError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	events := make(chan protocol.SessionEvent, 16)
+	events := make(chan protocol.ThreadEvent, 16)
 
-	s := &Session{
+	s := &Thread{
 		ctx:       ctx,
 		eventChan: events,
 		model:     "bogus/model",

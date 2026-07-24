@@ -22,7 +22,7 @@ func TestJobSnapshotIncludesRecentRuns(t *testing.T) {
 		LastStatus: StatusOK,
 		RecentRuns: []RunRecord{
 			{At: ran.Add(-time.Hour), Status: StatusSkipped},
-			{At: ran, Status: StatusOK, SessionID: "sess-1", Duration: "42s"},
+			{At: ran, Status: StatusOK, ThreadID: "sess-1", Duration: "42s"},
 		},
 	}
 	sch.mu.Unlock()
@@ -38,7 +38,7 @@ func TestJobSnapshotIncludesRecentRuns(t *testing.T) {
 	if len(j.RecentRuns) != 2 {
 		t.Fatalf("RecentRuns len = %d, want 2", len(j.RecentRuns))
 	}
-	if j.RecentRuns[1].SessionID != "sess-1" || j.RecentRuns[1].Duration != "42s" {
+	if j.RecentRuns[1].ThreadID != "sess-1" || j.RecentRuns[1].Duration != "42s" {
 		t.Fatalf("newest recent run = %+v", j.RecentRuns[1])
 	}
 

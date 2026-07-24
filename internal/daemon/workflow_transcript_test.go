@@ -86,7 +86,7 @@ func hasBlock(msgs []llm.MessageParam, t llm.ContentBlockType) bool {
 }
 
 func TestAppendWorkflowTranscript_SplicesFullAgentHistory(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	exec := &WorkflowRun{StepAgents: map[string]*AgentRunner{}}
 	visibleAgent(exec, "plan")
 	exec.StepAgents["plan"] = &AgentRunner{Messages: []llm.MessageParam{
@@ -114,7 +114,7 @@ func TestAppendWorkflowTranscript_SplicesFullAgentHistory(t *testing.T) {
 }
 
 func TestAppendWorkflowTranscript_DropsThinkingBlocks(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	exec := &WorkflowRun{StepAgents: map[string]*AgentRunner{}}
 	visibleAgent(exec, "plan")
 	exec.StepAgents["plan"] = &AgentRunner{Messages: []llm.MessageParam{
@@ -136,7 +136,7 @@ func TestAppendWorkflowTranscript_DropsThinkingBlocks(t *testing.T) {
 }
 
 func TestAppendWorkflowTranscript_ConcatenatesAndCoalesces(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	exec := &WorkflowRun{StepAgents: map[string]*AgentRunner{}}
 	visibleAgent(exec, "explore")
 	visibleAgent(exec, "plan")
@@ -163,7 +163,7 @@ func TestAppendWorkflowTranscript_ConcatenatesAndCoalesces(t *testing.T) {
 }
 
 func TestAppendWorkflowTranscript_SplicesEachStepOnce(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	exec := &WorkflowRun{StepAgents: map[string]*AgentRunner{}}
 	// A looping step records two visible entries but shares one accumulating
 	// agent — its history must be spliced exactly once.
@@ -182,7 +182,7 @@ func TestAppendWorkflowTranscript_SplicesEachStepOnce(t *testing.T) {
 }
 
 func TestAppendWorkflowTranscript_TextFallbackWhenNoAgent(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	exec := &WorkflowRun{StepAgents: map[string]*AgentRunner{}}
 	exec.recordTranscriptEntry(WorkflowStepDef{Type: "agent"}, "plan", "Here is the plan.\n")
 	// No StepAgents["plan"] → fall back to user(anchor)→assistant(text).
@@ -201,7 +201,7 @@ func TestAppendWorkflowTranscript_TextFallbackWhenNoAgent(t *testing.T) {
 }
 
 func TestAppendWorkflowTranscript_EmptyNoop(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	s.appendWorkflowTranscript("kickoff", &WorkflowRun{})
 	if len(s.messages) != 0 {
 		t.Fatalf("expected no messages for empty transcript, got %d", len(s.messages))
@@ -225,7 +225,7 @@ func TestRecordFailedAgentStep_Gating(t *testing.T) {
 }
 
 func TestAppendWorkflowTranscript_FailedStepSplicesPartialHistoryAndRetries(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	exec := &WorkflowRun{StepAgents: map[string]*AgentRunner{}}
 	// Failed step: recorded via recordFailedAgentStep (no final text), but its
 	// agent produced a tool_use/tool_result before dying, plus retry notices.
@@ -258,7 +258,7 @@ func TestAppendWorkflowTranscript_FailedStepSplicesPartialHistoryAndRetries(t *t
 }
 
 func TestAppendWorkflowTranscript_RetryNoticesWithoutMessages(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	exec := &WorkflowRun{StepAgents: map[string]*AgentRunner{}}
 	// A run that failed before producing any agent message still records its
 	// retries, anchored before everything (-1).
@@ -277,7 +277,7 @@ func TestAppendWorkflowTranscript_RetryNoticesWithoutMessages(t *testing.T) {
 // ── integration: a bash-only run records nothing ──
 
 func TestExecuteWorkflow_BashOnlyLeavesTranscriptEmpty(t *testing.T) {
-	s := newWorkflowTestSession(t)
+	s := newWorkflowTestThread(t)
 	wf := &WorkflowDef{
 		Name:       "echoer",
 		EntryPoint: StepRef{ID: "say"},

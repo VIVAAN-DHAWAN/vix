@@ -8,7 +8,7 @@ import (
 
 // ModelInfo describes a single LLM model available for selection in the
 // Settings tab. Spec is the prefixed identifier that gets sent on
-// session.set_model — the picker never sends a bare model name.
+// thread.set_model — the picker never sends a bare model name.
 type ModelInfo struct {
 	Spec        string // full prefixed identifier, e.g. "anthropic/claude-opus-4-8"
 	Provider    string // "anthropic" | "openai" | "openrouter" | "minimax" | "mimo"

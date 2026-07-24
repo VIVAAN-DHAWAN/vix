@@ -46,7 +46,7 @@ func ValidateCommand(discriminator string, data any) error {
 }
 
 // ValidateRPC checks that an RPC projection value (keyed by type name, e.g.
-// "SessionSummary") conforms to the generated schema.
+// "ThreadSummary") conforms to the generated schema.
 func ValidateRPC(typeName string, data any) error {
 	zero, ok := protocol.RPCTypes[typeName]
 	if !ok {

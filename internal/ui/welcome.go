@@ -34,7 +34,7 @@ func renderVixBanner() string {
 	}
 	return result.String()
 } // renderWelcomeInline renders a centered welcome message for inline mode.
-// workDir is the session's working directory; when draft is true the session
+// workDir is the thread's working directory; when draft is true the thread
 // has not started yet, so the directory is shown as editable (Ctrl+o) and the
 // recent-directories list is offered for quick switching. recentDirs holds the
 // most-used working directories (already ranked, trimmed to at most 5 by the
@@ -150,7 +150,7 @@ func renderWelcomeInline(width, height int, s Styles, workDir string, draft bool
 	return centered
 }
 
-// renderRestoringInline renders a centered loading placeholder for a session
+// renderRestoringInline renders a centered loading placeholder for a thread
 // that was attached on launch and is still waiting for its event.replay. It
 // mirrors the welcome screen (vix banner + subtitle) but without version or
 // shortcuts. spinner is the current animation frame (from ThinkingAnim.View);
@@ -159,7 +159,7 @@ func renderRestoringInline(width, height int, s Styles, spinner string) string {
 	var block strings.Builder
 	block.WriteString(renderVixBanner())
 	block.WriteString("\n")
-	subtitle := lipgloss.NewStyle().Foreground(s.ColorWhite).Italic(true).Render("loading sessions")
+	subtitle := lipgloss.NewStyle().Foreground(s.ColorWhite).Italic(true).Render("loading threads")
 	block.WriteString(subtitle + "\n\n")
 	if spinner != "" {
 		block.WriteString(strings.TrimLeft(spinner, " "))

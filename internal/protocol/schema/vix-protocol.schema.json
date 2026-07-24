@@ -126,10 +126,10 @@
         "name": {
           "type": "string"
         },
-        "session_id": {
+        "status": {
           "type": "string"
         },
-        "status": {
+        "thread_id": {
           "type": "string"
         }
       },
@@ -267,7 +267,7 @@
         "model": {
           "type": "string"
         },
-        "session_mode": {
+        "thread_mode": {
           "type": "string"
         },
         "title": {
@@ -312,31 +312,6 @@
         "reason",
         "wait_secs"
       ],
-      "type": "object"
-    },
-    "EventSessionStarted": {
-      "properties": {
-        "fork_turn_idx": {
-          "type": "integer"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "started_at": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "session_id",
-        "started_at"
-      ],
-      "type": "object"
-    },
-    "EventSessionsChanged": {
-      "properties": {},
       "type": "object"
     },
     "EventSkillsAvailable": {
@@ -415,6 +390,31 @@
         "elapsed_ms",
         "summary_chars"
       ],
+      "type": "object"
+    },
+    "EventThreadStarted": {
+      "properties": {
+        "fork_turn_idx": {
+          "type": "integer"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "started_at",
+        "thread_id"
+      ],
+      "type": "object"
+    },
+    "EventThreadsChanged": {
+      "properties": {},
       "type": "object"
     },
     "EventTitleUpdated": {
@@ -1040,245 +1040,6 @@
       ],
       "type": "object"
     },
-    "SessionCommand": {
-      "properties": {
-        "auth_token": {
-          "type": "string"
-        },
-        "data": {
-          "description": "arbitrary JSON value"
-        },
-        "type": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "data",
-        "type"
-      ],
-      "type": "object"
-    },
-    "SessionConfirmData": {
-      "properties": {
-        "approved": {
-          "type": "boolean"
-        },
-        "persist_dirs": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "approved"
-      ],
-      "type": "object"
-    },
-    "SessionEvent": {
-      "properties": {
-        "data": {},
-        "type": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "data",
-        "type"
-      ],
-      "type": "object"
-    },
-    "SessionInputData": {
-      "properties": {
-        "attachments": {
-          "items": {
-            "$ref": "#/$defs/Attachment"
-          },
-          "type": "array"
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "type": "object"
-    },
-    "SessionPlanActionData": {
-      "properties": {
-        "action": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "action"
-      ],
-      "type": "object"
-    },
-    "SessionSetModelData": {
-      "properties": {
-        "model": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "model"
-      ],
-      "type": "object"
-    },
-    "SessionStartData": {
-      "properties": {
-        "attach_session_id": {
-          "type": "string"
-        },
-        "client_version": {
-          "type": "string"
-        },
-        "config_dir": {
-          "type": "string"
-        },
-        "cwd": {
-          "type": "string"
-        },
-        "enable_automatic_directory_access": {
-          "type": "boolean"
-        },
-        "enable_automatic_write_permission": {
-          "type": "boolean"
-        },
-        "force_init": {
-          "type": "boolean"
-        },
-        "fork_session_id": {
-          "type": "string"
-        },
-        "fork_turn_idx": {
-          "type": "integer"
-        },
-        "headless": {
-          "type": "boolean"
-        },
-        "model": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "cwd",
-        "enable_automatic_directory_access",
-        "enable_automatic_write_permission",
-        "force_init",
-        "headless",
-        "model"
-      ],
-      "type": "object"
-    },
-    "SessionSummary": {
-      "properties": {
-        "attached": {
-          "type": "boolean"
-        },
-        "cwd": {
-          "type": "string"
-        },
-        "first_message": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "job_status": {
-          "type": "string"
-        },
-        "last_request_at": {
-          "type": "string"
-        },
-        "model": {
-          "type": "string"
-        },
-        "origin": {
-          "type": "string"
-        },
-        "started_at": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "trigger": {
-          "$ref": "#/$defs/TriggerInfo"
-        },
-        "unread": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "cwd",
-        "id",
-        "model"
-      ],
-      "type": "object"
-    },
-    "SessionTrimData": {
-      "properties": {
-        "turn_idx": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "turn_idx"
-      ],
-      "type": "object"
-    },
-    "SessionUserAnswerData": {
-      "properties": {
-        "answer": {
-          "type": "string"
-        },
-        "answers": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "answer"
-      ],
-      "type": "object"
-    },
-    "SessionWorkflowData": {
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "workflow": {
-          "description": "arbitrary JSON value"
-        }
-      },
-      "required": [
-        "name",
-        "text"
-      ],
-      "type": "object"
-    },
-    "SessionWorkflowMessageData": {
-      "properties": {
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "type": "object"
-    },
     "SkillInfo": {
       "properties": {
         "description": {
@@ -1332,6 +1093,245 @@
         "model",
         "output_tokens",
         "step_id"
+      ],
+      "type": "object"
+    },
+    "ThreadCommand": {
+      "properties": {
+        "auth_token": {
+          "type": "string"
+        },
+        "data": {
+          "description": "arbitrary JSON value"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThreadConfirmData": {
+      "properties": {
+        "approved": {
+          "type": "boolean"
+        },
+        "persist_dirs": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "approved"
+      ],
+      "type": "object"
+    },
+    "ThreadEvent": {
+      "properties": {
+        "data": {},
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThreadInputData": {
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "ThreadPlanActionData": {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "ThreadSetModelData": {
+      "properties": {
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "ThreadStartData": {
+      "properties": {
+        "attach_thread_id": {
+          "type": "string"
+        },
+        "client_version": {
+          "type": "string"
+        },
+        "config_dir": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "enable_automatic_directory_access": {
+          "type": "boolean"
+        },
+        "enable_automatic_write_permission": {
+          "type": "boolean"
+        },
+        "force_init": {
+          "type": "boolean"
+        },
+        "fork_thread_id": {
+          "type": "string"
+        },
+        "fork_turn_idx": {
+          "type": "integer"
+        },
+        "headless": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd",
+        "enable_automatic_directory_access",
+        "enable_automatic_write_permission",
+        "force_init",
+        "headless",
+        "model"
+      ],
+      "type": "object"
+    },
+    "ThreadSummary": {
+      "properties": {
+        "attached": {
+          "type": "boolean"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "first_message": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "job_status": {
+          "type": "string"
+        },
+        "last_request_at": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "trigger": {
+          "$ref": "#/$defs/TriggerInfo"
+        },
+        "unread": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cwd",
+        "id",
+        "model"
+      ],
+      "type": "object"
+    },
+    "ThreadTrimData": {
+      "properties": {
+        "turn_idx": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "turn_idx"
+      ],
+      "type": "object"
+    },
+    "ThreadUserAnswerData": {
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "answers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "answer"
+      ],
+      "type": "object"
+    },
+    "ThreadWorkflowData": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "workflow": {
+          "description": "arbitrary JSON value"
+        }
+      },
+      "required": [
+        "name",
+        "text"
+      ],
+      "type": "object"
+    },
+    "ThreadWorkflowMessageData": {
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
       ],
       "type": "object"
     },
@@ -1427,58 +1427,58 @@
         "$ref": "#/$defs/InstanceRegisterData"
       }
     },
-    "session.cancel": {
+    "thread.cancel": {
       "payload": null
     },
-    "session.close": {
+    "thread.close": {
       "payload": null
     },
-    "session.confirm": {
+    "thread.confirm": {
       "payload": {
-        "$ref": "#/$defs/SessionConfirmData"
+        "$ref": "#/$defs/ThreadConfirmData"
       }
     },
-    "session.input": {
+    "thread.input": {
       "payload": {
-        "$ref": "#/$defs/SessionInputData"
+        "$ref": "#/$defs/ThreadInputData"
       }
     },
-    "session.mark_read": {
+    "thread.mark_read": {
       "payload": null
     },
-    "session.plan_action": {
+    "thread.plan_action": {
       "payload": {
-        "$ref": "#/$defs/SessionPlanActionData"
+        "$ref": "#/$defs/ThreadPlanActionData"
       }
     },
-    "session.set_model": {
+    "thread.set_model": {
       "payload": {
-        "$ref": "#/$defs/SessionSetModelData"
+        "$ref": "#/$defs/ThreadSetModelData"
       }
     },
-    "session.start": {
+    "thread.start": {
       "payload": {
-        "$ref": "#/$defs/SessionStartData"
+        "$ref": "#/$defs/ThreadStartData"
       }
     },
-    "session.trim": {
+    "thread.trim": {
       "payload": {
-        "$ref": "#/$defs/SessionTrimData"
+        "$ref": "#/$defs/ThreadTrimData"
       }
     },
-    "session.user_answer": {
+    "thread.user_answer": {
       "payload": {
-        "$ref": "#/$defs/SessionUserAnswerData"
+        "$ref": "#/$defs/ThreadUserAnswerData"
       }
     },
-    "session.workflow": {
+    "thread.workflow": {
       "payload": {
-        "$ref": "#/$defs/SessionWorkflowData"
+        "$ref": "#/$defs/ThreadWorkflowData"
       }
     },
-    "session.workflow_message": {
+    "thread.workflow_message": {
       "payload": {
-        "$ref": "#/$defs/SessionWorkflowMessageData"
+        "$ref": "#/$defs/ThreadWorkflowMessageData"
       }
     },
     "update.quit": {
@@ -1488,10 +1488,10 @@
   "description": "Generated from internal/protocol Go structs by cmd/protoschema. DO NOT EDIT — run `make proto-schema`.",
   "envelopes": {
     "command": {
-      "$ref": "#/$defs/SessionCommand"
+      "$ref": "#/$defs/ThreadCommand"
     },
     "event": {
-      "$ref": "#/$defs/SessionEvent"
+      "$ref": "#/$defs/ThreadEvent"
     }
   },
   "events": {
@@ -1574,16 +1574,6 @@
         "$ref": "#/$defs/EventRetry"
       }
     },
-    "event.session_started": {
-      "payload": {
-        "$ref": "#/$defs/EventSessionStarted"
-      }
-    },
-    "event.sessions_changed": {
-      "payload": {
-        "$ref": "#/$defs/EventSessionsChanged"
-      }
-    },
     "event.skills_available": {
       "payload": {
         "$ref": "#/$defs/EventSkillsAvailable"
@@ -1607,6 +1597,16 @@
     "event.thinking_stall": {
       "payload": {
         "$ref": "#/$defs/EventThinkingStall"
+      }
+    },
+    "event.thread_started": {
+      "payload": {
+        "$ref": "#/$defs/EventThreadStarted"
+      }
+    },
+    "event.threads_changed": {
+      "payload": {
+        "$ref": "#/$defs/EventThreadsChanged"
       }
     },
     "event.title_updated": {
@@ -1688,8 +1688,8 @@
     "MCPServerSummary": {
       "$ref": "#/$defs/MCPServerSummary"
     },
-    "SessionSummary": {
-      "$ref": "#/$defs/SessionSummary"
+    "ThreadSummary": {
+      "$ref": "#/$defs/ThreadSummary"
     }
   },
   "title": "Vix daemon protocol"

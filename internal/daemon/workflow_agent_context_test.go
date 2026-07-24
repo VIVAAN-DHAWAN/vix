@@ -13,7 +13,7 @@ import (
 )
 
 // TestEnsureWorkflowAgentContext verifies a workflow agent step inherits the
-// session's project context — AGENTS.md (gated by read_agents_md) and the
+// thread's project context — AGENTS.md (gated by read_agents_md) and the
 // skills catalog — in its system prompt, and gains the invocable `skill` tool,
 // idempotently across repeated calls.
 func TestEnsureWorkflowAgentContext(t *testing.T) {
@@ -26,7 +26,7 @@ func TestEnsureWorkflowAgentContext(t *testing.T) {
 
 	srv := &Server{handlers: make(map[string]HandlerFunc)}
 	RegisterToolHandlers(srv)
-	s := &Session{
+	s := &Thread{
 		server:    srv,
 		cwd:       cwd,
 		headless:  true,
@@ -76,11 +76,11 @@ func TestEnsureWorkflowAgentContext(t *testing.T) {
 }
 
 // TestEnsureWorkflowAgentContext_NoSkillsNoTool verifies the skill tool is not
-// added when the session has no skills loaded.
+// added when the thread has no skills loaded.
 func TestEnsureWorkflowAgentContext_NoSkillsNoTool(t *testing.T) {
 	srv := &Server{handlers: make(map[string]HandlerFunc)}
 	RegisterToolHandlers(srv)
-	s := &Session{
+	s := &Thread{
 		server:        srv,
 		cwd:           t.TempDir(),
 		headless:      true,
