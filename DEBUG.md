@@ -10,11 +10,11 @@ Both `vixd` and `vix` expose a pprof HTTP server when launched with `--pprof-por
 
 ---
 
-## Capture a snapshot
+## Capture a Snapshot
 
 Run all commands **while the target process is live**.
 
-### Goroutine dump (blocking / backpressure issues)
+### Goroutine Dump (Blocking / Backpressure Issues)
 
 ```bash
 # vixd
@@ -24,7 +24,7 @@ curl -s "http://localhost:6060/debug/pprof/goroutine?debug=2" > /tmp/vixd-gorout
 curl -s "http://localhost:6061/debug/pprof/goroutine?debug=2" > /tmp/vix-goroutines.txt
 ```
 
-### Heap snapshot
+### Heap Snapshot
 
 ```bash
 curl -s "http://localhost:6060/debug/pprof/heap" > /tmp/vixd-heap.pprof
@@ -33,7 +33,7 @@ curl -s "http://localhost:6061/debug/pprof/heap" > /tmp/vix-heap.pprof
 go tool pprof -http=:8080 /tmp/vixd-heap.pprof
 ```
 
-### CPU profile (30-second sample)
+### CPU Profile (30-Second Sample)
 
 ```bash
 curl -s "http://localhost:6060/debug/pprof/profile?seconds=30" > /tmp/vixd-cpu.pprof
@@ -42,7 +42,7 @@ curl -s "http://localhost:6061/debug/pprof/profile?seconds=30" > /tmp/vix-cpu.pp
 go tool pprof -http=:8080 /tmp/vixd-cpu.pprof
 ```
 
-### All-in-one snapshot script
+### All-In-One Snapshot Script
 
 ```bash
 TS=$(date +%Y%m%d_%H%M%S)
@@ -60,7 +60,7 @@ done
 
 ---
 
-## Debug environment variables
+## Debug Environment Variables
 
 Set by `make run-d` / `make run-x` automatically.
 
