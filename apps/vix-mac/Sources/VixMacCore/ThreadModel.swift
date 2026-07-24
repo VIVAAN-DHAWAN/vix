@@ -3,12 +3,12 @@ import Observation
 import VixClient
 import VixProtocol
 
-/// Observable session controller for the SwiftUI app: owns the connection, the
+/// Observable thread controller for the SwiftUI app: owns the connection, the
 /// event-consuming task, and the reduced transcript state. All UI-facing state
 /// mutates on the main actor.
 @MainActor
 @Observable
-public final class SessionModel {
+public final class ThreadModel {
     public enum Connection: Equatable, Sendable {
         case disconnected
         case connecting
@@ -22,17 +22,17 @@ public final class SessionModel {
     public var inputText = ""
 
     public let cwd: String
-    private let client: VixSessionClient
+    private let client: VixThreadClient
     private var streamTask: Task<Void, Never>?
-    private var lastMakeStream: (@Sendable (String) throws -> AsyncThrowingStream<SessionEvent, Error>)?
+    private var lastMakeStream: (@Sendable (String) throws -> AsyncThrowingStream<ThreadEvent, Error>)?
 
-    public init(client: VixSessionClient = VixSessionClient(),
+    public init(client: VixThreadClient = VixThreadClient(),
                 cwd: String = FileManager.default.currentDirectoryPath) {
         self.client = client
         self.cwd = cwd
     }
 
-    /// Ping the daemon (dev-friendly version discovery), open a new session, and
+    /// Ping the daemon (dev-friendly version discovery), open a new thread, and
     /// begin consuming events into `state`.
     public func connect() {
         let client = self.client
@@ -40,11 +40,11 @@ public final class SessionModel {
         begin { try client.start(cwd: cwd, clientVersion: $0) }
     }
 
-    /// Resume a persisted session by id; the daemon replays it via event.replay.
-    public func attach(sessionID: String) {
+    /// Resume a persisted thread by id; the daemon replays it via event.replay.
+    public func attach(threadID: String) {
         let client = self.client
         let cwd = self.cwd
-        begin { try client.attach(sessionID: sessionID, cwd: cwd, clientVersion: $0) }
+        begin { try client.attach(threadID: threadID, cwd: cwd, clientVersion: $0) }
     }
 
     /// Retry the last connect/attach after a failure.
@@ -54,7 +54,7 @@ public final class SessionModel {
         begin(make)
     }
 
-    private func begin(_ makeStream: @escaping @Sendable (String) throws -> AsyncThrowingStream<SessionEvent, Error>) {
+    private func begin(_ makeStream: @escaping @Sendable (String) throws -> AsyncThrowingStream<ThreadEvent, Error>) {
         guard connection == .disconnected || isFailed else { return }
         lastMakeStream = makeStream
         banner = nil
@@ -62,10 +62,10 @@ public final class SessionModel {
 
         let client = self.client
         Task { [weak self] in
-            // Run the blocking handshake (ping + connect + session.start) off the
+            // Run the blocking handshake (ping + connect + thread.start) off the
             // main actor so the UI never stalls and we never mutate observed
             // state during a SwiftUI update.
-            let outcome: Result<(String, AsyncThrowingStream<SessionEvent, Error>), ConnectError> =
+            let outcome: Result<(String, AsyncThrowingStream<ThreadEvent, Error>), ConnectError> =
                 await Task.detached {
                     do {
                         let ping = try client.ping()
@@ -147,11 +147,11 @@ public final class SessionModel {
     public func disconnect() {
         streamTask?.cancel()
         streamTask = nil
-        client.closeSession()
+        client.closeThread()
         connection = .disconnected
     }
 
-    private func apply(_ event: SessionEvent) {
+    private func apply(_ event: ThreadEvent) {
         if let banner = connectionBanner(for: event) { self.banner = banner }
         reduce(&state, event)
     }

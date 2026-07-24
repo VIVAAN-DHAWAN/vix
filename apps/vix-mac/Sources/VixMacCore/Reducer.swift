@@ -58,7 +58,7 @@ public enum PendingInteraction: Equatable, Sendable {
 public struct TranscriptState: Equatable, Sendable {
     public var items: [TranscriptItem] = []
     public var isStreaming = false
-    public var sessionID = ""
+    public var threadID = ""
     public var title = ""
     public var lastTokens: TokenStats?
 
@@ -90,11 +90,11 @@ public struct TranscriptState: Equatable, Sendable {
 /// Apply a single daemon event to the transcript state. Pure and total: unknown
 /// events and malformed payloads are ignored. This is the headless-testable core
 /// of the app.
-public func reduce(_ s: inout TranscriptState, _ event: SessionEvent) {
+public func reduce(_ s: inout TranscriptState, _ event: ThreadEvent) {
     switch event.type {
-    case "event.session_started":
-        if let d = try? event.data.decode(EventSessionStarted.self) {
-            s.sessionID = d.sessionId
+    case "event.thread_started":
+        if let d = try? event.data.decode(EventThreadStarted.self) {
+            s.threadID = d.threadId
         }
 
     case "event.stream_chunk":
@@ -166,9 +166,9 @@ public func reduce(_ s: inout TranscriptState, _ event: SessionEvent) {
         endStreaming(&s)
 
     case "event.clear":
-        let keptSession = s.sessionID
+        let keptThread = s.threadID
         s = TranscriptState()
-        s.sessionID = keptSession
+        s.threadID = keptThread
 
     default:
         break
@@ -225,20 +225,20 @@ private func endStreaming(_ s: inout TranscriptState) {
     s.streamingThinkingID = nil
 }
 
-/// A user-facing banner when an event indicates the session can't proceed
+/// A user-facing banner when an event indicates the thread can't proceed
 /// (already open elsewhere, or gone), else nil. Pure — unit-tested headlessly.
-public func connectionBanner(for event: SessionEvent) -> String? {
+public func connectionBanner(for event: ThreadEvent) -> String? {
     guard event.type == "event.error",
           let error = try? event.data.decode(EventError.self) else { return nil }
     switch error.code {
-    case "session_busy": return "This session is already open in another window."
-    case "session_not_found": return "This session no longer exists."
+    case "thread_busy": return "This thread is already open in another window."
+    case "thread_not_found": return "This thread no longer exists."
     default: return nil
     }
 }
 
-// applyReplay rebuilds the transcript from a persisted session (event.replay,
-// emitted once right after session_started when attaching).
+// applyReplay rebuilds the transcript from a persisted thread (event.replay,
+// emitted once right after thread_started when attaching).
 private func applyReplay(_ s: inout TranscriptState, _ d: EventReplay) {
     s.items.removeAll()
     s.streamingAssistantID = nil

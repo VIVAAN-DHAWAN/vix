@@ -3,7 +3,7 @@ import VixClient
 import VixProtocol
 
 // vix-mac-probe — a headless proof that the Swift client speaks the vix daemon
-// protocol end to end: it opens a real session against a running vixd, streams a
+// protocol end to end: it opens a real thread against a running vixd, streams a
 // turn, and answers permission/question/plan round-trips (auto-approving, like
 // the Go headless runner). This is the Phase-2 validation before any UI.
 //
@@ -13,7 +13,7 @@ import VixProtocol
 // Env: VIXD_SOCK overrides the socket path; VIX_AUTH_TOKEN sets the auth token.
 
 struct Options {
-    var socket: String = VixSessionClient.defaultSocketPath
+    var socket: String = VixThreadClient.defaultSocketPath
     var cwd: String = FileManager.default.currentDirectoryPath
     var model: String = ""
     var prompt: String = "Say hello in one short sentence."
@@ -46,7 +46,7 @@ struct Probe {
     static func main() async {
         let opts = parseArgs()
         let token = ProcessInfo.processInfo.environment["VIX_AUTH_TOKEN"]
-        let client = VixSessionClient(socketPath: opts.socket, authToken: token)
+        let client = VixThreadClient(socketPath: opts.socket, authToken: token)
 
         // Handshake: confirm the daemon is up and learn its version.
         let ping: PingResult
@@ -103,11 +103,11 @@ struct Probe {
 
                 case "event.agent_done":
                     print("")
-                    client.closeSession()
+                    client.closeThread()
                     return
 
                 case "event.quit":
-                    client.closeSession()
+                    client.closeThread()
                     return
 
                 default:
@@ -115,7 +115,7 @@ struct Probe {
                 }
             }
         } catch {
-            stderr("session error: \(error)")
+            stderr("thread error: \(error)")
             exit(1)
         }
     }

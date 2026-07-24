@@ -41,9 +41,9 @@ import Glibc
 
 // MARK: Handshake / command envelope
 
-@Test func sessionStartEnvelopeHasVersionAndCwd() throws {
-    let client = VixSessionClient(socketPath: "/tmp/unused.sock", authToken: nil)
-    let payload = SessionStartData(
+@Test func threadStartEnvelopeHasVersionAndCwd() throws {
+    let client = VixThreadClient(socketPath: "/tmp/unused.sock", authToken: nil)
+    let payload = ThreadStartData(
         clientVersion: "v9.9.9",
         cwd: "/work",
         enableAutomaticDirectoryAccess: false,
@@ -51,10 +51,10 @@ import Glibc
         forceInit: false,
         headless: true,
         model: "")
-    let data = try client.commandData(type: "session.start", payload: payload)
+    let data = try client.commandData(type: "thread.start", payload: payload)
     let env = try JSONDecoder().decode(JSONValue.self, from: data).objectValue
 
-    #expect(env?["type"]?.stringValue == "session.start")
+    #expect(env?["type"]?.stringValue == "thread.start")
     #expect(env?["auth_token"] == nil) // omitted when nil
     let d = env?["data"]?.objectValue
     #expect(d?["client_version"]?.stringValue == "v9.9.9")
@@ -63,8 +63,8 @@ import Glibc
 }
 
 @Test func authTokenIsStampedWhenPresent() throws {
-    let client = VixSessionClient(socketPath: "/tmp/unused.sock", authToken: "secret")
-    let data = try client.commandData(type: "session.input", payload: SessionInputData(text: "hi"))
+    let client = VixThreadClient(socketPath: "/tmp/unused.sock", authToken: "secret")
+    let data = try client.commandData(type: "thread.input", payload: ThreadInputData(text: "hi"))
     let env = try JSONDecoder().decode(JSONValue.self, from: data).objectValue
     #expect(env?["auth_token"]?.stringValue == "secret")
     #expect(env?["data"]?.objectValue?["text"]?.stringValue == "hi")
@@ -74,7 +74,7 @@ import Glibc
 
 @Test func decodeStreamChunkFromEnvelope() throws {
     let json = #"{"type":"event.stream_chunk","data":{"text":"hello world"}}"#
-    let ev = try JSONDecoder().decode(SessionEvent.self, from: Data(json.utf8))
+    let ev = try JSONDecoder().decode(ThreadEvent.self, from: Data(json.utf8))
     #expect(ev.type == "event.stream_chunk")
     #expect(try ev.data.decode(EventStreamChunk.self).text == "hello world")
 }
@@ -88,7 +88,7 @@ import Glibc
       "detail":"```diff\\n+hi\\n```"
     }}
     """
-    let ev = try JSONDecoder().decode(SessionEvent.self, from: Data(json.utf8))
+    let ev = try JSONDecoder().decode(ThreadEvent.self, from: Data(json.utf8))
     let cr = try ev.data.decode(EventConfirmRequest.self)
     #expect(cr.toolName == "write_file")
     #expect(cr.requestedDirs == ["/x"])
@@ -104,7 +104,7 @@ import Glibc
       ]
     }}
     """
-    let ev = try JSONDecoder().decode(SessionEvent.self, from: Data(json.utf8))
+    let ev = try JSONDecoder().decode(ThreadEvent.self, from: Data(json.utf8))
     let q = try ev.data.decode(EventUserQuestion.self)
     #expect(q.questions?.count == 1)
     #expect(q.questions?.first?.options == ["Go", "Swift"])
@@ -112,21 +112,21 @@ import Glibc
 
 @Test func payloadlessEventDataDecodesAsNull() throws {
     let json = #"{"type":"event.agent_done","data":null}"#
-    let ev = try JSONDecoder().decode(SessionEvent.self, from: Data(json.utf8))
+    let ev = try JSONDecoder().decode(ThreadEvent.self, from: Data(json.utf8))
     #expect(ev.type == "event.agent_done")
     #expect(ev.data.isNull)
 }
 
-// MARK: RPC projection decoding (generated SessionSummary)
+// MARK: RPC projection decoding (generated ThreadSummary)
 
-@Test func decodeSessionSummaryList() throws {
+@Test func decodeThreadSummaryList() throws {
     let json = """
     [
       {"id":"s1","cwd":"/work","model":"anthropic/x","title":"Hello","first_message":"hi","unread":true,"origin":""},
       {"id":"s2","cwd":"/w","model":"","origin":"vix","job_status":"ok","trigger":{"type":"cron","ref":"job-1"}}
     ]
     """
-    let list = try JSONDecoder().decode([SessionSummary].self, from: Data(json.utf8))
+    let list = try JSONDecoder().decode([ThreadSummary].self, from: Data(json.utf8))
     #expect(list.count == 2)
     #expect(list[0].displayTitle == "Hello")
     #expect(list[0].unread == true)

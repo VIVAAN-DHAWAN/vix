@@ -1,7 +1,7 @@
 import Foundation
 
 /// A type-erased JSON value used for protocol fields that are opaque or
-/// free-form on the wire: a SessionEvent's `data` payload, a tool call's
+/// free-form on the wire: a ThreadEvent's `data` payload, a tool call's
 /// `arguments`/`params` (`map[string]any` in Go), and embedded raw JSON
 /// (`json.RawMessage`).
 ///

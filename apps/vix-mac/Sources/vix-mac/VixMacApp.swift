@@ -21,27 +21,27 @@ struct VixMacApp: App {
     }
 }
 
-/// Split view: session sidebar + active chat detail.
+/// Split view: thread sidebar + active chat detail.
 struct RootView: View {
     @Bindable var app: AppModel
 
     var body: some View {
         NavigationSplitView {
-            SessionListView(app: app)
+            ThreadListView(app: app)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
             if let model = app.active {
                 ContentView(model: model)
             } else {
                 ContentUnavailableView(
-                    "No session",
+                    "No thread",
                     systemImage: "bubble.left.and.bubble.right",
-                    description: Text("Create a new session to start."))
+                    description: Text("Create a new thread to start."))
             }
         }
         .task {
             app.refresh()
-            if app.active == nil { app.newSession() }
+            if app.active == nil { app.newThread() }
         }
     }
 }

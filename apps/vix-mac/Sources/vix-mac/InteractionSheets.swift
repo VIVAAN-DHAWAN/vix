@@ -6,7 +6,7 @@ import VixProtocol
 /// modal sheet. Driven by `model.state.pending`; each sheet answers via the
 /// model, which clears `pending` and replies to the daemon.
 struct InteractionSheet: View {
-    let model: SessionModel
+    let model: ThreadModel
 
     var body: some View {
         switch model.state.pending {
@@ -25,7 +25,7 @@ struct InteractionSheet: View {
 // MARK: Permission
 
 private struct ConfirmSheet: View {
-    let model: SessionModel
+    let model: ThreadModel
     let request: EventConfirmRequest
     @State private var rememberDirs = false
 
@@ -76,7 +76,7 @@ private struct ConfirmSheet: View {
 // MARK: Question
 
 private struct QuestionSheet: View {
-    let model: SessionModel
+    let model: ThreadModel
     let question: EventUserQuestion
     @State private var text = ""
     @State private var batch: [String: String] = [:]
@@ -134,7 +134,7 @@ private struct QuestionSheet: View {
 // MARK: Plan
 
 private struct PlanSheet: View {
-    let model: SessionModel
+    let model: ThreadModel
     let plan: Plan?
     @State private var feedback = ""
 

@@ -3,35 +3,35 @@ import VixMacCore
 import VixClient
 import VixProtocol
 
-/// The session sidebar, grouped into user sessions and vix-initiated runs.
-struct SessionListView: View {
+/// The thread sidebar, grouped into user threads and vix-initiated runs.
+struct ThreadListView: View {
     @Bindable var app: AppModel
 
     var body: some View {
         List(selection: selection) {
-            let userSessions = app.sessions.filter { !$0.isVixInitiated }
-            let vixSessions = app.sessions.filter { $0.isVixInitiated }
+            let userThreads = app.threads.filter { !$0.isVixInitiated }
+            let vixThreads = app.threads.filter { $0.isVixInitiated }
 
-            if !userSessions.isEmpty {
-                Section("Sessions") {
-                    ForEach(userSessions) { row($0) }
+            if !userThreads.isEmpty {
+                Section("Threads") {
+                    ForEach(userThreads) { row($0) }
                 }
             }
-            if !vixSessions.isEmpty {
+            if !vixThreads.isEmpty {
                 Section("Vix-initiated") {
-                    ForEach(vixSessions) { row($0) }
+                    ForEach(vixThreads) { row($0) }
                 }
             }
         }
         .navigationTitle("vix")
         .toolbar {
             ToolbarItem {
-                Button { app.newSession() } label: { Image(systemName: "square.and.pencil") }
-                    .help("New session")
+                Button { app.newThread() } label: { Image(systemName: "square.and.pencil") }
+                    .help("New thread")
             }
             ToolbarItem {
                 Button { app.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                    .help("Refresh sessions")
+                    .help("Refresh threads")
             }
         }
     }
@@ -42,13 +42,13 @@ struct SessionListView: View {
             set: { id in
                 // Defer out of the view-update cycle: opening mutates AppModel
                 // state and must not run synchronously inside the List's binding.
-                if let id, let summary = app.sessions.first(where: { $0.id == id }) {
+                if let id, let summary = app.threads.first(where: { $0.id == id }) {
                     Task { @MainActor in app.open(summary) }
                 }
             })
     }
 
-    private func row(_ summary: SessionSummary) -> some View {
+    private func row(_ summary: ThreadSummary) -> some View {
         HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(summary.displayTitle).lineLimit(1)

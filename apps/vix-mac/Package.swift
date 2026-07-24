@@ -18,14 +18,14 @@ let package = Package(
         // type. VixProtocol/Generated.swift is produced by `make mac-models`.
         .target(name: "VixProtocol"),
 
-        // Unix-socket NDJSON transport and the high-level session client.
+        // Unix-socket NDJSON transport and the high-level thread client.
         .target(name: "VixClient", dependencies: ["VixProtocol"]),
 
-        // Headless CLI proof: open a session, stream a turn, answer a confirm.
+        // Headless CLI proof: open a thread, stream a turn, answer a confirm.
         .executableTarget(name: "vix-mac-probe", dependencies: ["VixClient"]),
 
         // UI-independent app core: the transcript model + pure event reducer +
-        // the observable SessionModel. Kept out of the executable so the reducer
+        // the observable ThreadModel. Kept out of the executable so the reducer
         // is unit-testable headlessly.
         .target(name: "VixMacCore", dependencies: ["VixClient"]),
 

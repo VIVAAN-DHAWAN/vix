@@ -2,7 +2,7 @@ import SwiftUI
 import VixMacCore
 
 struct ContentView: View {
-    @Bindable var model: SessionModel
+    @Bindable var model: ThreadModel
 
     var body: some View {
         HStack(spacing: 0) {

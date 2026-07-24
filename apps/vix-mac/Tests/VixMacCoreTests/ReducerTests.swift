@@ -3,8 +3,8 @@ import Testing
 @testable import VixMacCore
 import VixProtocol
 
-private func event(_ type: String, _ data: JSONValue) -> SessionEvent {
-    SessionEvent(data: data, type: type)
+private func event(_ type: String, _ data: JSONValue) -> ThreadEvent {
+    ThreadEvent(data: data, type: type)
 }
 
 @Test func streamChunksAccumulateIntoOneAssistantMessage() {
@@ -83,25 +83,25 @@ private func event(_ type: String, _ data: JSONValue) -> SessionEvent {
     }
 }
 
-@Test func sessionStartedAndTitleUpdate() {
+@Test func threadStartedAndTitleUpdate() {
     var s = TranscriptState()
-    reduce(&s, event("event.session_started", .object([
-        "session_id": .string("sess-1"), "started_at": .string("2026-01-01T00:00:00Z"),
+    reduce(&s, event("event.thread_started", .object([
+        "thread_id": .string("sess-1"), "started_at": .string("2026-01-01T00:00:00Z"),
     ])))
-    reduce(&s, event("event.title_updated", .object(["title": .string("My session")])))
-    #expect(s.sessionID == "sess-1")
-    #expect(s.title == "My session")
+    reduce(&s, event("event.title_updated", .object(["title": .string("My thread")])))
+    #expect(s.threadID == "sess-1")
+    #expect(s.title == "My thread")
 }
 
-@Test func clearResetsTranscriptButKeepsSession() {
+@Test func clearResetsTranscriptButKeepsThread() {
     var s = TranscriptState()
-    reduce(&s, event("event.session_started", .object([
-        "session_id": .string("sess-1"), "started_at": .string("x"),
+    reduce(&s, event("event.thread_started", .object([
+        "thread_id": .string("sess-1"), "started_at": .string("x"),
     ])))
     reduce(&s, event("event.stream_chunk", .object(["text": .string("stuff")])))
     reduce(&s, event("event.clear", .null))
     #expect(s.items.isEmpty)
-    #expect(s.sessionID == "sess-1")
+    #expect(s.threadID == "sess-1")
 }
 
 @Test func agentDoneEndsStreaming() {
@@ -169,10 +169,10 @@ private func event(_ type: String, _ data: JSONValue) -> SessionEvent {
 
 // MARK: Connection banner mapping
 
-@Test func sessionBusyErrorMapsToBanner() {
+@Test func threadBusyErrorMapsToBanner() {
     let ev = event("event.error", .object([
-        "message": .string("session is already open in another window"),
-        "code": .string("session_busy"),
+        "message": .string("thread is already open in another window"),
+        "code": .string("thread_busy"),
     ]))
     #expect(connectionBanner(for: ev)?.contains("another window") == true)
 }
@@ -225,10 +225,10 @@ private func event(_ type: String, _ data: JSONValue) -> SessionEvent {
         "todos": .array([
             .object(["id": .string("x"), "content": .string("task"), "status": .string("completed")]),
         ]),
-        "title": .string("Resumed session"),
+        "title": .string("Resumed thread"),
     ])))
 
-    #expect(s.title == "Resumed session")
+    #expect(s.title == "Resumed thread")
     #expect(s.todos.count == 1)
     #expect(s.assistantText == "hi there")
     // user + assistant text + one tool row (call+result merged)

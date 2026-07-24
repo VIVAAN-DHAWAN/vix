@@ -1,13 +1,13 @@
 import Foundation
 import VixProtocol
 
-// SessionSummary is now generated into VixProtocol from the protocol schema
+// ThreadSummary is now generated into VixProtocol from the protocol schema
 // (make mac-models). This extension adds the client-side conveniences the app
 // needs on top of the generated fields.
 
-extension SessionSummary: Identifiable {}
+extension ThreadSummary: Identifiable {}
 
-extension SessionSummary {
+extension ThreadSummary {
     /// Display label: title, else first message, else the id.
     public var displayTitle: String {
         if let t = title, !t.isEmpty { return t }
@@ -15,6 +15,6 @@ extension SessionSummary {
         return id
     }
 
-    /// True for vix-initiated sessions (scheduled jobs, alerts).
+    /// True for vix-initiated threads (scheduled jobs, alerts).
     public var isVixInitiated: Bool { origin == "vix" }
 }

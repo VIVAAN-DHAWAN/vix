@@ -31,7 +31,7 @@ public enum VixSocketError: Error, CustomStringConvertible {
 ///
 /// Two read modes are provided but must not be mixed on the same instance:
 /// `readLine()` (synchronous, for one-shot RPCs) and `lines()` (an async stream,
-/// for a live session).
+/// for a live thread).
 final class VixSocket: @unchecked Sendable {
     private let fd: Int32
     private var syncBuffer = Data()
@@ -130,7 +130,7 @@ final class VixSocket: @unchecked Sendable {
         }
     }
 
-    // MARK: Async read (live session)
+    // MARK: Async read (live thread)
 
     /// An async stream of newline-delimited messages. Reads run on a dedicated
     /// background queue; the stream finishes on EOF and throws on read error.
