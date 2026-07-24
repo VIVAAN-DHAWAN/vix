@@ -53,6 +53,12 @@ type sessionRecord struct {
 	// message it follows in Messages (AfterIdx; -1 = before all messages).
 	RetryNotices []retryNoticeRecord `json:"retry_notices,omitempty"`
 
+	// FailureNotices are terminal-failure notices captured when a workflow run
+	// aborts (e.g. a preflight bash step exiting non-zero). Persisted so a
+	// reopened session — a scheduled job run in particular — shows why it failed
+	// instead of an empty transcript. Anchored like RetryNotices.
+	FailureNotices []failureNoticeRecord `json:"failure_notices,omitempty"`
+
 	StartedAt     time.Time `json:"started_at"`
 	LastRequestAt time.Time `json:"last_request_at,omitempty"`
 
@@ -85,6 +91,21 @@ type retryNoticeRecord struct {
 	Attempt    int    `json:"attempt"`
 	MaxRetries int    `json:"max_retries"`
 	WaitSecs   int    `json:"wait_secs"`
+}
+
+// failureNoticeRecord is one persisted terminal-failure notice, projected into
+// event.replay as an "error" block so a reopened session shows why a workflow
+// run aborted (the failing step and its captured output) rather than a blank
+// transcript.
+type failureNoticeRecord struct {
+	// AfterIdx is the index in sessionRecord.Messages this notice renders
+	// after (-1 = before all messages).
+	AfterIdx int `json:"after_idx"`
+	// StepID is the workflow step that failed, when known.
+	StepID string `json:"step_id,omitempty"`
+	// Reason is the human-readable failure message (includes the failing
+	// step and its captured output for bash steps).
+	Reason string `json:"reason"`
 }
 
 // sessionRecordPath returns the path of a record within dir, or "" when dir is
@@ -462,6 +483,8 @@ func (s *Session) buildRecord() sessionRecord {
 	copy(msgs, s.messages)
 	notices := make([]retryNoticeRecord, len(s.retryNotices))
 	copy(notices, s.retryNotices)
+	failures := make([]failureNoticeRecord, len(s.failureNotices))
+	copy(failures, s.failureNotices)
 	plan := s.activePlan
 	workflowRun := s.workflowRunState
 	title := s.title
@@ -486,6 +509,7 @@ func (s *Session) buildRecord() sessionRecord {
 		TodoList:          todos,
 		ActivePlan:        plan,
 		RetryNotices:      notices,
+		FailureNotices:    failures,
 		StartedAt:         s.startTime,
 		LastRequestAt:     s.lastRequestAt,
 		Origin:            s.origin,
@@ -527,6 +551,7 @@ func (s *Session) seedFromRecord(rec *sessionRecord) {
 	// turnSnapshots, which persistence doesn't carry).
 	s.turnSnapshots = rebuildTurnSnapshots(s.messages)
 	s.retryNotices = append([]retryNoticeRecord(nil), rec.RetryNotices...)
+	s.failureNotices = append([]failureNoticeRecord(nil), rec.FailureNotices...)
 	s.todoList = append([]protocol.TodoItem(nil), rec.TodoList...)
 	s.activePlan = rec.ActivePlan
 	s.title = rec.Title
@@ -611,6 +636,8 @@ func (s *Session) emitReplay() {
 	copy(msgs, s.messages)
 	notices := make([]retryNoticeRecord, len(s.retryNotices))
 	copy(notices, s.retryNotices)
+	failures := make([]failureNoticeRecord, len(s.failureNotices))
+	copy(failures, s.failureNotices)
 	plan := s.activePlan
 	title := s.title
 	s.mu.Unlock()
@@ -621,7 +648,7 @@ func (s *Session) emitReplay() {
 	s.todoMu.RUnlock()
 
 	s.emit("event.replay", protocol.EventReplay{
-		Messages:       buildReplayMessages(msgs, notices),
+		Messages:       buildReplayMessages(msgs, notices, failures),
 		Todos:          todos,
 		ActivePlan:     plan,
 		Model:          s.model,
@@ -636,12 +663,13 @@ func (s *Session) emitReplay() {
 }
 
 // buildReplayMessages projects llm history into the wire-stable replay shape,
-// interleaving any retry notices at the position they were anchored to (so a
-// reopened workflow run shows the same "API overloaded — retrying …" lines an
-// interactive run renders live). Empty assistant/user messages (no renderable
-// blocks) are skipped, but notices anchored to them are still emitted.
-func buildReplayMessages(msgs []llm.MessageParam, notices []retryNoticeRecord) []protocol.ReplayMessage {
-	out := make([]protocol.ReplayMessage, 0, len(msgs)+len(notices))
+// interleaving any retry and failure notices at the position they were anchored
+// to (so a reopened workflow run shows the same "API overloaded — retrying …"
+// lines an interactive run renders live, and any terminal failure that aborted
+// the run). Empty assistant/user messages (no renderable blocks) are skipped,
+// but notices anchored to them are still emitted.
+func buildReplayMessages(msgs []llm.MessageParam, notices []retryNoticeRecord, failures []failureNoticeRecord) []protocol.ReplayMessage {
+	out := make([]protocol.ReplayMessage, 0, len(msgs)+len(notices)+len(failures))
 	emitNotices := func(afterIdx int) {
 		for _, n := range notices {
 			if n.AfterIdx != afterIdx {
@@ -655,6 +683,19 @@ func buildReplayMessages(msgs []llm.MessageParam, notices []retryNoticeRecord) [
 					Attempt:    n.Attempt,
 					MaxRetries: n.MaxRetries,
 					WaitSecs:   n.WaitSecs,
+				}},
+			})
+		}
+		for _, f := range failures {
+			if f.AfterIdx != afterIdx {
+				continue
+			}
+			out = append(out, protocol.ReplayMessage{
+				Role: "system",
+				Blocks: []protocol.ReplayBlock{{
+					Kind:   "error",
+					Text:   f.Reason,
+					StepID: f.StepID,
 				}},
 			})
 		}

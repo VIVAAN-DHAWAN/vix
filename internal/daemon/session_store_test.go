@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -250,7 +251,7 @@ func TestBuildReplayMessages(t *testing.T) {
 		llm.NewUserMessage(llm.NewToolResultBlock("t1", "out", false)),
 		llm.NewAssistantMessage(), // no blocks -> whole message skipped
 	}
-	out := buildReplayMessages(msgs, nil)
+	out := buildReplayMessages(msgs, nil, nil)
 	if len(out) != 3 {
 		t.Fatalf("replay messages = %d, want 3", len(out))
 	}
@@ -278,7 +279,7 @@ func TestBuildReplayMessagesInterleavesRetryNotices(t *testing.T) {
 		{AfterIdx: -1, Reason: "API overloaded", Attempt: 1, MaxRetries: 10, WaitSecs: 1},
 		{AfterIdx: 1, Reason: "API overloaded", Attempt: 7, MaxRetries: 10, WaitSecs: 32},
 	}
-	out := buildReplayMessages(msgs, notices)
+	out := buildReplayMessages(msgs, notices, nil)
 	// -1 notice, user, assistant, idx-1 notice = 4 entries.
 	if len(out) != 4 {
 		t.Fatalf("replay messages = %d, want 4: %+v", len(out), out)
@@ -298,6 +299,41 @@ func TestBuildReplayMessagesInterleavesRetryNotices(t *testing.T) {
 	}
 }
 
+func TestBuildReplayMessagesInterleavesFailureNotices(t *testing.T) {
+	msgs := []llm.MessageParam{
+		llm.NewUserMessage(llm.NewTextBlock("hi")),
+		llm.NewAssistantMessage(llm.NewTextBlock("working")),
+	}
+	failures := []failureNoticeRecord{
+		{AfterIdx: 1, StepID: "deny", Reason: "workflow failed: step 'deny' bash failed: exit status 1 (output: no GitHub access)"},
+	}
+	out := buildReplayMessages(msgs, nil, failures)
+	// user, assistant, trailing failure notice = 3 entries.
+	if len(out) != 3 {
+		t.Fatalf("replay messages = %d, want 3: %+v", len(out), out)
+	}
+	last := out[2]
+	if last.Role != "system" || len(last.Blocks) != 1 || last.Blocks[0].Kind != "error" {
+		t.Fatalf("trailing failure notice wrong: %+v", last)
+	}
+	if last.Blocks[0].StepID != "deny" || !strings.Contains(last.Blocks[0].Text, "no GitHub access") {
+		t.Errorf("failure notice fields wrong: %+v", last.Blocks[0])
+	}
+}
+
+func TestBuildReplayMessagesFailureNoticeWithoutMessages(t *testing.T) {
+	// A run that aborts before any message still surfaces its failure notice,
+	// anchored before everything (-1), so an opened session isn't blank.
+	failures := []failureNoticeRecord{{AfterIdx: -1, StepID: "detect", Reason: "workflow failed: step 'detect' bash failed"}}
+	out := buildReplayMessages(nil, nil, failures)
+	if len(out) != 1 {
+		t.Fatalf("replay messages = %d, want 1 (failure notice): %+v", len(out), out)
+	}
+	if out[0].Role != "system" || out[0].Blocks[0].Kind != "error" || out[0].Blocks[0].StepID != "detect" {
+		t.Errorf("leading failure notice wrong: %+v", out[0])
+	}
+}
+
 func TestBuildReplayMessagesNoticeAfterSkippedMessage(t *testing.T) {
 	// An empty assistant message is skipped from output, but a notice anchored
 	// to it must still be emitted (the failed agent produced no final text).
@@ -306,7 +342,7 @@ func TestBuildReplayMessagesNoticeAfterSkippedMessage(t *testing.T) {
 		llm.NewAssistantMessage(), // no blocks -> skipped
 	}
 	notices := []retryNoticeRecord{{AfterIdx: 1, Reason: "API overloaded", Attempt: 10, MaxRetries: 10}}
-	out := buildReplayMessages(msgs, notices)
+	out := buildReplayMessages(msgs, notices, nil)
 	if len(out) != 2 {
 		t.Fatalf("replay messages = %d, want 2 (user + notice): %+v", len(out), out)
 	}
@@ -321,7 +357,7 @@ func TestBuildReplayMessagesTimestamp(t *testing.T) {
 	stamped.Timestamp = ts
 	legacy := llm.NewAssistantMessage(llm.NewTextBlock("answer")) // zero timestamp
 
-	out := buildReplayMessages([]llm.MessageParam{stamped, legacy}, nil)
+	out := buildReplayMessages([]llm.MessageParam{stamped, legacy}, nil, nil)
 	if len(out) != 2 {
 		t.Fatalf("replay messages = %d, want 2", len(out))
 	}

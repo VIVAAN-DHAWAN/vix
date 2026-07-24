@@ -998,6 +998,9 @@
         "output": {
           "type": "string"
         },
+        "step_id": {
+          "type": "string"
+        },
         "text": {
           "type": "string"
         },

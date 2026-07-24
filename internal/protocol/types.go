@@ -366,7 +366,7 @@ type EventError struct {
 // into a wire-stable shape owned by this package (so neither protocol nor the
 // TUI needs to import the daemon's llm types).
 type ReplayBlock struct {
-	Kind     string         `json:"kind"` // "text" | "thinking" | "tool_use" | "tool_result" | "retry"
+	Kind     string         `json:"kind"` // "text" | "thinking" | "tool_use" | "tool_result" | "retry" | "error"
 	Text     string         `json:"text,omitempty"`
 	ToolID   string         `json:"tool_id,omitempty"`
 	ToolName string         `json:"tool_name,omitempty"`
@@ -379,6 +379,10 @@ type ReplayBlock struct {
 	Attempt    int `json:"attempt,omitempty"`
 	MaxRetries int `json:"max_retries,omitempty"`
 	WaitSecs   int `json:"wait_secs,omitempty"`
+	// Failure-notice field (Kind == "error"): the workflow step that aborted the
+	// run, when known. Text carries the failure reason (including captured step
+	// output). Persisted so a reopened run shows why it failed.
+	StepID string `json:"step_id,omitempty"`
 }
 
 // ReplayMessage is one turn of a replayed conversation.

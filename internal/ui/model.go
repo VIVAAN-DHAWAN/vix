@@ -3919,6 +3919,8 @@ func (m *Model) buildReplayChatMessages(rep protocol.EventReplay) []ChatMessage 
 					WaitSecs:   b.WaitSecs,
 					Reason:     b.Text,
 				}))
+			case "error":
+				out = append(out, renderErrorMessage(fmt.Errorf("%s", b.Text)))
 			}
 		}
 	}

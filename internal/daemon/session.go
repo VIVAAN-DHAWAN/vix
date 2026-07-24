@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -55,6 +56,13 @@ type Session struct {
 	// projected into event.replay so a reopened run shows the same retry lines
 	// an interactive run renders live. Protected by mu.
 	retryNotices []retryNoticeRecord
+
+	// failureNotices holds terminal-failure notices captured when a workflow
+	// run aborts (e.g. a preflight bash step exiting non-zero), persisted with
+	// the session and projected into event.replay so a reopened run — a
+	// scheduled job in particular — shows why it failed instead of a blank
+	// transcript. Protected by mu.
+	failureNotices []failureNoticeRecord
 
 	// Fork snapshots: a copy of messages after each completed normal turn,
 	// protected by mu. Used by snapshotMessagesForFork to seed forked sessions.
@@ -2848,9 +2856,46 @@ func (s *Session) handleWorkflowCommand(name, text string, inline json.RawMessag
 
 	err := s.executeWorkflow(planCtx, wf, text, resume)
 	if err != nil && !errors.Is(err, context.Canceled) {
-		s.emit("event.error", protocol.EventError{Message: fmt.Sprintf("workflow failed: %v", err)})
+		msg := fmt.Sprintf("workflow failed: %v", err)
+		s.recordFailureNotice(workflowStepIDFromError(err), msg)
+		s.persist()
+		s.emit("event.error", protocol.EventError{Message: msg})
 	}
 	s.emit("event.agent_done", nil)
+}
+
+// workflowStepIDRe extracts the failing step id from a workflow error message
+// (e.g. "step 'deny' bash failed: …"), so a persisted failure notice can name
+// the step. Returns "" when the error isn't step-scoped.
+var workflowStepIDRe = regexp.MustCompile(`step '([^']+)'`)
+
+// workflowStepIDFromError pulls the failing step id out of a workflow error, or
+// "" when none is present.
+func workflowStepIDFromError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if m := workflowStepIDRe.FindStringSubmatch(err.Error()); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// recordFailureNotice appends a terminal-failure notice to the session,
+// anchored to the end of the transcript so it replays after any partial work
+// (AfterIdx == -1 when no messages exist at all). Persisted with the session so
+// a reopened run shows why it aborted instead of a blank transcript.
+func (s *Session) recordFailureNotice(stepID, reason string) {
+	if strings.TrimSpace(reason) == "" {
+		return
+	}
+	s.mu.Lock()
+	s.failureNotices = append(s.failureNotices, failureNoticeRecord{
+		AfterIdx: len(s.messages) - 1,
+		StepID:   stepID,
+		Reason:   reason,
+	})
+	s.mu.Unlock()
 }
 
 // handleSpawnAgent resolves and runs a subagent.

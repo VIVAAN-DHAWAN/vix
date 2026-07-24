@@ -935,18 +935,20 @@ public struct ReplayBlock: Codable, Sendable, Equatable {
     public var kind: String
     public var maxRetries: Int64?
     public var output: String?
+    public var stepId: String?
     public var text: String?
     public var toolId: String?
     public var toolName: String?
     public var waitSecs: Int64?
 
-    public init(attempt: Int64? = nil, input: [String: JSONValue]? = nil, isError: Bool? = nil, kind: String, maxRetries: Int64? = nil, output: String? = nil, text: String? = nil, toolId: String? = nil, toolName: String? = nil, waitSecs: Int64? = nil) {
+    public init(attempt: Int64? = nil, input: [String: JSONValue]? = nil, isError: Bool? = nil, kind: String, maxRetries: Int64? = nil, output: String? = nil, stepId: String? = nil, text: String? = nil, toolId: String? = nil, toolName: String? = nil, waitSecs: Int64? = nil) {
         self.attempt = attempt
         self.input = input
         self.isError = isError
         self.kind = kind
         self.maxRetries = maxRetries
         self.output = output
+        self.stepId = stepId
         self.text = text
         self.toolId = toolId
         self.toolName = toolName
@@ -960,6 +962,7 @@ public struct ReplayBlock: Codable, Sendable, Equatable {
         case kind = "kind"
         case maxRetries = "max_retries"
         case output = "output"
+        case stepId = "step_id"
         case text = "text"
         case toolId = "tool_id"
         case toolName = "tool_name"
