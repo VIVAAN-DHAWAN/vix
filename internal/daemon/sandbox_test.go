@@ -387,6 +387,21 @@ func TestSeatbeltProfile_AllowsPTY(t *testing.T) {
 	}
 }
 
+// TestSeatbeltProfile_AllowsIOKitOpen guards the iokit-open allowance that
+// headless browsers (Chromium/WebKit, and thus Playwright e2e) require. They
+// open IOKit graphics user clients (e.g. IOSurfaceRootUserClient) during early
+// startup even in --headless mode; under (deny default) that IOServiceOpen
+// returns kIOReturnNotPermitted and the browser dereferences the NULL client,
+// crashing with SIGSEGV before launch. The token must be "iokit-open" (the
+// SBPL operation), not the runtime API's "iokit-open-user-client".
+func TestSeatbeltProfile_AllowsIOKitOpen(t *testing.T) {
+	profile := seatbeltProfile("/Users/test/myproject", nil)
+
+	if !strings.Contains(profile, "(allow iokit-open)") {
+		t.Errorf("profile missing iokit-open allowance (headless browsers crash without it)\nprofile:\n%s", profile)
+	}
+}
+
 // TestSandboxedBashCmd_CanAllocatePTY actually allocates a pseudo-terminal
 // inside the real Seatbelt sandbox and asserts the grant succeeds. This is
 // the runtime counterpart to TestSeatbeltProfile_AllowsPTY: the Go test

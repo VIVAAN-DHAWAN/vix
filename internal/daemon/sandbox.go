@@ -108,6 +108,17 @@ func seatbeltProfile(cwd string, extraDirs []string) string {
 	// start under the sandbox.
 	b.WriteString("(allow mach-register)\n")
 	b.WriteString("(allow ipc-posix-shm*)\n")
+	// iokit-open lets processes open IOKit user clients (IOServiceOpen).
+	// Chromium/WebKit open graphics user clients (e.g. IOSurfaceRootUserClient)
+	// during early startup even in --headless mode; without this the open
+	// returns kIOReturnNotPermitted (0xe00002e2) and the browser dereferences
+	// the NULL client → SIGSEGV before it finishes launching. This is required
+	// to run headless browsers / Playwright e2e under the sandbox. Allowed
+	// broadly (any user client) rather than scoped to specific graphics classes,
+	// since the exact set varies by GPU/macOS version. Note: "iokit-open" (not
+	// the runtime API's "iokit-open-user-client" name) is the token the SBPL
+	// compiler accepts.
+	b.WriteString("(allow iokit-open)\n")
 	// pseudo-tty allows PTY allocation (grantpt/TIOCPTYGRANT, forkpty).
 	// Without it, tools that need a controlling terminal — tmux, script,
 	// expect, some REPLs — fail with "fork failed: Operation not permitted"
