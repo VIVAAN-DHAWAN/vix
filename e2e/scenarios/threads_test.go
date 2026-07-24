@@ -12,18 +12,18 @@ import (
 	"github.com/get-vix/vix/e2e/harness"
 )
 
-// This file exercises the Sessions tab: its chrome and shortcuts, the per-row
+// This file exercises the Threads tab: its chrome and shortcuts, the per-row
 // loading / unread / waiting indicators, navigation + open, the tab-title
-// highlight (a background message) vs. blink (a session waiting for input), and
+// highlight (a background message) vs. blink (a thread waiting for input), and
 // the Vix-initiated group produced by a scheduled job. Each test drives the
 // real TUI through tmux and acts as the model via the mock LLM.
 
 const askQuestion = `{"questions":[{"id":"q1","category":"Choose","question":"Pick one please?","options":["Yes","No"]}]}`
 
-func sessionsMeta(desc string) harness.Meta {
+func threadsMeta(desc string) harness.Meta {
 	return harness.Meta{
 		Category:    "ui",
-		Subcategory: "ui.sessions",
+		Subcategory: "ui.threads",
 		Description: desc,
 		Wire:        harness.WireMessages,
 	}
@@ -56,49 +56,49 @@ func distinctFgOf(h *harness.Harness, label string, samples int, interval time.D
 	return seen
 }
 
-// TestSessionsTabChrome verifies F1 opens the Sessions tab and that its static
+// TestThreadsTabChrome verifies F1 opens the Threads tab and that its static
 // chrome renders: the group header, the column headers, and the footer
 // shortcuts that advertise the tab's keys.
-func TestSessionsTabChrome(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("F1 opens the Sessions tab; group/column headers and shortcut hints render"))
+func TestThreadsTabChrome(t *testing.T) {
+	h := harness.Start(t, threadsMeta("F1 opens the Threads tab; group/column headers and shortcut hints render"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 	h.UI.WaitStable(300 * time.Millisecond)
-	h.UI.Shot("sessions-tab")
+	h.UI.Shot("threads-tab")
 
 	for _, want := range []string{
-		"Sessions [F1]", "Workspace [F2]", // tab bar
-		"User-initiated",              // group header
-		"Session", "Title", "Running", // column headers
-		"New Session", "Duplicate Session", "Delete Session", "Open In Workspace", // footer hints (Title Case as rendered)
+		"Threads [F1]", "Workspace [F2]", // tab bar
+		"User-initiated",             // group header
+		"Thread", "Title", "Running", // column headers
+		"New Thread", "Duplicate Thread", "Delete Thread", "Open In Workspace", // footer hints (Title Case as rendered)
 	} {
 		if !h.UI.Contains(want) {
-			t.Fatalf("Sessions tab missing %q; screen:\n%s", want, h.UI.Snapshot())
+			t.Fatalf("Threads tab missing %q; screen:\n%s", want, h.UI.Snapshot())
 		}
 	}
 }
 
-// TestSessionsLoadingSpinner verifies a session that is actively working shows
-// the loading spinner glyph in its row (and no waiting badge) on the Sessions
+// TestThreadsLoadingSpinner verifies a thread that is actively working shows
+// the loading spinner glyph in its row (and no waiting badge) on the Threads
 // tab, and that the spinner clears once the turn completes.
-func TestSessionsLoadingSpinner(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("a busy session shows the loading spinner on the Sessions tab"))
+func TestThreadsLoadingSpinner(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a busy thread shows the loading spinner on the Threads tab"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
-	// Start a turn but do not reply yet: the session stays in-flight (busy).
+	// Start a turn but do not reply yet: the thread stays in-flight (busy).
 	h.UI.Type("do something slow")
 	h.UI.Enter()
 	h.Mock.Next() // the request is received; the mock handler now parks.
 
 	h.UI.Key("f1")
 	if !pollUntil(8*time.Second, func() bool { return h.UI.Contains("⠋") }) {
-		t.Fatalf("loading spinner glyph not shown for the busy session; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("loading spinner glyph not shown for the busy thread; screen:\n%s", h.UI.Snapshot())
 	}
 	if h.UI.Contains("Waiting for input") {
-		t.Fatalf("busy session must not show the waiting badge; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("busy thread must not show the waiting badge; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("busy-spinner")
 
@@ -110,10 +110,10 @@ func TestSessionsLoadingSpinner(t *testing.T) {
 	h.UI.Shot("spinner-cleared")
 }
 
-// TestSessionsWaitingBadge verifies a session waiting for user input shows the
-// "Waiting for input" badge on the Sessions tab.
-func TestSessionsWaitingBadge(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("a session waiting for input shows the waiting badge on the Sessions tab"))
+// TestThreadsWaitingBadge verifies a thread waiting for user input shows the
+// "Waiting for input" badge on the Threads tab.
+func TestThreadsWaitingBadge(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a thread waiting for input shows the waiting badge on the Threads tab"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
@@ -127,15 +127,15 @@ func TestSessionsWaitingBadge(t *testing.T) {
 	h.UI.Shot("waiting-badge")
 }
 
-// TestSessionsUnreadIndicatorClears verifies the unread dot appears when a turn
+// TestThreadsUnreadIndicatorClears verifies the unread dot appears when a turn
 // completes while the conversation isn't being viewed, and is removed once the
-// conversation is selected and we return to the Sessions list.
-func TestSessionsUnreadIndicatorClears(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("unread dot appears off-view and clears after the conversation is opened"))
+// conversation is selected and we return to the Threads list.
+func TestThreadsUnreadIndicatorClears(t *testing.T) {
+	h := harness.Start(t, threadsMeta("unread dot appears off-view and clears after the conversation is opened"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
-	// Start a turn, then leave the conversation (go to the Sessions tab) before
+	// Start a turn, then leave the conversation (go to the Threads tab) before
 	// it completes, so the completion lands as unread.
 	h.UI.Type("background turn")
 	h.UI.Enter()
@@ -158,20 +158,20 @@ func TestSessionsUnreadIndicatorClears(t *testing.T) {
 	h.UI.Shot("unread-cleared")
 }
 
-// TestSessionsNavigateAndOpen verifies ↑/↓ move the selection and Enter opens
-// the highlighted session in the workspace.
-func TestSessionsNavigateAndOpen(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("arrow keys navigate rows; Enter opens the selected session in the workspace"))
+// TestThreadsNavigateAndOpen verifies ↑/↓ move the selection and Enter opens
+// the highlighted thread in the workspace.
+func TestThreadsNavigateAndOpen(t *testing.T) {
+	h := harness.Start(t, threadsMeta("arrow keys navigate rows; Enter opens the selected thread in the workspace"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
-	// Session A (the initial one): one completed turn with a distinctive reply.
+	// Thread A (the initial one): one completed turn with a distinctive reply.
 	h.Mock.Enqueue(harness.Text("ALPHA-REPLY"))
 	h.UI.Type("alpha prompt")
 	h.UI.Enter()
 	h.UI.WaitFor("ALPHA-REPLY")
 
-	// Session B: a second session with its own distinctive reply.
+	// Thread B: a second thread with its own distinctive reply.
 	h.UI.Ctrl('t')
 	h.UI.WaitStable(800 * time.Millisecond)
 	h.Mock.Enqueue(harness.Text("BRAVO-REPLY"))
@@ -179,14 +179,14 @@ func TestSessionsNavigateAndOpen(t *testing.T) {
 	h.UI.Enter()
 	h.UI.WaitFor("BRAVO-REPLY")
 
-	// On the Sessions tab, go to the top row (A) and open it.
+	// On the Threads tab, go to the top row (A) and open it.
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 	h.UI.Key("up")
 	h.UI.Key("up")
 	h.UI.Enter()
 	if !pollUntil(8*time.Second, func() bool { return h.UI.Contains("ALPHA-REPLY") }) {
-		t.Fatalf("Enter on the top row did not open session A; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("Enter on the top row did not open thread A; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("opened-alpha")
 
@@ -195,29 +195,29 @@ func TestSessionsNavigateAndOpen(t *testing.T) {
 	h.UI.Key("down")
 	h.UI.Enter()
 	if !pollUntil(8*time.Second, func() bool { return h.UI.Contains("BRAVO-REPLY") }) {
-		t.Fatalf("down+Enter did not open session B; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("down+Enter did not open thread B; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("opened-bravo")
 }
 
-// TestSessionsCtrlPNavigatesBetweenSessions verifies the workspace session cycle
-// with two committed (live) sessions: after creating A (send a turn), then B
+// TestThreadsCtrlPNavigatesBetweenThreads verifies the workspace thread cycle
+// with two committed (live) threads: after creating A (send a turn), then B
 // (send a turn), ctrl+p steps from the newer B back to the older A, and ctrl+n
-// steps forward again. Both sessions have real start times, so they sort
+// steps forward again. Both threads have real start times, so they sort
 // [A, B] and the previous/next navigation is well-defined — the positive
 // counterpart to the highlight scenario, which uses an uncommitted draft.
-func TestSessionsCtrlPNavigatesBetweenSessions(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("ctrl+p/ctrl+n cycle between two committed workspace sessions"))
+func TestThreadsCtrlPNavigatesBetweenThreads(t *testing.T) {
+	h := harness.Start(t, threadsMeta("ctrl+p/ctrl+n cycle between two committed workspace threads"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
-	// Session A (the initial one): one completed turn with a distinctive reply.
+	// Thread A (the initial one): one completed turn with a distinctive reply.
 	h.Mock.Enqueue(harness.Text("ALPHA-REPLY"))
 	h.UI.Type("alpha prompt")
 	h.UI.Enter()
 	h.UI.WaitFor("ALPHA-REPLY")
 
-	// Session B: created with ctrl+t, then a second committed turn. We are now
+	// Thread B: created with ctrl+t, then a second committed turn. We are now
 	// viewing B (its transcript shows BRAVO-REPLY, not ALPHA-REPLY).
 	h.UI.Ctrl('t')
 	h.UI.WaitStable(800 * time.Millisecond)
@@ -245,19 +245,19 @@ func TestSessionsCtrlPNavigatesBetweenSessions(t *testing.T) {
 	h.UI.Shot("ctrln-on-b")
 }
 
-// TestSessionsTabHighlightOnBackgroundMessage verifies that, while the user is
-// in the workspace on one session, a message completing on another session
-// statically highlights (tints) the Sessions tab title — and does not blink.
-func TestSessionsTabHighlightOnBackgroundMessage(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("a background message statically highlights the Sessions tab title"))
+// TestThreadsTabHighlightOnBackgroundMessage verifies that, while the user is
+// in the workspace on one thread, a message completing on another thread
+// statically highlights (tints) the Threads tab title — and does not blink.
+func TestThreadsTabHighlightOnBackgroundMessage(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a background message statically highlights the Threads tab title"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
-	fgBase, ok := h.UI.FgColorOf("Sessions [F1]")
+	fgBase, ok := h.UI.FgColorOf("Threads [F1]")
 	if !ok {
-		t.Fatalf("could not read the Sessions tab title color; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("could not read the Threads tab title color; screen:\n%s", h.UI.Snapshot())
 	}
 
-	// Create session B, start a turn on it, then switch back to A (still in the
+	// Create thread B, start a turn on it, then switch back to A (still in the
 	// workspace) and let B's turn complete in the background. B has committed
 	// (real start time) while A is still an uncommitted draft, so rows sort
 	// [B, A] (drafts sort last) — the launch draft A is reached with ctrl+n
@@ -267,36 +267,36 @@ func TestSessionsTabHighlightOnBackgroundMessage(t *testing.T) {
 	h.UI.Type("background work")
 	h.UI.Enter()
 	h.Mock.Next()
-	h.UI.Ctrl('n') // to session A (the draft, which sorts last); still on Workspace.
+	h.UI.Ctrl('n') // to thread A (the draft, which sorts last); still on Workspace.
 	h.Mock.Reply(harness.Text("background finished"))
 
-	// The Sessions title should tint (differ from the inactive baseline).
+	// The Threads title should tint (differ from the inactive baseline).
 	if !pollUntil(8*time.Second, func() bool {
-		c, ok := h.UI.FgColorOf("Sessions [F1]")
+		c, ok := h.UI.FgColorOf("Threads [F1]")
 		return ok && c != fgBase
 	}) {
-		t.Fatalf("Sessions tab title was not highlighted after a background message (base=%q); screen:\n%s", fgBase, h.UI.Snapshot())
+		t.Fatalf("Threads tab title was not highlighted after a background message (base=%q); screen:\n%s", fgBase, h.UI.Snapshot())
 	}
 	h.UI.Shot("tab-highlighted")
 
 	// A plain background message tints statically — it must not blink: sampled
-	// over a blink period the title color stays constant, and no session is
+	// over a blink period the title color stays constant, and no thread is
 	// waiting for input.
-	seen := distinctFgOf(h, "Sessions [F1]", 8, 150*time.Millisecond)
+	seen := distinctFgOf(h, "Threads [F1]", 8, 150*time.Millisecond)
 	if len(seen) != 1 {
 		t.Fatalf("expected a stable (non-blinking) highlight, saw %d distinct colors: %v", len(seen), seen)
 	}
 }
 
-// TestSessionsTabBlinkOnWaitingInput verifies that, with the same workspace
-// setup, a background session waiting for input makes the Sessions tab title
+// TestThreadsTabBlinkOnWaitingInput verifies that, with the same workspace
+// setup, a background thread waiting for input makes the Threads tab title
 // blink (its color toggles) — distinct from the static highlight above.
-func TestSessionsTabBlinkOnWaitingInput(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("a background session waiting for input blinks the Sessions tab title"))
+func TestThreadsTabBlinkOnWaitingInput(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a background thread waiting for input blinks the Threads tab title"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
-	// Session B asks a question, then we switch back to A in the workspace,
+	// Thread B asks a question, then we switch back to A in the workspace,
 	// leaving B waiting for input.
 	h.UI.Ctrl('t')
 	h.UI.WaitStable(800 * time.Millisecond)
@@ -304,13 +304,13 @@ func TestSessionsTabBlinkOnWaitingInput(t *testing.T) {
 	h.UI.Type("please ask")
 	h.UI.Enter()
 	h.UI.WaitFor("Pick one please?")
-	h.UI.Ctrl('p') // back to session A; B stays in the waiting state.
+	h.UI.Ctrl('p') // back to thread A; B stays in the waiting state.
 
 	// Sampled across a blink period, the title color toggles → ≥2 distinct
 	// values. (A static highlight would yield exactly one.)
-	seen := distinctFgOf(h, "Sessions [F1]", 18, 120*time.Millisecond)
+	seen := distinctFgOf(h, "Threads [F1]", 18, 120*time.Millisecond)
 	if len(seen) < 2 {
-		t.Fatalf("expected the Sessions tab title to blink (≥2 colors), saw %d: %v; screen:\n%s", len(seen), seen, h.UI.Snapshot())
+		t.Fatalf("expected the Threads tab title to blink (≥2 colors), saw %d: %v; screen:\n%s", len(seen), seen, h.UI.Snapshot())
 	}
 	h.UI.Shot("tab-blinking")
 
@@ -320,11 +320,11 @@ func TestSessionsTabBlinkOnWaitingInput(t *testing.T) {
 	h.UI.Shot("waiting-on-list")
 }
 
-// TestSessionsTitle verifies the Title column reflects the conversation: with no
+// TestThreadsTitle verifies the Title column reflects the conversation: with no
 // auto-title yet (a single turn is below the threshold), it falls back to the
 // first user message.
-func TestSessionsTitle(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("the Title column falls back to the first user message before auto-titling"))
+func TestThreadsTitle(t *testing.T) {
+	h := harness.Start(t, threadsMeta("the Title column falls back to the first user message before auto-titling"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
@@ -341,27 +341,27 @@ func TestSessionsTitle(t *testing.T) {
 	h.UI.Shot("title-from-message")
 }
 
-// TestSessionsNewAndOrdering verifies `t` adds a session from the Sessions tab
+// TestThreadsNewAndOrdering verifies `t` adds a thread from the Threads tab
 // and that user-initiated rows render in creation order.
-func TestSessionsNewAndOrdering(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("`t` adds a session; user rows render in creation order"))
+func TestThreadsNewAndOrdering(t *testing.T) {
+	h := harness.Start(t, threadsMeta("`t` adds a thread; user rows render in creation order"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
-	// Give the initial session (A) a distinctive first message.
+	// Give the initial thread (A) a distinctive first message.
 	h.Mock.Enqueue(harness.Text("ack-one"))
-	h.UI.Type("FIRST-SESSION")
+	h.UI.Type("FIRST-THREAD")
 	h.UI.Enter()
 	h.UI.WaitFor("ack-one")
 
-	// Add a second session from the Sessions tab with `t`, then give it a
+	// Add a second thread from the Threads tab with `t`, then give it a
 	// distinctive first message too.
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 	h.UI.Type("t")
 	h.UI.WaitStable(800 * time.Millisecond)
 	h.Mock.Enqueue(harness.Text("ack-two"))
-	h.UI.Type("SECOND-SESSION")
+	h.UI.Type("SECOND-THREAD")
 	h.UI.Enter()
 	h.UI.WaitFor("ack-two")
 
@@ -370,26 +370,26 @@ func TestSessionsNewAndOrdering(t *testing.T) {
 	snap := ""
 	ok := pollUntil(8*time.Second, func() bool {
 		snap = h.UI.Snapshot()
-		return strings.Contains(snap, "FIRST-SESSION") && strings.Contains(snap, "SECOND-SESSION")
+		return strings.Contains(snap, "FIRST-THREAD") && strings.Contains(snap, "SECOND-THREAD")
 	})
 	if !ok {
-		t.Fatalf("both sessions not listed; screen:\n%s", snap)
+		t.Fatalf("both threads not listed; screen:\n%s", snap)
 	}
-	// Creation order: the first session must appear above the second.
-	if strings.Index(snap, "FIRST-SESSION") > strings.Index(snap, "SECOND-SESSION") {
+	// Creation order: the first thread must appear above the second.
+	if strings.Index(snap, "FIRST-THREAD") > strings.Index(snap, "SECOND-THREAD") {
 		t.Fatalf("user rows not in creation order; screen:\n%s", snap)
 	}
-	h.UI.Shot("two-sessions-ordered")
+	h.UI.Shot("two-threads-ordered")
 }
 
-// TestSessionsDuplicate verifies `d` duplicates the selected session: a second
-// session record lands on disk whose conversation is identical to the source's.
-func TestSessionsDuplicate(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("`d` writes a duplicate session record identical to the source on disk"))
+// TestThreadsDuplicate verifies `d` duplicates the selected thread: a second
+// thread record lands on disk whose conversation is identical to the source's.
+func TestThreadsDuplicate(t *testing.T) {
+	h := harness.Start(t, threadsMeta("`d` writes a duplicate thread record identical to the source on disk"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
-	// One completed turn is required before a session can be duplicated, and it
+	// One completed turn is required before a thread can be duplicated, and it
 	// gives the record a non-trivial conversation to compare.
 	h.Mock.Enqueue(harness.Text("ok-to-fork"))
 	h.UI.Type("seed turn")
@@ -398,27 +398,27 @@ func TestSessionsDuplicate(t *testing.T) {
 
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
-	h.UI.Key("up") // ensure the seeded session is selected (top row).
+	h.UI.Key("up") // ensure the seeded thread is selected (top row).
 	h.UI.Type("d")
 
-	openDir := h.HomePath(".vix", "sessions", "open")
-	var recs []sessionRec
+	openDir := h.HomePath(".vix", "threads", "open")
+	var recs []threadRec
 	if !pollUntil(8*time.Second, func() bool {
-		recs = readSessionRecords(openDir)
+		recs = readThreadRecords(openDir)
 		return len(recs) == 2 && len(recs[0].Messages) > 0 && len(recs[1].Messages) > 0
 	}) {
-		t.Fatalf("expected two session records on disk after duplicate, got %d in %s", len(recs), openDir)
+		t.Fatalf("expected two thread records on disk after duplicate, got %d in %s", len(recs), openDir)
 	}
 
 	// The duplicate's conversation must be identical to the source's.
 	if !jsonEqual(recs[0].Messages, recs[1].Messages) {
-		t.Fatalf("duplicated session is not identical to the source:\nA=%s\nB=%s", recs[0].Messages, recs[1].Messages)
+		t.Fatalf("duplicated thread is not identical to the source:\nA=%s\nB=%s", recs[0].Messages, recs[1].Messages)
 	}
-	h.UI.Shot("duplicated-session")
+	h.UI.Shot("duplicated-thread")
 }
 
-// TestSessionsDuplicateOfDuplicate guards the duplicate-of-a-duplicate
-// regression: a session created by duplication had its messages seeded but its
+// TestThreadsDuplicateOfDuplicate guards the duplicate-of-a-duplicate
+// regression: a thread created by duplication had its messages seeded but its
 // per-turn fork snapshots left empty, so duplicating it again produced a
 // grandchild that started from an EMPTY conversation on the daemon even though
 // the UI showed the copied history. Sending a message then went to the model
@@ -427,50 +427,50 @@ func TestSessionsDuplicate(t *testing.T) {
 // It asserts, across disk and wire: every duplicated record carries the same
 // non-empty history, and a follow-up from the grandchild is sent WITH the
 // original turn rather than from scratch.
-func TestSessionsDuplicateOfDuplicate(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("duplicating a duplicate seeds the full history so a follow-up isn't sent from an empty conversation"))
+func TestThreadsDuplicateOfDuplicate(t *testing.T) {
+	h := harness.Start(t, threadsMeta("duplicating a duplicate seeds the full history so a follow-up isn't sent from an empty conversation"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 
-	// Seed one completed turn on the original session so there is a turn to fork
+	// Seed one completed turn on the original thread so there is a turn to fork
 	// and a distinctive user message ("seed turn") to look for on the wire.
 	h.Mock.Enqueue(harness.Text("ok-to-fork"))
 	h.UI.Type("seed turn")
 	h.UI.Enter()
 	h.UI.WaitFor("ok-to-fork")
 
-	openDir := h.HomePath(".vix", "sessions", "open")
+	openDir := h.HomePath(".vix", "threads", "open")
 
 	// First duplicate: source (top row) -> duplicate B. doDuplicate selects the
-	// new session and syncs the Sessions cursor onto it, so the highlight is now
-	// on B and we stay on the Sessions tab.
+	// new thread and syncs the Threads cursor onto it, so the highlight is now
+	// on B and we stay on the Threads tab.
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 	h.UI.Key("up")
 	h.UI.Type("d")
-	if !pollUntil(10*time.Second, func() bool { return len(readSessionRecords(openDir)) >= 2 }) {
-		t.Fatalf("first duplicate never persisted; got %d records in %s", len(readSessionRecords(openDir)), openDir)
+	if !pollUntil(10*time.Second, func() bool { return len(readThreadRecords(openDir)) >= 2 }) {
+		t.Fatalf("first duplicate never persisted; got %d records in %s", len(readThreadRecords(openDir)), openDir)
 	}
 
 	// Second duplicate: duplicate B into C. Rather than blind-press-and-retry
-	// (which can over-duplicate into a fourth session when a `d` lands before the
+	// (which can over-duplicate into a fourth thread when a `d` lands before the
 	// previous duplicate's record is observed), first prove B's client is live —
-	// a connected session appends "Reconnected to daemon." to its transcript —
+	// a connected thread appends "Reconnected to daemon." to its transcript —
 	// then duplicate it exactly once. Opening B, then returning to the list,
-	// re-syncs the cursor onto the active session (B) via syncSessionsSelected.
+	// re-syncs the cursor onto the active thread (B) via syncThreadsSelected.
 	h.UI.Enter() // open the highlighted B
 	h.UI.WaitFor("Reconnected to daemon.")
 	h.UI.Key("f1") // back to the list; the cursor re-syncs onto B
 	h.UI.WaitFor("User-initiated")
 	h.UI.Type("d")
-	if !pollUntil(10*time.Second, func() bool { return len(readSessionRecords(openDir)) >= 3 }) {
-		t.Fatalf("duplicate-of-a-duplicate never persisted; got %d records in %s", len(readSessionRecords(openDir)), openDir)
+	if !pollUntil(10*time.Second, func() bool { return len(readThreadRecords(openDir)) >= 3 }) {
+		t.Fatalf("duplicate-of-a-duplicate never persisted; got %d records in %s", len(readThreadRecords(openDir)), openDir)
 	}
 	h.UI.Shot("duplicate-of-duplicate")
 
 	// Disk: every duplicated record must carry the seeded history. Before the fix
 	// the grandchild's messages were empty.
-	recs := readSessionRecords(openDir)
+	recs := readThreadRecords(openDir)
 	for _, r := range recs {
 		if !strings.Contains(string(r.Messages), "seed turn") {
 			t.Fatalf("duplicated record id=%s (parent=%s) is missing the seeded history: %s", r.ID, r.ParentID, r.Messages)
@@ -480,14 +480,14 @@ func TestSessionsDuplicateOfDuplicate(t *testing.T) {
 		}
 	}
 
-	// Wire: open the grandchild (the highlighted, newest session) and send a
+	// Wire: open the grandchild (the highlighted, newest thread) and send a
 	// follow-up. The outgoing request must include the original turn — the exact
 	// symptom the user hit ("starting from an empty discussion").
 	h.UI.Enter()
 	h.UI.WaitFor("ok-to-fork")
 	// Wait until the grandchild's own fork-connection is live before the
 	// follow-up, so the message goes through the seeded client rather than
-	// committing a fresh (empty) draft session.
+	// committing a fresh (empty) draft thread.
 	h.UI.WaitFor("Reconnected to daemon.")
 
 	h.Mock.Enqueue(harness.Text("second-fork-reply"))
@@ -506,11 +506,11 @@ func TestSessionsDuplicateOfDuplicate(t *testing.T) {
 	h.UI.Shot("follow-up-carries-history")
 }
 
-// unreadSessionRecord is a persisted open session marked unread, seeded into
+// unreadThreadRecord is a persisted open thread marked unread, seeded into
 // open/ before launch. {{WORKDIR}} is expanded to the per-test cwd so it is
-// auto-restored on launch (session.list returns all directories; launch attaches
+// auto-restored on launch (thread.list returns all directories; launch attaches
 // the ones rooted at the current cwd).
-const unreadSessionRecord = `{
+const unreadThreadRecord = `{
   "schema_version": 1,
   "id": "22222222-2222-2222-2222-222222222222",
   "cwd": "{{WORKDIR}}",
@@ -523,10 +523,10 @@ const unreadSessionRecord = `{
   ]
 }`
 
-// readSessionRecordSeed is an older, already-read session. Being the oldest, it
-// becomes the focused initial session on launch, leaving the unread one to be
+// readThreadRecordSeed is an older, already-read thread. Being the oldest, it
+// becomes the focused initial thread on launch, leaving the unread one to be
 // restored in the background (where its unread state survives).
-const readSessionRecordSeed = `{
+const readThreadRecordSeed = `{
   "schema_version": 1,
   "id": "11111111-1111-1111-1111-111111111111",
   "cwd": "{{WORKDIR}}",
@@ -538,57 +538,103 @@ const readSessionRecordSeed = `{
   ]
 }`
 
-// TestSessionsUnreadOnLaunch verifies that launching with an unread session in
-// open/ highlights the Sessions tab title and shows the unread marker for that
-// session in the list.
-func TestSessionsUnreadOnLaunch(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("an unread session in open/ highlights the Sessions tab and marks the row on launch"),
-		harness.WithHomeFile(".vix/sessions/open/11111111-1111-1111-1111-111111111111.json", readSessionRecordSeed),
-		harness.WithHomeFile(".vix/sessions/open/22222222-2222-2222-2222-222222222222.json", unreadSessionRecord),
+// TestThreadsUnreadOnLaunch verifies that launching with an unread thread in
+// open/ highlights the Threads tab title and shows the unread marker for that
+// thread in the list.
+func TestThreadsUnreadOnLaunch(t *testing.T) {
+	h := harness.Start(t, threadsMeta("an unread thread in open/ highlights the Threads tab and marks the row on launch"),
+		harness.WithHomeFile(".vix/threads/open/11111111-1111-1111-1111-111111111111.json", readThreadRecordSeed),
+		harness.WithHomeFile(".vix/threads/open/22222222-2222-2222-2222-222222222222.json", unreadThreadRecord),
 	)
 
 	// On launch the TUI opens on the Workspace tab; the background-restored
-	// unread session tints the (inactive) Sessions title. Compare against the
+	// unread thread tints the (inactive) Threads title. Compare against the
 	// Models tab title, which stays the plain inactive color — they must differ.
 	highlighted := pollUntil(12*time.Second, func() bool {
-		fgSessions, ok1 := h.UI.FgColorOf("Sessions [F1]")
+		fgThreads, ok1 := h.UI.FgColorOf("Threads [F1]")
 		fgModels, ok2 := h.UI.FgColorOf("Models [F3]")
-		return ok1 && ok2 && fgSessions != fgModels
+		return ok1 && ok2 && fgThreads != fgModels
 	})
 	if !highlighted {
-		fs, _ := h.UI.FgColorOf("Sessions [F1]")
+		fs, _ := h.UI.FgColorOf("Threads [F1]")
 		fm, _ := h.UI.FgColorOf("Models [F3]")
-		t.Fatalf("Sessions tab not highlighted on launch (Sessions fg=%q, Models fg=%q); screen:\n%s", fs, fm, h.UI.Snapshot())
+		t.Fatalf("Threads tab not highlighted on launch (Threads fg=%q, Models fg=%q); screen:\n%s", fs, fm, h.UI.Snapshot())
 	}
 	h.UI.Shot("tab-highlighted-on-launch")
 
-	// Visiting the Sessions tab clears the title highlight but keeps the per-row
-	// unread marker, which must show on the restored unread session.
+	// Visiting the Threads tab clears the title highlight but keeps the per-row
+	// unread marker, which must show on the restored unread thread.
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 	if !pollUntil(8*time.Second, func() bool {
 		s := h.UI.Snapshot()
 		return strings.Contains(s, "●") && strings.Contains(s, "UNREAD-ONE")
 	}) {
-		t.Fatalf("unread marker not shown for the restored session; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("unread marker not shown for the restored thread; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("unread-marker-in-list")
 }
 
-// sessionRec is the slice of a persisted session record this suite inspects.
-type sessionRec struct {
+// legacyThreadRecord is a persisted open thread written under the pre-rename
+// sessions/ store. Launching vixd must migrate sessions/ -> threads/ so the
+// record surfaces in the Threads tab. Note the on-disk JSON keeps the legacy
+// "session_mode" key, which the daemon still decodes after the rename.
+const legacyThreadRecord = `{
+  "schema_version": 1,
+  "id": "aaaaaaaa-1111-2222-3333-444444444444",
+  "cwd": "{{WORKDIR}}",
+  "session_mode": "chat",
+  "started_at": "2024-01-01T00:00:00Z",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "LEGACY-MIGRATED"}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "hello from before the rename"}]}
+  ]
+}`
+
+// TestSessionsDirMigrates seeds a record under the old
+// ~/.vix/sessions/open store and asserts the daemon's one-time startup
+// migration relocates it to ~/.vix/threads/open: it appears in the Threads tab
+// and the legacy sessions/ directory is gone.
+func TestSessionsDirMigrates(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a record under the legacy sessions/ store migrates to threads/ and shows in the Threads tab"),
+		harness.WithHomeFile(".vix/sessions/open/aaaaaaaa-1111-2222-3333-444444444444.json", legacyThreadRecord),
+	)
+
+	// The migrated record is restored on launch; open the Threads tab and
+	// confirm its first message renders.
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	if !pollUntil(10*time.Second, func() bool {
+		return strings.Contains(h.UI.Snapshot(), "LEGACY-MIGRATED")
+	}) {
+		t.Fatalf("migrated legacy thread not shown in Threads tab; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("legacy-thread-migrated")
+
+	// The store was physically moved: threads/open holds the record and the
+	// legacy sessions/ dir no longer exists.
+	if _, err := os.Stat(filepath.Join(h.HomePath(".vix", "threads", "open"), "aaaaaaaa-1111-2222-3333-444444444444.json")); err != nil {
+		t.Fatalf("record not found under threads/open after migration: %v", err)
+	}
+	if _, err := os.Stat(h.HomePath(".vix", "sessions")); !os.IsNotExist(err) {
+		t.Errorf("legacy sessions/ dir still present after migration (err=%v)", err)
+	}
+}
+
+// threadRec is the slice of a persisted thread record this suite inspects.
+type threadRec struct {
 	ID       string          `json:"id"`
 	ParentID string          `json:"parent_id"`
 	Messages json.RawMessage `json:"messages"`
 }
 
-// readSessionRecords parses every *.json session record in dir.
-func readSessionRecords(dir string) []sessionRec {
+// readThreadRecords parses every *.json thread record in dir.
+func readThreadRecords(dir string) []threadRec {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	var out []sessionRec
+	var out []threadRec
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -597,7 +643,7 @@ func readSessionRecords(dir string) []sessionRec {
 		if err != nil {
 			continue
 		}
-		var r sessionRec
+		var r threadRec
 		if json.Unmarshal(data, &r) != nil {
 			continue
 		}
@@ -616,36 +662,36 @@ func jsonEqual(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(va, vb)
 }
 
-// TestSessionsDeleteConfirm verifies `x` opens the close-confirmation dialog and
-// that declining keeps the session.
-func TestSessionsDeleteConfirm(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("`x` opens the close-confirmation dialog; declining keeps the session"))
+// TestThreadsDeleteConfirm verifies `x` opens the close-confirmation dialog and
+// that declining keeps the thread.
+func TestThreadsDeleteConfirm(t *testing.T) {
+	h := harness.Start(t, threadsMeta("`x` opens the close-confirmation dialog; declining keeps the thread"))
 
 	h.UI.WaitStable(500 * time.Millisecond)
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 
 	h.UI.Type("x")
-	h.UI.WaitFor("Close session?")
-	if !h.UI.Contains("The session will be terminated.") {
+	h.UI.WaitFor("Close thread?")
+	if !h.UI.Contains("The thread will be terminated.") {
 		t.Fatalf("close dialog body not shown; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("close-confirm")
 
 	// "No" is the default; Enter dismisses without closing.
 	h.UI.Enter()
-	if !pollUntil(5*time.Second, func() bool { return !h.UI.Contains("Close session?") }) {
+	if !pollUntil(5*time.Second, func() bool { return !h.UI.Contains("Close thread?") }) {
 		t.Fatalf("close dialog did not dismiss; screen:\n%s", h.UI.Snapshot())
 	}
 	if !h.UI.Contains("User-initiated") {
-		t.Fatalf("session row gone after declining close; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("thread row gone after declining close; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("close-declined")
 }
 
 // jobSpec is a one-shot scheduled job whose fire time is in the past, so the
 // scheduler runs it immediately at startup. The run executes against the mock
-// and persists a Vix-initiated session record.
+// and persists a Vix-initiated thread record.
 const jobSpec = `{
   "id": "e2e-demo",
   "name": "E2E Demo",
@@ -656,10 +702,10 @@ const jobSpec = `{
   "created_by": "vix"
 }`
 
-// TestSessionsVixInitiated verifies that a scheduled job run lands in the
-// Sessions tab's Vix-initiated group, labelled with its run title.
-func TestSessionsVixInitiated(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("a scheduled job run appears in the Vix-initiated group"),
+// TestThreadsVixInitiated verifies that a scheduled job run lands in the
+// Threads tab's Vix-initiated group, labelled with its run title.
+func TestThreadsVixInitiated(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a scheduled job run appears in the Vix-initiated group"),
 		harness.WithEnv("VIX_DISABLE_JOBS", "0"),
 		harness.WithHomeFile(".vix/jobs/e2e-demo/job.json", jobSpec),
 	)
@@ -682,7 +728,7 @@ func TestSessionsVixInitiated(t *testing.T) {
 
 // vixAlignErrorRecord and vixAlignOkRecord are two persisted Vix-initiated run
 // records seeded into open/: a failed run (job_status "error" → the ⚠ marker in
-// the Title column) and a successful one (no marker). They guard the Sessions-tab
+// the Title column) and a successful one (no marker). They guard the Threads-tab
 // column alignment fix — the warning marker is exactly one display cell wide, so
 // the Running column must line up across both rows. {{WORKDIR}} is the per-test
 // cwd so the seeded records are shown.
@@ -719,7 +765,7 @@ const vixAlignOkRecord = `{
 }`
 
 // runeCol returns the display column (rune offset) at which sub first appears in
-// line, or -1. The Sessions-list rows it inspects contain only width-1 glyphs
+// line, or -1. The Threads-list rows it inspects contain only width-1 glyphs
 // (ASCII plus the one-cell ⚠ marker), so a rune offset equals the screen column.
 func runeCol(line, sub string) int {
 	i := strings.Index(line, sub)
@@ -729,17 +775,17 @@ func runeCol(line, sub string) int {
 	return len([]rune(line[:i]))
 }
 
-// TestSessionsVixInitiatedAlignment guards the Sessions-tab column alignment: a
+// TestThreadsVixInitiatedAlignment guards the Threads-tab column alignment: a
 // failed Vix-initiated run is flagged with a ⚠ marker in the Title column, and
 // the marker must not shift the Running column relative to an unflagged row. The
 // marker is the plain warning sign (U+26A0, no U+FE0F): one display cell that
 // lipgloss and the terminal agree on. The emoji-presentation "⚠️" measures two
 // cells in lipgloss but renders as one here, which used to push the Running
 // column left on flagged rows.
-func TestSessionsVixInitiatedAlignment(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("the ⚠ marker keeps the Running column aligned across failed and successful Vix-initiated rows"),
-		harness.WithHomeFile(".vix/sessions/open/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json", vixAlignErrorRecord),
-		harness.WithHomeFile(".vix/sessions/open/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.json", vixAlignOkRecord),
+func TestThreadsVixInitiatedAlignment(t *testing.T) {
+	h := harness.Start(t, threadsMeta("the ⚠ marker keeps the Running column aligned across failed and successful Vix-initiated rows"),
+		harness.WithHomeFile(".vix/threads/open/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json", vixAlignErrorRecord),
+		harness.WithHomeFile(".vix/threads/open/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.json", vixAlignOkRecord),
 	)
 
 	h.UI.WaitStable(500 * time.Millisecond)
@@ -785,7 +831,7 @@ func TestSessionsVixInitiatedAlignment(t *testing.T) {
 
 // inlineWorkflowJobSpec is a one-shot job that runs a self-contained inline
 // workflow (no entry in config/workflow.json). The single agent step streams a
-// reply through the mock, so the run produces a persisted Vix-initiated session
+// reply through the mock, so the run produces a persisted Vix-initiated thread
 // — proving the inline-workflow dispatch path end-to-end.
 const inlineWorkflowJobSpec = `{
   "id": "e2e-inline",
@@ -804,11 +850,11 @@ const inlineWorkflowJobSpec = `{
   "created_by": "vix"
 }`
 
-// TestSessionsVixInitiatedInlineWorkflow verifies that a scheduled job carrying
+// TestThreadsVixInitiatedInlineWorkflow verifies that a scheduled job carrying
 // an inline workflow definition (rather than a named workflow_id) runs that
 // workflow and lands in the Vix-initiated group.
-func TestSessionsVixInitiatedInlineWorkflow(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("a scheduled job with an inline workflow runs and appears in the Vix-initiated group"),
+func TestThreadsVixInitiatedInlineWorkflow(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a scheduled job with an inline workflow runs and appears in the Vix-initiated group"),
 		harness.WithEnv("VIX_DISABLE_JOBS", "0"),
 		harness.WithHomeFile(".vix/jobs/e2e-inline/job.json", inlineWorkflowJobSpec),
 	)
@@ -829,20 +875,20 @@ func TestSessionsVixInitiatedInlineWorkflow(t *testing.T) {
 	h.UI.Shot("vix-initiated-inline")
 }
 
-// TestSessionsListRefreshesInDraft proves the instance control channel end to
-// end: a launch-time draft window (no session ever started) is watching the
-// Sessions tab when a job is fired out of band via `vix job run`. The run's
+// TestThreadsListRefreshesInDraft proves the instance control channel end to
+// end: a launch-time draft window (no thread ever started) is watching the
+// Threads tab when a job is fired out of band via `vix job run`. The run's
 // persisted Vix-initiated record must appear live — pushed over the window's
-// control connection (event.sessions_changed → fetchVixSessions), never by
+// control connection (event.threads_changed → fetchVixThreads), never by
 // re-entering the tab or sending a first message. Reuses onDemandJobSpec (a
 // future-dated job the scheduler never fires on its own; see run_trigger_test.go).
-func TestSessionsListRefreshesInDraft(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("a draft window's Sessions tab refreshes live when a job is fired via `vix job run`"),
+func TestThreadsListRefreshesInDraft(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a draft window's Threads tab refreshes live when a job is fired via `vix job run`"),
 		harness.WithEnv("VIX_DISABLE_JOBS", "0"),
 		harness.WithHomeFile(".vix/jobs/e2e-ondemand/job.json", onDemandJobSpec),
 	)
 
-	// Stay a draft (never send a first message). Open the Sessions tab; the
+	// Stay a draft (never send a first message). Open the Threads tab; the
 	// initial fetch runs while no Vix-initiated record exists yet.
 	h.UI.WaitStable(500 * time.Millisecond)
 	h.UI.Key("f1")
@@ -854,16 +900,16 @@ func TestSessionsListRefreshesInDraft(t *testing.T) {
 	h.UI.Shot("draft-before-run")
 
 	// Fire the job out of band. Its single turn calls the mock once and persists
-	// a Vix-initiated session, which broadcasts sessions_changed to the window's
+	// a Vix-initiated thread, which broadcasts threads_changed to the window's
 	// control channel.
 	h.Mock.Enqueue(harness.Text("hello on demand"))
 	if out, err := h.RunCLI("job", "run", "e2e-ondemand"); err != nil {
 		t.Fatalf("vix job run failed: %v\n%s", err, out)
 	}
 
-	// The row must appear live while the window is still a draft on the Sessions
+	// The row must appear live while the window is still a draft on the Threads
 	// tab — no tab re-entry, no first message. This only happens if the control
-	// channel delivered event.sessions_changed.
+	// channel delivered event.threads_changed.
 	if !pollUntil(20*time.Second, func() bool {
 		s := h.UI.Snapshot()
 		return strings.Contains(s, "Vix-initiated") && strings.Contains(s, "E2E On-Demand")
@@ -874,10 +920,10 @@ func TestSessionsListRefreshesInDraft(t *testing.T) {
 }
 
 // groupUserCurrentRecord and groupUserOtherRecord are two persisted, user-initiated
-// open sessions in different working directories: one rooted at the launch cwd
-// (auto-restored as a live session) and one rooted at a sibling directory
+// open threads in different working directories: one rooted at the launch cwd
+// (auto-restored as a live thread) and one rooted at a sibling directory
 // ({{WORKDIR}}/otherproj), which stays a not-attached record. They prove the
-// Sessions tab now surfaces sessions from every directory (no cwd filter),
+// Threads tab now surfaces threads from every directory (no cwd filter),
 // grouped by working directory with a path subtitle for each.
 const groupUserCurrentRecord = `{
   "schema_version": 1,
@@ -886,7 +932,7 @@ const groupUserCurrentRecord = `{
   "session_mode": "chat",
   "started_at": "2024-01-01T00:00:00Z",
   "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "CURRENT-DIR-SESSION"}]},
+    {"role": "user", "content": [{"type": "text", "text": "CURRENT-DIR-THREAD"}]},
     {"role": "assistant", "content": [{"type": "text", "text": "current dir reply"}]}
   ]
 }`
@@ -898,66 +944,66 @@ const groupUserOtherRecord = `{
   "session_mode": "chat",
   "started_at": "2024-01-02T00:00:00Z",
   "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "OTHER-DIR-SESSION"}]},
+    {"role": "user", "content": [{"type": "text", "text": "OTHER-DIR-THREAD"}]},
     {"role": "assistant", "content": [{"type": "text", "text": "other dir reply"}]}
   ]
 }`
 
-// TestSessionsGroupedByDirectory verifies the User-initiated group lists sessions
+// TestThreadsGroupedByDirectory verifies the User-initiated group lists threads
 // from every working directory (not just the launch cwd), grouped by directory
-// with a per-directory path subtitle, and that opening a session rooted in
+// with a per-directory path subtitle, and that opening a thread rooted in
 // another directory attaches it (its conversation replays in the workspace).
-func TestSessionsGroupedByDirectory(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("the Sessions tab groups user sessions from every directory under a path subtitle; opening a cross-directory session attaches it"),
-		// A sibling directory to root the other-directory session at.
+func TestThreadsGroupedByDirectory(t *testing.T) {
+	h := harness.Start(t, threadsMeta("the Threads tab groups user threads from every directory under a path subtitle; opening a cross-directory thread attaches it"),
+		// A sibling directory to root the other-directory thread at.
 		harness.WithWorkdirFile("otherproj/keep.txt", "seed"),
-		harness.WithHomeFile(".vix/sessions/open/cccccccc-cccc-cccc-cccc-cccccccccccc.json", groupUserCurrentRecord),
-		harness.WithHomeFile(".vix/sessions/open/dddddddd-dddd-dddd-dddd-dddddddddddd.json", groupUserOtherRecord),
+		harness.WithHomeFile(".vix/threads/open/cccccccc-cccc-cccc-cccc-cccccccccccc.json", groupUserCurrentRecord),
+		harness.WithHomeFile(".vix/threads/open/dddddddd-dddd-dddd-dddd-dddddddddddd.json", groupUserOtherRecord),
 	)
 
 	h.UI.WaitStable(500 * time.Millisecond)
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 
-	// Both directories' sessions must be listed — the cross-directory session is
+	// Both directories' threads must be listed — the cross-directory thread is
 	// the behavior the cwd-filter removal enables.
 	if !pollUntil(10*time.Second, func() bool {
 		s := h.UI.Snapshot()
-		return strings.Contains(s, "CURRENT-DIR-SESSION") && strings.Contains(s, "OTHER-DIR-SESSION")
+		return strings.Contains(s, "CURRENT-DIR-THREAD") && strings.Contains(s, "OTHER-DIR-THREAD")
 	}) {
-		t.Fatalf("both directories' sessions not listed; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("both directories' threads not listed; screen:\n%s", h.UI.Snapshot())
 	}
 	// The other directory's path subtitle is shown (always rendered per group).
 	if !h.UI.Contains("otherproj") {
 		t.Fatalf("per-directory path subtitle (otherproj) not shown; screen:\n%s", h.UI.Snapshot())
 	}
-	h.UI.Shot("sessions-grouped-by-dir")
+	h.UI.Shot("threads-grouped-by-dir")
 
-	// The current-cwd session (auto-restored, live) sorts above the other
+	// The current-cwd thread (auto-restored, live) sorts above the other
 	// directory's not-attached record.
 	snap := h.UI.Snapshot()
-	if strings.Index(snap, "CURRENT-DIR-SESSION") > strings.Index(snap, "OTHER-DIR-SESSION") {
+	if strings.Index(snap, "CURRENT-DIR-THREAD") > strings.Index(snap, "OTHER-DIR-THREAD") {
 		t.Fatalf("current cwd block should render above the other directory; screen:\n%s", snap)
 	}
 
-	// Opening the cross-directory session attaches it in its own directory: move
+	// Opening the cross-directory thread attaches it in its own directory: move
 	// to the top, then down onto the other-directory row and open it. Its
 	// conversation must replay in the workspace.
 	h.UI.Key("up")
 	h.UI.Key("down")
 	h.UI.Enter()
 	if !pollUntil(10*time.Second, func() bool { return h.UI.Contains("other dir reply") }) {
-		t.Fatalf("opening the cross-directory session did not replay its conversation; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("opening the cross-directory thread did not replay its conversation; screen:\n%s", h.UI.Snapshot())
 	}
-	h.UI.Shot("cross-dir-session-opened")
+	h.UI.Shot("cross-dir-thread-opened")
 }
 
-// orderCurrentRecord is the launch-cwd session (auto-restored as a live session).
-// otherOldRecord and otherNewRecord are two persisted sessions in the same
+// orderCurrentRecord is the launch-cwd thread (auto-restored as a live thread).
+// otherOldRecord and otherNewRecord are two persisted threads in the same
 // sibling directory ({{WORKDIR}}/otherproj), created on 2024-01-01 and
 // 2024-01-03 respectively. The test opens the NEWER one so it attaches (becomes
 // live) and verifies it still renders below the older, not-attached record —
-// i.e. rows order by creation time, a live session is not hoisted to the top.
+// i.e. rows order by creation time, a live thread is not hoisted to the top.
 const orderCurrentRecord = `{
   "schema_version": 1,
   "id": "c1111111-1111-1111-1111-111111111111",
@@ -965,7 +1011,7 @@ const orderCurrentRecord = `{
   "session_mode": "chat",
   "started_at": "2024-01-02T00:00:00Z",
   "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "CURRENT-DIR-SESSION"}]},
+    {"role": "user", "content": [{"type": "text", "text": "CURRENT-DIR-THREAD"}]},
     {"role": "assistant", "content": [{"type": "text", "text": "current dir reply"}]}
   ]
 }`
@@ -977,7 +1023,7 @@ const orderOtherOldRecord = `{
   "session_mode": "chat",
   "started_at": "2024-01-01T00:00:00Z",
   "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "OTHER-OLD-SESSION"}]},
+    {"role": "user", "content": [{"type": "text", "text": "OTHER-OLD-THREAD"}]},
     {"role": "assistant", "content": [{"type": "text", "text": "other old reply"}]}
   ]
 }`
@@ -989,64 +1035,64 @@ const orderOtherNewRecord = `{
   "session_mode": "chat",
   "started_at": "2024-01-03T00:00:00Z",
   "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "OTHER-NEW-SESSION"}]},
+    {"role": "user", "content": [{"type": "text", "text": "OTHER-NEW-THREAD"}]},
     {"role": "assistant", "content": [{"type": "text", "text": "other new reply"}]}
   ]
 }`
 
-// TestSessionsOrderedByCreationTime verifies that within a working-directory
-// block the rows are ordered by creation time — a live (attached) session is NOT
-// hoisted above an older not-attached record. It seeds two sessions in a sibling
+// TestThreadsOrderedByCreationTime verifies that within a working-directory
+// block the rows are ordered by creation time — a live (attached) thread is NOT
+// hoisted above an older not-attached record. It seeds two threads in a sibling
 // directory (old = 2024-01-01, new = 2024-01-03), opens the newer one so it
 // attaches (becomes live), and asserts the older record still renders above it.
-func TestSessionsOrderedByCreationTime(t *testing.T) {
-	h := harness.Start(t, sessionsMeta("within a directory block, rows order by creation time; opening the newer session does not hoist it above the older record"),
+func TestThreadsOrderedByCreationTime(t *testing.T) {
+	h := harness.Start(t, threadsMeta("within a directory block, rows order by creation time; opening the newer thread does not hoist it above the older record"),
 		harness.WithWorkdirFile("otherproj/keep.txt", "seed"),
-		harness.WithHomeFile(".vix/sessions/open/c1111111-1111-1111-1111-111111111111.json", orderCurrentRecord),
-		harness.WithHomeFile(".vix/sessions/open/a1111111-1111-1111-1111-111111111111.json", orderOtherOldRecord),
-		harness.WithHomeFile(".vix/sessions/open/b1111111-1111-1111-1111-111111111111.json", orderOtherNewRecord),
+		harness.WithHomeFile(".vix/threads/open/c1111111-1111-1111-1111-111111111111.json", orderCurrentRecord),
+		harness.WithHomeFile(".vix/threads/open/a1111111-1111-1111-1111-111111111111.json", orderOtherOldRecord),
+		harness.WithHomeFile(".vix/threads/open/b1111111-1111-1111-1111-111111111111.json", orderOtherNewRecord),
 	)
 
 	h.UI.WaitStable(500 * time.Millisecond)
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 
-	// Both otherproj sessions are listed as not-attached records, older above newer.
+	// Both otherproj threads are listed as not-attached records, older above newer.
 	if !pollUntil(10*time.Second, func() bool {
 		s := h.UI.Snapshot()
-		return strings.Contains(s, "OTHER-OLD-SESSION") && strings.Contains(s, "OTHER-NEW-SESSION")
+		return strings.Contains(s, "OTHER-OLD-THREAD") && strings.Contains(s, "OTHER-NEW-THREAD")
 	}) {
-		t.Fatalf("both otherproj sessions not listed; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("both otherproj threads not listed; screen:\n%s", h.UI.Snapshot())
 	}
 	snap := h.UI.Snapshot()
-	if strings.Index(snap, "OTHER-OLD-SESSION") > strings.Index(snap, "OTHER-NEW-SESSION") {
+	if strings.Index(snap, "OTHER-OLD-THREAD") > strings.Index(snap, "OTHER-NEW-THREAD") {
 		t.Fatalf("older record should render above newer record; screen:\n%s", snap)
 	}
 	h.UI.Shot("order-before-attach")
 
-	// Open the NEWER otherproj session so it attaches (becomes live). Rows:
+	// Open the NEWER otherproj thread so it attaches (becomes live). Rows:
 	// 0=CURRENT (cwd), 1=OTHER-OLD, 2=OTHER-NEW. Move down twice and open it.
 	h.UI.Key("down")
 	h.UI.Key("down")
 	h.UI.Enter()
 	if !pollUntil(10*time.Second, func() bool { return h.UI.Contains("other new reply") }) {
-		t.Fatalf("opening the newer session did not replay its conversation; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("opening the newer thread did not replay its conversation; screen:\n%s", h.UI.Snapshot())
 	}
 
-	// Back to the Sessions tab: the newer session is now live, but must still
+	// Back to the Threads tab: the newer thread is now live, but must still
 	// render BELOW the older not-attached record (ordered by creation time, not
 	// live-first). Before the fix, the live row was hoisted to the top.
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 	if !pollUntil(10*time.Second, func() bool {
 		s := h.UI.Snapshot()
-		return strings.Contains(s, "OTHER-OLD-SESSION") && strings.Contains(s, "OTHER-NEW-SESSION")
+		return strings.Contains(s, "OTHER-OLD-THREAD") && strings.Contains(s, "OTHER-NEW-THREAD")
 	}) {
 		t.Fatalf("both otherproj rows not listed after attach; screen:\n%s", h.UI.Snapshot())
 	}
 	snap = h.UI.Snapshot()
-	if strings.Index(snap, "OTHER-OLD-SESSION") > strings.Index(snap, "OTHER-NEW-SESSION") {
-		t.Fatalf("attached (live) newer session was hoisted above the older record; rows must order by creation time; screen:\n%s", snap)
+	if strings.Index(snap, "OTHER-OLD-THREAD") > strings.Index(snap, "OTHER-NEW-THREAD") {
+		t.Fatalf("attached (live) newer thread was hoisted above the older record; rows must order by creation time; screen:\n%s", snap)
 	}
 	h.UI.Shot("order-after-attach")
 }

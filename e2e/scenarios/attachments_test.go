@@ -103,7 +103,7 @@ func TestAttachmentChipShownInTranscript(t *testing.T) {
 	}
 }
 
-// OUTSIDE the session's working directory (here, under HOME — mirroring an
+// OUTSIDE the thread's working directory (here, under HOME — mirroring an
 // iCloud path like ~/Library/Mobile Documents/...). A drag-drop is explicit
 // user intent, so the daemon reads it and embeds its text even though the same
 // path would be refused to the agent's read_file tool. No "outside working

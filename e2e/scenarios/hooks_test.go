@@ -15,7 +15,7 @@ import (
 // jq/grep/echo/touch (all present in the e2e image) the way real hooks are
 // written.
 //
-// Coverage: every event (PreToolUse, PostToolUse, UserPromptSubmit, SessionStart,
+// Coverage: every event (PreToolUse, PostToolUse, UserPromptSubmit, ThreadStart,
 // Stop, PreCompact, PostCompact, SubagentStart, SubagentStop, PermissionRequest),
 // every decision (deny, modify, context), both modes (sync, async), the
 // command and prompt forms, plus matcher scoping, multi-hook combine
@@ -403,33 +403,33 @@ func TestHookAsyncFireAndForget(t *testing.T) {
 	}
 }
 
-// ── SessionStart event ──────────────────────────────────────────────────────
+// ── ThreadStart event ──────────────────────────────────────────────────────
 
-const sessionStartHook = `{
-  "id": "session-start",
+const threadStartHook = `{
+  "id": "thread-start",
   "enabled": true,
   "mode": "async",
-  "trigger": { "event": "SessionStart" },
-  "command": "touch sessionstart.flag"
+  "trigger": { "event": "ThreadStart" },
+  "command": "touch threadstart.flag"
 }`
 
-// TestHookSessionStartFires proves a SessionStart hook runs when the session
-// begins. Under the draft-session model a session starts on the first message,
+// TestHookThreadStartFires proves a ThreadStart hook runs when the thread
+// begins. Under the draft-thread model a thread starts on the first message,
 // so sending one commits the draft and fires the hook.
-func TestHookSessionStartFires(t *testing.T) {
+func TestHookThreadStartFires(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "hooks",
-		Subcategory: "hooks.session_start",
-		Description: "a SessionStart hook fires when the session begins",
+		Subcategory: "hooks.thread_start",
+		Description: "a ThreadStart hook fires when the thread begins",
 		Wire:        harness.WireMessages,
-	}, harness.WithHomeFile(".vix/hooks/session-start/hook.json", sessionStartHook))
+	}, harness.WithHomeFile(".vix/hooks/thread-start/hook.json", threadStartHook))
 
 	h.UI.WaitStable(400 * time.Millisecond)
-	startSession(h)
-	h.UI.Shot("session-start")
+	startThread(h)
+	h.UI.Shot("thread-start")
 
-	if !pollUntil(10*time.Second, func() bool { return h.FS.Exists("sessionstart.flag") }) {
-		t.Fatalf("SessionStart hook never fired (sessionstart.flag missing)")
+	if !pollUntil(10*time.Second, func() bool { return h.FS.Exists("threadstart.flag") }) {
+		t.Fatalf("ThreadStart hook never fired (threadstart.flag missing)")
 	}
 }
 
@@ -517,7 +517,7 @@ func TestHookRecentRunsHistory(t *testing.T) {
 }
 
 // promptFormHook is a sync blocking PreToolUse hook whose decision comes from an
-// LLM turn (run in an isolated session). The model answers with the BLOCK:
+// LLM turn (run in an isolated thread). The model answers with the BLOCK:
 // sentinel, which the engine reads as a deny.
 const promptFormHook = `{
   "id": "prompt-form",

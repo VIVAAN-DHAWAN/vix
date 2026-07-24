@@ -66,8 +66,8 @@ type wsSnapshot struct {
 	Jobs []struct {
 		ID         string `json:"id"`
 		RecentRuns []struct {
-			Status    string `json:"status"`
-			SessionID string `json:"session_id"`
+			Status   string `json:"status"`
+			ThreadID string `json:"session_id"`
 		} `json:"recent_runs"`
 	} `json:"jobs"`
 	Hooks []struct {
@@ -134,12 +134,12 @@ func TestMissionControlSnapshotIsReal(t *testing.T) {
 		t.Fatalf("decoding /ws payload: %v\nraw:\n%s", err, raw)
 	}
 
-	// Job: real run history with an ok status and a real session id.
+	// Job: real run history with an ok status and a real thread id.
 	var job *struct {
 		ID         string `json:"id"`
 		RecentRuns []struct {
-			Status    string `json:"status"`
-			SessionID string `json:"session_id"`
+			Status   string `json:"status"`
+			ThreadID string `json:"session_id"`
 		} `json:"recent_runs"`
 	}
 	for i := range snap.Jobs {
@@ -153,8 +153,8 @@ func TestMissionControlSnapshotIsReal(t *testing.T) {
 	if len(job.RecentRuns) == 0 || job.RecentRuns[len(job.RecentRuns)-1].Status != "ok" {
 		t.Fatalf("job recent_runs missing an ok run: %+v", job.RecentRuns)
 	}
-	if job.RecentRuns[len(job.RecentRuns)-1].SessionID == "" {
-		t.Fatalf("job run carried no session id: %+v", job.RecentRuns)
+	if job.RecentRuns[len(job.RecentRuns)-1].ThreadID == "" {
+		t.Fatalf("job run carried no thread id: %+v", job.RecentRuns)
 	}
 
 	// Hook: real fields (timeout is the spec's "2s", not the old hardcoded

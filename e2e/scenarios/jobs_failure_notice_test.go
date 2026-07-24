@@ -49,7 +49,7 @@ type failNoticeRunRecord struct {
 }
 
 func failNoticeRunFor(h *harness.Harness, ref string) (failNoticeRunRecord, bool) {
-	dir := h.HomePath(".vix/sessions/open")
+	dir := h.HomePath(".vix/threads/open")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return failNoticeRunRecord{}, false
@@ -73,7 +73,7 @@ func failNoticeRunFor(h *harness.Harness, ref string) (failNoticeRunRecord, bool
 	return failNoticeRunRecord{}, false
 }
 
-// TestJobPreflightFailureShowsErrorOnOpen guards the "blank failed session" bug:
+// TestJobPreflightFailureShowsErrorOnOpen guards the "blank failed thread" bug:
 // a scheduled run whose workflow aborts at a bash preflight step used to persist
 // with zero messages and no other trace, so opening it showed nothing. Now the
 // failure is captured as a persisted failure notice (naming the step and

@@ -99,7 +99,7 @@ func TestFrequentlyAccessedFilesRefresh(t *testing.T) {
 	}
 }
 
-// TestOpenAIMultiTurnDoesNotStall guards issue #34: an OpenAI session reportedly
+// TestOpenAIMultiTurnDoesNotStall guards issue #34: an OpenAI thread reportedly
 // stopped after the first reply. A tool turn followed by a streamed text turn
 // must continue past the tool result — i.e. the daemon issues the post-tool
 // request and the final (chunk-streamed) answer renders.

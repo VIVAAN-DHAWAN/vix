@@ -129,11 +129,11 @@ func trackerJobSpec() string {
 }
 
 // countStateRuns returns how many runs the job has recorded in its per-job
-// state.json (the "recent_runs" history). This — not the Vix-initiated session
+// state.json (the "recent_runs" history). This — not the Vix-initiated thread
 // list — is the reliable "the run finished" signal here: the tracker's workflow
 // is all bash (fetch/select/mark_done, no agent step), so every run ends with
 // agentTurns==0 and the runner correctly records it as a skip that leaves no
-// session record (that skip is the production NO_TODO / nothing-to-plan case).
+// thread record (that skip is the production NO_TODO / nothing-to-plan case).
 // The run is still appended to recent_runs (scheduled, manual, and skip alike),
 // so gating on it works for a no-LLM workflow.
 func countStateRuns(h *harness.Harness, jobID string) int {

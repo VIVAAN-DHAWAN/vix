@@ -8,17 +8,17 @@ import (
 	"github.com/get-vix/vix/e2e/harness"
 )
 
-// TestConversationSurvivesDaemonRestart guards issue #22: session state used to
+// TestConversationSurvivesDaemonRestart guards issue #22: thread state used to
 // live only in memory, so a daemon crash/restart lost the conversation. The
-// daemon now persists each turn to ~/.vix/sessions/open/<id>.json; a freshly
-// launched TUI auto-attaches the open session for the workdir and replays it.
+// daemon now persists each turn to ~/.vix/threads/open/<id>.json; a freshly
+// launched TUI auto-attaches the open thread for the workdir and replays it.
 //
 // T1.8 · asserts disk (record written) + screen (conversation replayed after
 // restart).
 func TestConversationSurvivesDaemonRestart(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
-		Category:    "session",
-		Subcategory: "session.persistence",
+		Category:    "thread",
+		Subcategory: "thread.persistence",
 		Description: "a conversation is replayed after the daemon restarts (#22)",
 		Wire:        harness.WireMessages,
 	})
@@ -34,10 +34,10 @@ func TestConversationSurvivesDaemonRestart(t *testing.T) {
 	h.UI.WaitStable(300 * time.Millisecond)
 	h.UI.Shot("before-restart")
 
-	// Disk: the open session record exists before we restart.
-	openDir := h.HomePath(".vix", "sessions", "open")
+	// Disk: the open thread record exists before we restart.
+	openDir := h.HomePath(".vix", "threads", "open")
 	if entries, err := os.ReadDir(openDir); err != nil || len(entries) == 0 {
-		t.Fatalf("no persisted session record under %s (err=%v)", openDir, err)
+		t.Fatalf("no persisted thread record under %s (err=%v)", openDir, err)
 	}
 
 	// Restart the whole stack on the same HOME + socket.
@@ -45,7 +45,7 @@ func TestConversationSurvivesDaemonRestart(t *testing.T) {
 	h.UI.WaitStable(700 * time.Millisecond)
 	h.UI.Shot("after-restart")
 
-	// Screen: the freshly launched TUI auto-attached the open session and
+	// Screen: the freshly launched TUI auto-attached the open thread and
 	// replayed the prior turn.
 	h.UI.WaitFor("Acknowledged: the number is 42.")
 	if !h.UI.Contains("please remember the number 42") {
@@ -55,9 +55,9 @@ func TestConversationSurvivesDaemonRestart(t *testing.T) {
 
 // TestReadGateSurvivesDaemonRestart guards the read-gate rebuild: the
 // edit_file/edit_minified_file gate is backed by an in-memory "files read this
-// session" set that persistence does not carry. Before the fix, a file read in
-// one session but edited after a daemon restart was wrongly blocked with
-// "has not been read in this session yet", because the restored session started
+// thread" set that persistence does not carry. Before the fix, a file read in
+// one thread but edited after a daemon restart was wrongly blocked with
+// "has not been read in this thread yet", because the restored thread started
 // with an empty read set. The daemon now rebuilds that set from the restored
 // message history, so an edit on a previously-read file proceeds.
 //
@@ -65,8 +65,8 @@ func TestConversationSurvivesDaemonRestart(t *testing.T) {
 // (2) disk reflects the applied edit.
 func TestReadGateSurvivesDaemonRestart(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
-		Category:    "session",
-		Subcategory: "session.persistence",
+		Category:    "thread",
+		Subcategory: "thread.persistence",
 		Description: "an edit on a file read before a daemon restart is not blocked by the read gate",
 		Wire:        harness.WireMessages,
 	})
@@ -74,7 +74,7 @@ func TestReadGateSurvivesDaemonRestart(t *testing.T) {
 	h.UI.WaitStable(400 * time.Millisecond)
 
 	// Turn 1 (before restart): the model reads the file. This marks it read in
-	// the session's in-memory set and the turn is persisted to disk.
+	// the thread's in-memory set and the turn is persisted to disk.
 	h.Mock.Enqueue(
 		harness.ToolUse("read_file", `{"path":"gate.txt"}`),
 		harness.Text("Read gate.txt."),
@@ -102,7 +102,7 @@ func TestReadGateSurvivesDaemonRestart(t *testing.T) {
 	h.UI.ResolveToolPrompts("Edited gate.txt.")
 
 	// Wire: the gate must not have blocked the edit.
-	if anyToolResultContains(h, "has not been read in this session yet") {
+	if anyToolResultContains(h, "has not been read in this thread yet") {
 		t.Fatalf("edit was blocked by the read gate after restart; screen:\n%s", h.UI.Snapshot())
 	}
 	// Disk: the edit was applied.

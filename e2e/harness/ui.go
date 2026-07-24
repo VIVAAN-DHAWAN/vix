@@ -88,7 +88,7 @@ func (u *UI) close() {
 func (u *UI) waitReady() {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
-		if u.Contains("Sessions") && u.Contains("Workspace") {
+		if u.Contains("Threads") && u.Contains("Workspace") {
 			select {
 			case <-u.h.ctx.Done():
 			case <-time.After(300 * time.Millisecond):

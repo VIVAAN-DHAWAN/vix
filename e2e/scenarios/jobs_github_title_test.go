@@ -7,7 +7,7 @@ import (
 	"github.com/get-vix/vix/e2e/harness"
 )
 
-// These scenarios pin the per-item session title for successful GitHub triage
+// These scenarios pin the per-item thread title for successful GitHub triage
 // and review job runs: the daemon parses the run's deterministic findings
 // header ("Triaging issue #N: <title>" / "Reviewing pull request #N: <title>")
 // into a title of the form "[owner/repo] <job action> #N - <first six words>".
@@ -51,11 +51,11 @@ const reviewTitleJobSpec = `{
   }
 }`
 
-// TestJobTriageSessionTitle fires a triage-style job whose agent emits the
-// deterministic issue header and asserts the persisted session title uses the
+// TestJobTriageThreadTitle fires a triage-style job whose agent emits the
+// deterministic issue header and asserts the persisted thread title uses the
 // per-item "[repo] <action> #N - <title>" form (long title trimmed to six
 // words with an ellipsis).
-func TestJobTriageSessionTitle(t *testing.T) {
+func TestJobTriageThreadTitle(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "jobs",
 		Subcategory: "jobs.triage_title",
@@ -100,9 +100,9 @@ func TestJobTriageSessionTitle(t *testing.T) {
 	h.UI.Shot("triage-title")
 }
 
-// TestJobReviewSessionTitle is the pull-request counterpart: the review header
+// TestJobReviewThreadTitle is the pull-request counterpart: the review header
 // yields "[repo] Review GitHub PRs #N - <title>".
-func TestJobReviewSessionTitle(t *testing.T) {
+func TestJobReviewThreadTitle(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "jobs",
 		Subcategory: "jobs.review_title",

@@ -79,7 +79,7 @@ func (h *Harness) stopDaemon() {
 type Daemon struct{ h *Harness }
 
 // Restart tears down the TUI, stops vixd, then brings both back up on the same
-// HOME + socket. A persisted ("open") session for the workdir is auto-attached
+// HOME + socket. A persisted ("open") thread for the workdir is auto-attached
 // by the freshly launched TUI, which replays the prior conversation — so
 // scenarios can prove state survives a daemon restart (issue #22). Drive at
 // least one full turn (and let it complete) before calling Restart: the daemon

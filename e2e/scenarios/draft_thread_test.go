@@ -7,16 +7,16 @@ import (
 	"github.com/get-vix/vix/e2e/harness"
 )
 
-// TestDraftSessionStartsOnFirstMessage verifies the create-on-first-message
+// TestDraftThreadStartsOnFirstMessage verifies the create-on-first-message
 // lifecycle: on launch the TUI shows a draft welcome screen (working directory +
-// Ctrl+O hint + "Draft" status) and no session is created until the user sends
-// the first message, which commits the session in the shown directory and runs
+// Ctrl+O hint + "Draft" status) and no thread is created until the user sends
+// the first message, which commits the thread in the shown directory and runs
 // the agent there.
-func TestDraftSessionStartsOnFirstMessage(t *testing.T) {
+func TestDraftThreadStartsOnFirstMessage(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
-		Category:    "session",
-		Subcategory: "session.draft",
-		Description: "launch shows a draft welcome; the first message starts the session and writes a file in the workdir",
+		Category:    "thread",
+		Subcategory: "thread.draft",
+		Description: "launch shows a draft welcome; the first message starts the thread and writes a file in the workdir",
 		Wire:        harness.WireMessages,
 	})
 
@@ -38,7 +38,7 @@ func TestDraftSessionStartsOnFirstMessage(t *testing.T) {
 	// Script the model: write a file, then confirm.
 	h.Mock.Enqueue(
 		harness.ToolUse("write_file", `{"path":"draft.txt","content":"committed"}`),
-		harness.Text("Started the session and wrote draft.txt."),
+		harness.Text("Started the thread and wrote draft.txt."),
 	)
 
 	// Sending the first message commits the draft (opens the connection) and
@@ -53,23 +53,23 @@ func TestDraftSessionStartsOnFirstMessage(t *testing.T) {
 	if got := string(h.FS.Read("draft.txt")); got != "committed" {
 		t.Fatalf("draft.txt on disk = %q, want %q", got, "committed")
 	}
-	// Once committed the session is live: the Sessions tab lists it with a real
-	// session id instead of the "connecting…" placeholder shown for drafts.
+	// Once committed the thread is live: the Threads tab lists it with a real
+	// thread id instead of the "connecting…" placeholder shown for drafts.
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
 	if h.UI.Contains("connecting…") {
-		t.Fatalf("session still shows as connecting after the first message; screen:\n%s", h.UI.Snapshot())
+		t.Fatalf("thread still shows as connecting after the first message; screen:\n%s", h.UI.Snapshot())
 	}
 }
 
 // TestDraftDirectoryPicker verifies the Ctrl+O working-directory picker on a
-// draft session: navigating into a subdirectory and committing there makes the
+// draft thread: navigating into a subdirectory and committing there makes the
 // agent operate in that directory (a written file lands under the subdir).
 func TestDraftDirectoryPicker(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
-		Category:    "session",
-		Subcategory: "session.draft_picker",
-		Description: "Ctrl+O picks a subdirectory as the working directory before the session starts",
+		Category:    "thread",
+		Subcategory: "thread.draft_picker",
+		Description: "Ctrl+O picks a subdirectory as the working directory before the thread starts",
 		Wire:        harness.WireMessages,
 		// Seed one subdirectory so the dirs-only picker has a deterministic,
 		// single, non-hidden entry to select.
@@ -102,6 +102,6 @@ func TestDraftDirectoryPicker(t *testing.T) {
 		t.Fatalf("sub/out.txt on disk = %q, want %q (workdir root = %q)", got, "in-sub", h.FS.Read("out.txt"))
 	}
 	if h.FS.Exists("out.txt") {
-		t.Fatalf("out.txt should NOT be in the workdir root — the session cwd should be sub/")
+		t.Fatalf("out.txt should NOT be in the workdir root — the thread cwd should be sub/")
 	}
 }

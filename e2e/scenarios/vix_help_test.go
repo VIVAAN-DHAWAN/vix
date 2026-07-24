@@ -29,12 +29,12 @@ func TestVixHelpSkillOfflineFallback(t *testing.T) {
 	h.Mock.Enqueue(
 		harness.ToolUse("skill", `{"name":"vix-help"}`),
 		harness.ToolUse("read_file", `{"path":"`+manualPath+`","reason":"answer a question about vix from the bundled manual"}`),
-		harness.Text("F1 opens the Sessions tab."),
+		harness.Text("F1 opens the Threads tab."),
 	)
 
 	h.UI.Type("what does the F1 key do in vix?")
 	h.UI.Enter()
-	h.UI.ResolveToolPrompts("F1 opens the Sessions tab.")
+	h.UI.ResolveToolPrompts("F1 opens the Threads tab.")
 
 	// The skill body loaded and pointed at its bundled manual fallback.
 	if !anyToolResultContains(h, "vix-manual.md") {

@@ -26,7 +26,7 @@ import (
 // collapsible implementation view.
 type Meta struct {
 	Category    string // top-level group, e.g. "ui", "files", "sandbox"
-	Subcategory string // e.g. "ui.sessions"
+	Subcategory string // e.g. "ui.threads"
 	Description string // one-line: what this test verifies
 	Wire        Wire   // which LLM wire dialect to exercise (default Messages)
 	Variant     string // optional extra discriminator for matrix runs
@@ -98,7 +98,7 @@ type config struct {
 	settings       string   // raw settings.json content (optional)
 	providers      string   // raw providers.json content (optional)
 	denyPaths      []string // workdir-relative paths to add to deny_list (expanded to abs)
-	model          string   // session model spec written to state.json (optional)
+	model          string   // thread model spec written to state.json (optional)
 	fixture        string   // dir copied into the workdir
 	homeFiles      []homeFile
 	workdirFiles   []homeFile
@@ -148,8 +148,8 @@ func WithDenyPath(rel ...string) Option {
 	return func(c *config) { c.denyPaths = append(c.denyPaths, rel...) }
 }
 
-// WithModel pins the session model spec (e.g. "openai/gpt-4o") by writing
-// ~/.vix/state.json, which the daemon reads when resolving the session model.
+// WithModel pins the thread model spec (e.g. "openai/gpt-4o") by writing
+// ~/.vix/state.json, which the daemon reads when resolving the thread model.
 // Used by the wire matrix to route a scenario through a given provider's wire.
 func WithModel(spec string) Option { return func(c *config) { c.model = spec } }
 
@@ -265,8 +265,8 @@ func Start(t *testing.T, meta Meta, opts ...Option) *Harness {
 }
 
 // HomePath resolves a path under the per-test HOME (e.g.
-// ".vix/sessions/open"). Lets a scenario inspect daemon-written state that
-// lives outside the workdir, such as persisted session records.
+// ".vix/threads/open"). Lets a scenario inspect daemon-written state that
+// lives outside the workdir, such as persisted thread records.
 func (h *Harness) HomePath(rel ...string) string {
 	return filepath.Join(append([]string{h.home}, rel...)...)
 }

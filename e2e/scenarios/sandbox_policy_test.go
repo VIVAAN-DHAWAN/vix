@@ -14,7 +14,7 @@ import (
 // guarantees. They assert on the wire (a secret never reaches the model) and on
 // the tool_result fed back (the refusal), so they're deterministic and
 // independent of TUI rendering. All run on the Messages wire (policy is
-// wire-agnostic). Deny enforcement lives at session.go:1227 (checkDenyList) and
+// wire-agnostic). Deny enforcement lives at thread.go:1227 (checkDenyList) and
 // tools.go:1337/1397 (filterOutputAgainstDeny).
 
 // requestsLeak reports whether any request body carried the sentinel — the core

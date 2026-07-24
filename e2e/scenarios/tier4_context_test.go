@@ -27,7 +27,7 @@ func requestBodyForUser(h *harness.Harness, userText string) (string, bool) {
 // summary message. claude-sonnet-4-6 has a 1,000,000-token window and the
 // default threshold is 0.8, so a reported 900k-token prompt trips it.
 //
-// Kept at two pre-trigger turns so the session stays under the 3-end-turn
+// Kept at two pre-trigger turns so the thread stays under the 3-end-turn
 // auto-title call (which would otherwise issue a stray LLM request). Asserted on
 // the wire. context.auto_compact
 func TestAutoCompactionTriggers(t *testing.T) {

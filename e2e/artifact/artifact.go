@@ -45,7 +45,7 @@ type Screenshot struct {
 type Result struct {
 	// Identity / navigation.
 	Category    string `json:"category"`    // top-level group, e.g. "ui"
-	Subcategory string `json:"subcategory"` // e.g. "ui.sessions"
+	Subcategory string `json:"subcategory"` // e.g. "ui.threads"
 	Name        string `json:"name"`        // Go test func name
 	Description string `json:"description"` // one-line, author-supplied
 	Wire        string `json:"wire"`        // "messages" | "responses" | "chat_completions"

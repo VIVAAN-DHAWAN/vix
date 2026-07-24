@@ -13,14 +13,14 @@ import (
 
 // This scenario exercises the daemon-side behaviour of a scheduled GitHub-plan
 // style job run end to end: it fires an inline-workflow job via `vix job run`,
-// then asserts the persisted Vix-initiated session record reflects the three
+// then asserts the persisted Vix-initiated thread record reflects the three
 // fixes —
 //
-//   - the session is titled after the item the run picked, parsed from the
+//   - the thread is titled after the item the run picked, parsed from the
 //     findings' deterministic header ("Hi, I investigated … #N — <title> …");
 //   - the FULL working transcript is kept (the agent's tool_use/tool_result
 //     turns, not a text-only summary), so a follow-up turn is grounded;
-//   - a finished inline-workflow run drops back to chat mode (session_mode ==
+//   - a finished inline-workflow run drops back to chat mode (thread_mode ==
 //     "chat", no active_workflow), so reopening it never warns that the
 //     transient workflow "no longer exists".
 //
@@ -60,7 +60,7 @@ type planRunRecord struct {
 	Origin         string `json:"origin"`
 	JobStatus      string `json:"job_status"`
 	Title          string `json:"title"`
-	SessionMode    string `json:"session_mode"`
+	ThreadMode     string `json:"session_mode"`
 	ActiveWorkflow string `json:"active_workflow"`
 	Trigger        struct {
 		Ref string `json:"ref"`
@@ -79,7 +79,7 @@ type planRunRecord struct {
 }
 
 func planRunFor(h *harness.Harness, ref string) (planRunRecord, bool) {
-	dir := h.HomePath(".vix/sessions/open")
+	dir := h.HomePath(".vix/threads/open")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return planRunRecord{}, false
@@ -114,12 +114,12 @@ func (r planRunRecord) hasToolBlocks() bool {
 	return false
 }
 
-// TestJobPlanSessionShape fires the inline-workflow plan job and asserts the
+// TestJobPlanThreadShape fires the inline-workflow plan job and asserts the
 // per-item title, the preserved tool transcript, and the chat-mode reset.
-func TestJobPlanSessionShape(t *testing.T) {
+func TestJobPlanThreadShape(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "jobs",
-		Subcategory: "jobs.plan_session",
+		Subcategory: "jobs.plan_thread",
 		Description: "a GitHub-plan job run is titled per item, keeps its full tool transcript, and reopens in chat mode",
 		Wire:        harness.WireMessages,
 	},
@@ -128,7 +128,7 @@ func TestJobPlanSessionShape(t *testing.T) {
 	)
 
 	// The plan step makes one real tool call, then emits the framed findings
-	// whose H1 title and header line the daemon parses into the session title.
+	// whose H1 title and header line the daemon parses into the thread title.
 	h.Mock.Enqueue(
 		harness.ToolUse("bash", `{"command":"echo investigating"}`),
 		harness.Text("# [Plan GitHub issues (get-vix/vix)] Addressing issue #29 — ANTHROPIC_BASE_URL not resolved from .env files\n\nHi, I investigated issue #29 — ANTHROPIC_BASE_URL not resolved from .env files — on GitHub. Here are my findings:\n\nhttps://github.com/get-vix/vix/issues/29\n\n**Summary**\nThe base URL isn't read from .env files.\n\n**My take**\nLegit, actionable bug.\n\n**Plan**\n1. Resolve ANTHROPIC_BASE_URL during config loading."),
@@ -139,9 +139,9 @@ func TestJobPlanSessionShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vix job run failed: %v\n%s", err, out)
 	}
-	sessionID := strings.TrimSpace(out)
-	if sessionID == "" {
-		t.Fatalf("expected a session id on stdout, got empty")
+	threadID := strings.TrimSpace(out)
+	if threadID == "" {
+		t.Fatalf("expected a thread id on stdout, got empty")
 	}
 
 	var rec planRunRecord
@@ -169,17 +169,17 @@ func TestJobPlanSessionShape(t *testing.T) {
 		t.Errorf("expected tool_use/tool_result blocks in the persisted transcript; messages=%+v", rec.Messages)
 	}
 	// Fix 3: a finished inline-workflow run reopens in chat mode.
-	if rec.SessionMode != "chat" {
-		t.Errorf("session_mode = %q, want chat", rec.SessionMode)
+	if rec.ThreadMode != "chat" {
+		t.Errorf("thread_mode = %q, want chat", rec.ThreadMode)
 	}
 	if rec.ActiveWorkflow != "" {
 		t.Errorf("active_workflow = %q, want empty after a finished inline run", rec.ActiveWorkflow)
 	}
 
-	// The Sessions tab renders the bare title (no "<job-id> · ok" prefix).
+	// The Threads tab renders the bare title (no "<job-id> · ok" prefix).
 	h.UI.Key("f1")
 	h.UI.WaitStable(500 * time.Millisecond)
-	h.UI.Shot("plan-session")
+	h.UI.Shot("plan-thread")
 }
 
 // planFailJobSpec is a single-agent inline-workflow job whose agent step is
@@ -206,18 +206,18 @@ const planFailJobSpec = `{
   }
 }`
 
-// TestJobPlanSessionFailureReplaysRetries drives the plan job's agent step into
+// TestJobPlanThreadFailureReplaysRetries drives the plan job's agent step into
 // a terminal API failure after two retryable overloads. It proves a *failed*
 // scheduled run behaves like a successful one for the reader: the full
 // transcript (the agent's tool_use/tool_result before it died) plus the retry
-// notices are persisted, the session drops to chat mode (so reopening never
+// notices are persisted, the thread drops to chat mode (so reopening never
 // warns the inline workflow "no longer exists"), and opening it replays the
 // conversation mid-flight — the same "API overloaded — retrying … (attempt
 // N/10)" lines an interactive workflow shows live.
-func TestJobPlanSessionFailureReplaysRetries(t *testing.T) {
+func TestJobPlanThreadFailureReplaysRetries(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "jobs",
-		Subcategory: "jobs.plan_session_failure",
+		Subcategory: "jobs.plan_thread_failure",
 		Description: "a failed plan job keeps its full transcript + retry notices, reopens in chat mode, and replays the mid-flight conversation",
 		Wire:        harness.WireMessages,
 	},
@@ -256,8 +256,8 @@ func TestJobPlanSessionFailureReplaysRetries(t *testing.T) {
 		t.Fatalf("job status = %q, want error\n%s", rec.JobStatus, h.Daemon.LogTail(120))
 	}
 	// A failed inline run still drops to chat mode — no "no longer exists".
-	if rec.SessionMode != "chat" {
-		t.Errorf("session_mode = %q, want chat after a failed inline run", rec.SessionMode)
+	if rec.ThreadMode != "chat" {
+		t.Errorf("thread_mode = %q, want chat after a failed inline run", rec.ThreadMode)
 	}
 	if rec.ActiveWorkflow != "" {
 		t.Errorf("active_workflow = %q, want empty after a failed inline run", rec.ActiveWorkflow)

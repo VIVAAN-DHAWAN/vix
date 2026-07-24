@@ -51,7 +51,7 @@ func TestFunctionsWithTelemetryBlocked(t *testing.T) {
 	if got := len(h.Mock.Requests()); got < 1 {
 		t.Fatalf("expected the turn to reach the model, got %d requests", got)
 	}
-	// Screen: the final answer rendered — the session is fully functional.
+	// Screen: the final answer rendered — the thread is fully functional.
 	if !h.UI.Contains("while telemetry was disabled") {
 		t.Fatalf("final answer not rendered; screen:\n%s", h.UI.Snapshot())
 	}

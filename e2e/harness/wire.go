@@ -5,7 +5,7 @@ import "testing"
 // AllWires is the set of provider wire dialects the mock can serve.
 var AllWires = []Wire{WireMessages, WireResponses, WireChatCompletions}
 
-// wireModel maps a wire to a model spec that routes a session through it. The
+// wireModel maps a wire to a model spec that routes a thread through it. The
 // matching provider's base URL is pointed at the mock by daemonEnv:
 //   - messages       → anthropic (daemon default; no spec needed)
 //   - responses      → openai (OPENAI_BASE_URL → mock)
@@ -22,7 +22,7 @@ func wireModel(w Wire) string {
 	}
 }
 
-// WireOptions returns the Start options that route a session through wire w.
+// WireOptions returns the Start options that route a thread through wire w.
 func WireOptions(w Wire) []Option {
 	if spec := wireModel(w); spec != "" {
 		return []Option{WithModel(spec)}

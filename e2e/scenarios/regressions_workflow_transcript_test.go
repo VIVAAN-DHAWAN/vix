@@ -10,11 +10,11 @@ import (
 
 // TestWorkflowOutputJoinsTranscript is an acceptance spec for the
 // "Workflow → transcript" bridge: when a workflow run produces visible agent
-// output, that output is mirrored into the session's chat transcript
+// output, that output is mirrored into the thread's chat transcript
 // (s.messages). Two consequences are asserted:
 //
 //  1. Persistence/replay — after a daemon restart the finished run's output is
-//     still on screen (it was saved to the session record, not merely streamed).
+//     still on screen (it was saved to the thread record, not merely streamed).
 //  2. Continuation — a follow-up chat message carries the workflow output in the
 //     request history, so the model can keep talking about what it produced.
 //

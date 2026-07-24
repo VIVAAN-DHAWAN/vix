@@ -7,7 +7,7 @@ import (
 	"github.com/get-vix/vix/e2e/harness"
 )
 
-// recordJSON is a minimal persisted open session record. Only the fields the
+// recordJSON is a minimal persisted open thread record. Only the fields the
 // welcome screen's recent-directories aggregation reads (cwd, timestamps,
 // origin) matter; the rest can be omitted.
 func recordJSON(id, cwd, last string) string {
@@ -17,27 +17,27 @@ func recordJSON(id, cwd, last string) string {
 }
 
 // TestWelcomeRecentDirectorySelection verifies the welcome screen's recent-
-// directories list: pre-seeded open session records in two directories surface
+// directories list: pre-seeded open thread records in two directories surface
 // as a ranked "Recent" list on the draft welcome; focusing the welcome area
 // (Tab) and pressing Down + Enter switches the draft's working directory to the
 // highlighted entry, so a committed write lands there.
 func TestWelcomeRecentDirectorySelection(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
-		Category:    "session",
-		Subcategory: "session.recent_dirs",
-		Description: "welcome lists recent working directories; Tab+Down+Enter selects one and the session commits there",
+		Category:    "thread",
+		Subcategory: "thread.recent_dirs",
+		Description: "welcome lists recent working directories; Tab+Down+Enter selects one and the thread commits there",
 		Wire:        harness.WireMessages,
 	},
 		// Two real subdirectories to serve as candidate working directories.
 		harness.WithWorkdirFile("dirA/keep.txt", "seed"),
 		harness.WithWorkdirFile("dirB/keep.txt", "seed"),
-		// Open session records rooted at those dirs. dirA has two sessions (higher
+		// Open thread records rooted at those dirs. dirA has two threads (higher
 		// count → ranked first, index 0); dirB has one (index 1).
-		harness.WithHomeFile(".vix/sessions/open/rec-a1.json",
+		harness.WithHomeFile(".vix/threads/open/rec-a1.json",
 			recordJSON("rec-a1", "{{WORKDIR}}/dirA", "2024-01-03T00:00:00Z")),
-		harness.WithHomeFile(".vix/sessions/open/rec-a2.json",
+		harness.WithHomeFile(".vix/threads/open/rec-a2.json",
 			recordJSON("rec-a2", "{{WORKDIR}}/dirA", "2024-01-02T00:00:00Z")),
-		harness.WithHomeFile(".vix/sessions/open/rec-b.json",
+		harness.WithHomeFile(".vix/threads/open/rec-b.json",
 			recordJSON("rec-b", "{{WORKDIR}}/dirB", "2024-01-01T00:00:00Z")),
 	)
 
@@ -77,7 +77,7 @@ func TestWelcomeRecentDirectorySelection(t *testing.T) {
 		t.Fatalf("dirB/note.txt = %q, want %q (workdir selection did not take effect)", got, "in-dirB")
 	}
 	if h.FS.Exists("note.txt") {
-		t.Fatal("note.txt should not be in the launch cwd — the session cwd should be dirB")
+		t.Fatal("note.txt should not be in the launch cwd — the thread cwd should be dirB")
 	}
 	if h.FS.Exists("dirA/note.txt") {
 		t.Fatal("note.txt should not be in dirA — the selected directory was dirB")

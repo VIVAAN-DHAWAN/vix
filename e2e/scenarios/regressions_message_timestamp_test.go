@@ -26,8 +26,8 @@ import (
 // without the frozen-clock determinism constraint.
 func TestMessageTimestampSurvivesDaemonRestart(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
-		Category:    "session",
-		Subcategory: "session.persistence",
+		Category:    "thread",
+		Subcategory: "thread.persistence",
 		Description: "per-message send timestamps are persisted and replayed after a daemon restart",
 		Wire:        harness.WireMessages,
 	})
@@ -49,14 +49,14 @@ func TestMessageTimestampSurvivesDaemonRestart(t *testing.T) {
 	}
 
 	// Disk: the persisted user turn carries a real, non-zero timestamp.
-	openDir := h.HomePath(".vix", "sessions", "open")
+	openDir := h.HomePath(".vix", "threads", "open")
 	entries, err := os.ReadDir(openDir)
 	if err != nil || len(entries) == 0 {
-		t.Fatalf("no persisted session record under %s (err=%v)", openDir, err)
+		t.Fatalf("no persisted thread record under %s (err=%v)", openDir, err)
 	}
 	raw, err := os.ReadFile(filepath.Join(openDir, entries[0].Name()))
 	if err != nil {
-		t.Fatalf("read session record: %v", err)
+		t.Fatalf("read thread record: %v", err)
 	}
 	var rec struct {
 		Messages []struct {
@@ -65,7 +65,7 @@ func TestMessageTimestampSurvivesDaemonRestart(t *testing.T) {
 		} `json:"messages"`
 	}
 	if err := json.Unmarshal(raw, &rec); err != nil {
-		t.Fatalf("unmarshal session record: %v\n%s", err, raw)
+		t.Fatalf("unmarshal thread record: %v\n%s", err, raw)
 	}
 	var sawUserTimestamp bool
 	for _, m := range rec.Messages {

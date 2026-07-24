@@ -14,7 +14,7 @@ import (
 //		detect → deny | fetch → nag | select → detail → plan → mark_done
 //
 //	  - gh signed in   → fetch via `gh`, then `select`/`detail`/`plan` (the plan
-//	    appears in the session; nothing is posted back to GitHub).
+//	    appears in the thread; nothing is posted back to GitHub).
 //	  - gh missing/unauth but the public API reachable → fetch via `curl`, a `nag`
 //	    reminding the user to install + `gh auth login`, then select/detail/plan.
 //	  - no access at all (or a missing coreutil: grep/sort/cut/mv) → `deny` prints
@@ -29,7 +29,7 @@ import (
 // freshly fetched items (append new opens as "todo", drop closed/merged), then
 // claims EXACTLY ONE "todo" (flipping it to "doing") and prints its URL — or
 // "NO_TODO", in which case the graph ends before `plan`, so the run is skipped
-// with no session. `detail` fetches just that one item; `plan` investigates it
+// with no thread. `detail` fetches just that one item; `plan` investigates it
 // (write tools denied — it never touches the tracker); `mark_done` flips the
 // item to "done" whether the agent succeeded (next_steps) or failed (on_error),
 // so a failed run still marks the item addressed and it is never retried in a
@@ -38,15 +38,15 @@ import (
 //
 // Skipped: scheduled-job runs execute in the daemon's scheduler, not through the
 // TUI, and the harness has no job-run primitive (no /api/jobs driver, no way to
-// fire a trigger and read back the Vix-initiated session). The branch logic is
+// fire a trigger and read back the Vix-initiated thread). The branch logic is
 // covered today by the builder's vitest unit tests
 // (internal/daemon/web/source/src/data/jobWorkflows.test.ts), and $(workflow.dir)
 // resolution + the tracker-file-aware watcher by the workflow engine's Go tests.
-// Enable this once the harness can create + run a job and surface its session
+// Enable this once the harness can create + run a job and surface its thread
 // transcript.
 //
 // When enabled it proves, per branch, that the right path runs and the plan (or
-// error/nag) lands in the run's session, and that the tracker file under
+// error/nag) lands in the run's thread, and that the tracker file under
 // $(workflow.dir) is created/updated/trimmed across consecutive runs. The body
 // below seeds the gh/curl shims the three branches switch on; the trigger +
 // transcript read-back is the missing piece.
@@ -54,10 +54,10 @@ func TestGithubPlanJobAccessBranches(t *testing.T) {
 	meta := harness.Meta{
 		Category:    "jobs",
 		Subcategory: "jobs.github_plan",
-		Description: "the GitHub plan job picks gh/API/none, deterministically claims one todo (skipping with no session when there's none), shows its framed findings in a per-item-titled session, and tracks items in $(workflow.dir)/tracker.tsv",
+		Description: "the GitHub plan job picks gh/API/none, deterministically claims one todo (skipping with no thread when there's none), shows its framed findings in a per-item-titled thread, and tracks items in $(workflow.dir)/tracker.tsv",
 		Wire:        harness.WireMessages,
 	}
-	harness.SkipScenario(t, meta, "branch matrix needs the frontend-generated githubIssuePlanWorkflow JSON + gh/curl shims; the daemon-side title/transcript/chat-mode are covered live by jobs.plan_session (jobs_plan_session_test.go)")
+	harness.SkipScenario(t, meta, "branch matrix needs the frontend-generated githubIssuePlanWorkflow JSON + gh/curl shims; the daemon-side title/transcript/chat-mode are covered live by jobs.plan_thread (jobs_plan_thread_test.go)")
 
 	// "no access" shim: gh absent (not installed) and curl always fails — the
 	// detect step must resolve to `none` and route to `deny`.
@@ -74,11 +74,11 @@ func TestGithubPlanJobAccessBranches(t *testing.T) {
 
 	// The plan step (only reached on the gh/api branches) streams the framed
 	// findings, which open with the deterministic header the daemon parses to
-	// title the session.
+	// title the thread.
 	h.Mock.Enqueue(harness.Text("Hi, I investigated issue #29 — ANTHROPIC_BASE_URL not resolved from .env files — on GitHub. Here are my findings:\n\nhttps://github.com/get-vix/vix/issues/29\n\n**Summary**\nThe base URL isn't read from .env.\n\n**My take**\nLegit, actionable bug.\n\n**Plan**\n1. Resolve ANTHROPIC_BASE_URL in config loading."))
 
 	// TODO(jobs-harness): create the job (inline githubIssuePlanWorkflow) and
-	// fire its trigger, then assert the resulting Vix-initiated session:
+	// fire its trigger, then assert the resulting Vix-initiated thread:
 	//   - for the no-access shims above, shows the deny error ("can't reach
 	//     GitHub"); for an api shim, the nag + framed findings; for a gh shim,
 	//     the framed findings only;

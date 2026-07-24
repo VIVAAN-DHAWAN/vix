@@ -87,7 +87,7 @@ const recentRunsSpec = `{
 
 // TestJobsRecentRunsHistory verifies that after a job runs, the run is appended
 // to the job's recent-run history (state.json "recent_runs"), carrying the run
-// status and the session id.
+// status and the thread id.
 func TestJobsRecentRunsHistory(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "jobs",

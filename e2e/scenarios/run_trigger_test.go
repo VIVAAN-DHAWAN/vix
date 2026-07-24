@@ -15,7 +15,7 @@ import (
 // immediately by id, bypassing the schedule / event that would normally trigger
 // them: `vix job run <id>` and `vix hook trigger <id>`. Each drives the real
 // vix binary as a one-shot subcommand against the test's daemon (via
-// h.RunCLI), then asserts the run lands as a persisted Vix-initiated session.
+// h.RunCLI), then asserts the run lands as a persisted Vix-initiated thread.
 
 func runTriggerMeta(sub, desc string) harness.Meta {
 	return harness.Meta{
@@ -36,10 +36,10 @@ type vixRunRecord struct {
 	} `json:"trigger"`
 }
 
-// vixRunsFor returns the persisted Vix-initiated session records whose trigger
+// vixRunsFor returns the persisted Vix-initiated thread records whose trigger
 // ref matches the given id (a job or hook id).
 func vixRunsFor(h *harness.Harness, ref string) []vixRunRecord {
-	dir := h.HomePath(".vix/sessions/open")
+	dir := h.HomePath(".vix/threads/open")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -77,7 +77,7 @@ const onDemandJobSpec = `{
 }`
 
 // TestJobRunCLI verifies `vix job run <id>` fires a future-dated job on demand:
-// it prints the run's session id and the run lands as a Vix-initiated record.
+// it prints the run's thread id and the run lands as a Vix-initiated record.
 func TestJobRunCLI(t *testing.T) {
 	h := harness.Start(t, runTriggerMeta("cli.job_run", "`vix job run <id>` fires a future-dated job on demand"),
 		harness.WithEnv("VIX_DISABLE_JOBS", "0"),
@@ -92,17 +92,17 @@ func TestJobRunCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vix job run failed: %v\n%s", err, out)
 	}
-	sessionID := strings.TrimSpace(out)
-	if sessionID == "" {
-		t.Fatalf("expected a session id on stdout, got empty")
+	threadID := strings.TrimSpace(out)
+	if threadID == "" {
+		t.Fatalf("expected a thread id on stdout, got empty")
 	}
 
 	if !pollUntil(20*time.Second, func() bool { return len(vixRunsFor(h, "e2e-ondemand")) == 1 }) {
 		t.Fatalf("on-demand job run not persisted; stdout=%q", out)
 	}
 	rec := vixRunsFor(h, "e2e-ondemand")[0]
-	if rec.ID != sessionID {
-		t.Fatalf("persisted run id %q != printed id %q", rec.ID, sessionID)
+	if rec.ID != threadID {
+		t.Fatalf("persisted run id %q != printed id %q", rec.ID, threadID)
 	}
 	if rec.JobStatus != "ok" {
 		t.Fatalf("job run status = %q, want ok", rec.JobStatus)
@@ -125,7 +125,7 @@ const onDemandHookSpec = `{
 }`
 
 // TestHookTriggerCLI verifies `vix hook trigger <id>` fires a disabled hook on
-// demand: it prints the run's session id and the run lands as a Vix-initiated
+// demand: it prints the run's thread id and the run lands as a Vix-initiated
 // record stamped with a "hook" trigger.
 func TestHookTriggerCLI(t *testing.T) {
 	h := harness.Start(t, runTriggerMeta("cli.hook_trigger", "`vix hook trigger <id>` fires a disabled hook on demand"),
@@ -140,17 +140,17 @@ func TestHookTriggerCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vix hook trigger failed: %v\n%s", err, out)
 	}
-	sessionID := strings.TrimSpace(out)
-	if sessionID == "" {
-		t.Fatalf("expected a session id on stdout, got empty")
+	threadID := strings.TrimSpace(out)
+	if threadID == "" {
+		t.Fatalf("expected a thread id on stdout, got empty")
 	}
 
 	if !pollUntil(20*time.Second, func() bool { return len(vixRunsFor(h, "e2e-hook")) == 1 }) {
 		t.Fatalf("triggered hook run not persisted; stdout=%q", out)
 	}
 	rec := vixRunsFor(h, "e2e-hook")[0]
-	if rec.ID != sessionID {
-		t.Fatalf("persisted run id %q != printed id %q", rec.ID, sessionID)
+	if rec.ID != threadID {
+		t.Fatalf("persisted run id %q != printed id %q", rec.ID, threadID)
 	}
 	if rec.Trigger.Type != "hook" {
 		t.Fatalf("trigger type = %q, want hook", rec.Trigger.Type)
