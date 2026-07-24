@@ -42,7 +42,7 @@ Sleek, Fast and Token Efficient AI Coding Agent
 
 **Preamble**: this is by no means a scientific approach. This is merely an observation, that we've been able to observe over and over again.
 
-Vix plan mode was evaluated across 7 real coding scenarios **using the exact same prompt as claude code** (cf. this [repo](https://github.com/Piebald-AI/claude-code-system-prompts/tree/main)). The goal was to measure time and cost in different real-life situations like starting a project from scratch, fixing a bug in an open source library (serde-rs), adding a feature to a massive codebase, refactor file based on tests, ask for test coverage above 80% etc.
+Vix plan mode was evaluated across 7 real coding scenarios **using the exact same prompt as claude code** (cf. this [repo](https://github.com/Piebald-AI/claude-code-system-prompts/tree/main)). The goal was to measure time and cost in different real-life situations like starting a project from scratch, fixing a bug in an open source library (serde-rs), adding a feature to a massive codebase, refactoring a file based on tests, asking for test coverage above 80%, etc.
 
 Here are the results:
 
@@ -93,7 +93,7 @@ Start the daemon:
 vixd
 ```
 
-and then you can start as many instances you want, each of them are isolated:
+and then you can start as many instances as you want, each of which is isolated:
 
 ```bash
 vix
