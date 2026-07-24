@@ -1,6 +1,6 @@
 ---
 name: vix-help
-description: Answer questions about vix itself — the TUI (keybindings, tabs, sessions, slash commands), configuration (settings.json, deny lists, permissions), agents & tools, models & providers, jobs, hooks, skills, workflows, MCP servers, the brain/code intelligence, headless/CLI usage, and installation. Use whenever the user asks how vix works or how to configure or operate it, instead of guessing or browsing.
+description: Answer questions about vix itself — the TUI (keybindings, tabs, threads, slash commands), configuration (settings.json, deny lists, permissions), agents & tools, models & providers, jobs, hooks, skills, workflows, MCP servers, the brain/code intelligence, headless/CLI usage, and installation. Use whenever the user asks how vix works or how to configure or operate it, instead of guessing or browsing.
 ---
 
 # Vix help

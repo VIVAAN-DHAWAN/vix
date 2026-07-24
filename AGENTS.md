@@ -15,7 +15,7 @@ cmd/
 internal/
   agent/          # Agent loop, LLM streaming, tool schemas
   config/         # API key and configuration loading
-  daemon/         # Unix socket server, session management, tool handlers
+  daemon/         # Unix socket server, thread management, tool handlers
     brain/        # Code analysis engine (scanner, parser, semantic analysis)
       lsp/        # Language server protocol integration
   headless/       # Headless mode (no TUI)
@@ -27,21 +27,21 @@ The daemon listens on a Unix socket (`/tmp/vixd.sock`). The TUI client connects 
 
 ### Instance control channel
 
-Besides per-session connections, each vix window (TUI **instance**) holds one
+Besides per-thread connections, each vix window (TUI **instance**) holds one
 long-lived `instance.register` connection to the daemon for its whole lifetime.
 This is the window's **control channel**: the daemon pushes **process-level**
-events — `sessions_changed`, `jobs_changed`, and the coordinated `quit` — to it
-**once per window**, independent of any chat session. A launch-time draft (no
-session yet) therefore still refreshes the Sessions tab's *Vix-initiated* group
-live, and windows aren't notified once per open session.
+events — `threads_changed`, `jobs_changed`, and the coordinated `quit` — to it
+**once per window**, independent of any chat thread. A launch-time draft (no
+thread yet) therefore still refreshes the Threads tab's *Vix-initiated* group
+live, and windows aren't notified once per open thread.
 
 The daemon keeps a registry of live instance connections (each drained by a
 single serialized writer goroutine) and fans these events out via
-`Server.BroadcastToInstances` (`internal/daemon/server.go`); session-scoped
-events (`job_run`/`job_done` status lines) still travel per-session via
+`Server.BroadcastToInstances` (`internal/daemon/server.go`); thread-scoped
+events (`job_run`/`job_done` status lines) still travel per-thread via
 `BroadcastEvent`. The TUI reads the channel from launch
 (`startInstanceEventLoop`, `internal/ui/model.go`) and routes events into the
-existing `fetchVixSessions` / `fetchJobsAndHooks` / quit handlers. The web-UI
+existing `fetchVixThreads` / `fetchJobsAndHooks` / quit handlers. The web-UI
 (mission-control) path is separate — it uses `notifySubscribers`, untouched.
 
 ## Development Commands
@@ -63,7 +63,7 @@ make test
 make release VERSION=v1.x.x
 
 # Run a specific test
-go test ./internal/daemon/... -run TestSessionHandlePlan -v
+go test ./internal/daemon/... -run TestThreadHandlePlan -v
 ```
 
 The web UI source (`internal/daemon/web/source/`) is a Vite + React + TypeScript
@@ -104,8 +104,8 @@ MCP (Model Context Protocol) servers are configured **home-only** under
 enabled, the opt-out default). Their tools are exposed to the agent as
 `mcp__<server>__<tool>`.
 
-Connections are **per-session**: `mcp.Pool` (`internal/daemon/mcp/pool.go`) is
-built in `Session.initBrain`, skipping disabled servers and (for URL servers)
+Connections are **per-thread**: `mcp.Pool` (`internal/daemon/mcp/pool.go`) is
+built in `Thread.initBrain`, skipping disabled servers and (for URL servers)
 deny-listed addresses.
 
 The TUI **MCP tab (F4)** lists every configured server with its transport type,
@@ -118,7 +118,7 @@ probes enabled servers on demand (`mcp.ProbeServers`, bounded timeout);
 `mcp.set_enabled` surgically edits the home `settings.json` and broadcasts
 `event.mcp_changed` so open tabs refresh. TUI wiring lives in
 `internal/ui/mcp.go` (fetch/toggle/render) and `internal/ui/model.go`
-(`TabKindMcp`, F-keys). The F-key order is Sessions F1, Workspace F2, Models F3,
+(`TabKindMcp`, F-keys). The F-key order is Threads F1, Workspace F2, Models F3,
 **MCP F4**, Jobs & Triggers F5, Settings F6.
 
 ## Scheduled jobs
@@ -127,9 +127,9 @@ vixd runs a scheduler over `~/.vix/jobs/<id>/job.json` (one subdirectory per job
 hot-reloaded; machine-written runtime state in `~/.vix/jobs/<id>/state.json` —
 one per job, sibling of `job.json`, spec/state split so user files never churn).
 Each
-run executes in an isolated headless session (plain prompt, or a workflow named
+run executes in an isolated headless thread (plain prompt, or a workflow named
 via `workflow_id` or embedded inline via `workflow` — at most one) and lands in
-the Sessions tab under "Vix-initiated".
+the Threads tab under "Vix-initiated".
 Triggers: `cron` (robfig syntax incl. `@every`) and one-shot `at`. The shipped
 `heartbeat` job reads `~/.vix/jobs/heartbeat/heartbeat.md` every 30 minutes and skips with
 zero tokens while the file is effectively empty (or the run answers
@@ -143,39 +143,39 @@ command): the agent writes job files directly and verifies via each job's
 
 `vix job run <id>` and `vix hook trigger <id>` fire a job or lifecycle hook
 immediately by id, out of band from its schedule/event. Both are sibling CLI
-verb groups to `vix daemon`/`vix session` (dispatched in `cmd/vix/main.go`
+verb groups to `vix daemon`/`vix thread` (dispatched in `cmd/vix/main.go`
 before flag parsing), talk to the daemon over the socket
 (`Client.RunJob`/`Client.TriggerHook` → `job.run`/`hook.trigger` handlers in
-`handlers.go`), and print the run's session id. The run proceeds in the
+`handlers.go`), and print the run's thread id. The run proceeds in the
 background and lands under "Vix-initiated". A manual job run records its outcome
 but **does not** reschedule or complete a one-shot (`Scheduler.RunNow` +
 the manual branch of `applyResult`); a manual hook trigger runs fire-and-forget
 regardless of mode (`Server.TriggerHook` → `fireHookAsync`). Both run even when
 the job/hook is disabled; a job run is refused only when one is already in
-flight. The run's session id is threaded through the run context
+flight. The run's thread id is threaded through the run context
 (`jobs.WithRunID`/`jobs.RunIDFromContext`) so the CLI learns it up front.
 
 ### Detecting whether `vixd` is running (sandbox caveat)
 
-When you (an AI coding agent) are working inside a live vix session, **a `vixd`
+When you (an AI coding agent) are working inside a live vix thread, **a `vixd`
 daemon is by definition already running** — it is the process serving the LLM
 turns you are responding to. Do not conclude it is dead just because you can't
 find it.
 
 The agent's `bash` tool runs inside vix's sandbox (Seatbelt on macOS, bwrap on
 Linux). From in there the **process table view is partial and inconsistent**: it
-does not reliably show the host process that launched the session, even though it
+does not reliably show the host process that launched the thread, even though it
 *does* show processes the tool spawns itself. So:
 
 - `pgrep -fl vixd` returning nothing means "not visible from inside the
   sandbox", **not** "not running". `pgrep` and `ps` can even disagree with each
-  other in the same session.
-- The reliable signal is the **Unix socket plus a working session**: a live
+  other in the same thread.
+- The reliable signal is the **Unix socket plus a working thread**: a live
   `/tmp/vixd.sock` (`srwxr-xr-x`) and the fact that the chat is responding are
   far stronger evidence than `pgrep`.
 - **Never `rm` the socket or kill/respawn `vixd` based on a `pgrep` miss.**
   Removing `/tmp/vixd.sock` or starting a second daemon can disrupt the running
-  session. If you genuinely need a daemon for an out-of-band task (e.g. driving
+  thread. If you genuinely need a daemon for an out-of-band task (e.g. driving
   the TUI for a VHS recording), prefer an explicit, isolated instance (e.g. a
   separate `--config-dir` and socket path) rather than touching the default one.
 
@@ -191,7 +191,7 @@ daily file per subsystem:
 ```
 
 Each line is a JSON object with a `phase` field. Jobs emit `started` → optional
-`error` → `finished` (correlate by `job_id`, and `session_id` once the run has
+`error` → `finished` (correlate by `job_id`, and `thread_id` once the run has
 one). Hooks emit `fired` → optional `error` → `finished` (correlate by
 `fire_id`). Error lines carry a `source` naming where the failure came from
 (`prompt_resolve`, `agent`, `timeout`, `start_refused`, `auto_disable`,
@@ -270,7 +270,7 @@ private scratchpad.
   once the work is done so the user isn't left looking at stale entries.
 
 The daemon nudges the model if it finishes a turn with pending/in-progress todos
-(`internal/daemon/session.go`), and the panel renders from `event.todo_list_updated`
+(`internal/daemon/thread.go`), and the panel renders from `event.todo_list_updated`
 (`internal/ui/todopanel.go`, `internal/ui/rightpanel.go`).
 
 ## Environment
@@ -282,13 +282,13 @@ The daemon nudges the model if it finishes a turn with pending/in-progress todos
 
 ## Config directory resolution
 
-By default vix merges config from two layered `.vix` directories: `~/.vix` (user defaults) and `./.vix` (project overrides). This covers `settings.json`, `agents/`, `skills/`, plus session state like `history.txt`, `plans/`, `access_stats.db`, and `logs/`.
+By default vix merges config from two layered `.vix` directories: `~/.vix` (user defaults) and `./.vix` (project overrides). This covers `settings.json`, `agents/`, `skills/`, plus thread state like `history.txt`, `plans/`, `access_stats.db`, and `logs/`.
 
-Instruction files (`CLAUDE.md`, `AGENTS.md`) are also layered, but follow a slightly different convention: the user-global copy lives at `~/.vix/CLAUDE.md` / `~/.vix/AGENTS.md`, while the project copy lives at the **project root** (`./CLAUDE.md`, `./AGENTS.md`), not inside `./.vix`. Both load when the corresponding feature flag is enabled, home first then project (see `VixPaths.ClaudeMD()` / `VixPaths.AgentsMD()` and `Session.discoverInstructionFiles`).
+Instruction files (`CLAUDE.md`, `AGENTS.md`) are also layered, but follow a slightly different convention: the user-global copy lives at `~/.vix/CLAUDE.md` / `~/.vix/AGENTS.md`, while the project copy lives at the **project root** (`./CLAUDE.md`, `./AGENTS.md`), not inside `./.vix`. Both load when the corresponding feature flag is enabled, home first then project (see `VixPaths.ClaudeMD()` / `VixPaths.AgentsMD()` and `Thread.discoverInstructionFiles`).
 
 All path resolution flows through `config.VixPaths` (internal/config/paths.go). Add new `.vix`-relative paths there rather than hardcoding `filepath.Join(cwd, ".vix", ...)`.
 
-Pass `--config-dir /some/path` to use that directory as the sole `.vix` root. Neither `~/.vix` nor `./.vix` is consulted, and all session state (history, plans, access stats, LLM logs) is written inside the override directory. The directory is auto-created and bootstrapped with default settings on first run. This is useful for sandboxed/reproducible sessions without touching real user or project config.
+Pass `--config-dir /some/path` to use that directory as the sole `.vix` root. Neither `~/.vix` nor `./.vix` is consulted, and all thread state (history, plans, access stats, LLM logs) is written inside the override directory. The directory is auto-created and bootstrapped with default settings on first run. This is useful for sandboxed/reproducible threads without touching real user or project config.
 
 ## Skills
 
@@ -298,13 +298,13 @@ Frontmatter fields parsed today: `name`, `description`, `model`, `allowed-tools`
 
 Skills use **progressive disclosure** — three layers loaded only as needed:
 
-1. **Metadata (always present)** — each skill's name + description is injected into the system prompt via `SkillRegistry.FormatForSystemPrompt` (wired in `Session.buildSystemPrompt`). Cheap; lets the model know what exists.
+1. **Metadata (always present)** — each skill's name + description is injected into the system prompt via `SkillRegistry.FormatForSystemPrompt` (wired in `Thread.buildSystemPrompt`). Cheap; lets the model know what exists.
 2. **Body (on demand)** — the full `SKILL.md` body loads only when a skill is invoked, via `Skill.LoadForTool` (body with args substituted + a listing of bundled files).
 3. **Bundled files (on demand)** — the model reads `reference.md` / runs `scripts/*` with the normal `read_file`/`bash` tools using the absolute paths listed in layer 2.
 
 Two invocation paths, both calling `LoadForTool` under the hood:
 
-- **Implicit (model-driven)** — the `skill` tool (`SkillToolSchema`, dispatched inline in `Session.executeToolDirect`). Appended to the session tool list only when at least one skill is loaded. The model calls `skill(name, arguments?)` when a task matches an advertised skill.
+- **Implicit (model-driven)** — the `skill` tool (`SkillToolSchema`, dispatched inline in `Thread.executeToolDirect`). Appended to the thread tool list only when at least one skill is loaded. The model calls `skill(name, arguments?)` when a task matches an advertised skill.
 - **Explicit (user-driven)** — typing `/<skill-name> [args]`, intercepted in the input handler before the turn starts and rendered into the user message. Skill names are advertised to the TUI via `event.skills_available` so they autocomplete in the slash menu.
 
 `/skills` lists all loaded skills.
@@ -331,7 +331,7 @@ offline fallback stays current.
 
 ## Default access policy
 
-The agent decides whether a path is accessible by default by checking, in order: cwd, `$HOME`, the host's system directories (per platform), or any entry in `allowed_directories`. Anything outside that set surfaces as a confirmation prompt (interactive sessions) or an error (headless). The `deny_list` always wins, even if the path matches one of the auto-allow categories.
+The agent decides whether a path is accessible by default by checking, in order: cwd, `$HOME`, the host's system directories (per platform), or any entry in `allowed_directories`. Anything outside that set surfaces as a confirmation prompt (interactive threads) or an error (headless). The `deny_list` always wins, even if the path matches one of the auto-allow categories.
 
 The platform's system directories live in `internal/daemon/platform_policy.go` as a single source of truth shared between the dispatcher's prompt-skip logic and the sandbox profile builders (Seatbelt on macOS, bwrap on Linux). Update one place to widen or tighten what the agent can touch on a given OS.
 
@@ -348,9 +348,9 @@ The platform's system directories live in `internal/daemon/platform_policy.go` a
 }
 ```
 
-The legacy flat-array form (`"deny_list": ["./secrets"]`) still parses and is treated as paths-only. Deny takes precedence over `allowed_directories`: a path that matches both is blocked. Path entries may be absolute, `~`-prefixed (expanded to the user's home directory), or relative. A relative entry is resolved against **both** the directory of the config file that declares it **and** the session's working directory (project root), and both interpretations are added to the deny list. This dual resolution is why a `deny_list.paths` entry like `.envrc.private` in `./.vix/settings.json` blocks `<project>/.envrc.private` (the file the user means) rather than only the phantom `<project>/.vix/.envrc.private` that config-dir-relative resolution alone would produce. Both lists are unioned across layered configs (home + project).
+The legacy flat-array form (`"deny_list": ["./secrets"]`) still parses and is treated as paths-only. Deny takes precedence over `allowed_directories`: a path that matches both is blocked. Path entries may be absolute, `~`-prefixed (expanded to the user's home directory), or relative. A relative entry is resolved against **both** the directory of the config file that declares it **and** the thread's working directory (project root), and both interpretations are added to the deny list. This dual resolution is why a `deny_list.paths` entry like `.envrc.private` in `./.vix/settings.json` blocks `<project>/.envrc.private` (the file the user means) rather than only the phantom `<project>/.vix/.envrc.private` that config-dir-relative resolution alone would produce. Both lists are unioned across layered configs (home + project).
 
-Resolution lives in `LoadProjectConfig` (`internal/daemon/workflow.go`): `~` expansion + config-dir-relative form + raw relative entries recorded in `ProjectConfig.DenyPathsRel`; the cwd-relative form is added when the session seeds its deny list via `combineDenyPaths` (`internal/daemon/deny_list.go`).
+Resolution lives in `LoadProjectConfig` (`internal/daemon/workflow.go`): `~` expansion + config-dir-relative form + raw relative entries recorded in `ProjectConfig.DenyPathsRel`; the cwd-relative form is added when the thread seeds its deny list via `combineDenyPaths` (`internal/daemon/deny_list.go`).
 
 **Path match semantics**: a target path is blocked iff (after symlink resolution and `Clean`) it equals a deny entry or is a descendant of one.
 

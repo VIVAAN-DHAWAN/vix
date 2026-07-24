@@ -24,7 +24,7 @@ That's it. Vix reads the relevant files, understands your project structure, wri
 
 ### It understands your codebase before you ask anything.
 
-On first run, vix scans your project, extracts symbols, builds an import graph, detects your frameworks and dependencies, and generates a semantic summary using the LLM. This context is cached and injected into every session — the agent starts with genuine knowledge of your code, not a blank slate.
+On first run, vix scans your project, extracts symbols, builds an import graph, detects your frameworks and dependencies, and generates a semantic summary using the LLM. This context is cached and injected into every thread — the agent starts with genuine knowledge of your code, not a blank slate.
 
 ### It has compiler-level code intelligence.
 
@@ -62,9 +62,9 @@ Vix is not magic. It makes mistakes, misreads intent, and occasionally goes in c
 
 Vix runs as two separate binaries: a **daemon** (`vixd`) and a **client** (`vix`).
 
-The daemon is a long-running background process. It owns the LLM connection, executes all tools, manages the brain index, and maintains session state. It listens on a Unix socket (`/tmp/vixd.sock`). The first time you run `vix`, it starts the daemon automatically as a subprocess. If you want it to persist across terminal sessions — so the brain index stays warm and context is preserved — you can start it independently and leave it running.
+The daemon is a long-running background process. It owns the LLM connection, executes all tools, manages the brain index, and maintains thread state. It listens on a Unix socket (`/tmp/vixd.sock`). The first time you run `vix`, it starts the daemon automatically as a subprocess. If you want it to persist across terminal threads — so the brain index stays warm and context is preserved — you can start it independently and leave it running.
 
-The client is the thin terminal UI. It connects to the daemon over the socket, streams events to your screen, and forwards your input back. When you close the TUI, the daemon keeps running. When you reopen vix in the same project, you reconnect to the same session.
+The client is the thin terminal UI. It connects to the daemon over the socket, streams events to your screen, and forwards your input back. When you close the TUI, the daemon keeps running. When you reopen vix in the same project, you reconnect to the same thread.
 
 ┌─────────────┐          Unix socket          ┌──────────────────────┐
 │  vix (TUI)  │  ◄──── JSON event stream ───► │  vixd                │
@@ -73,11 +73,11 @@ The client is the thin terminal UI. It connects to the daemon over the socket, s
 │  Lipgloss   │                               │  LSP · Workflows     │
 └─────────────┘                               └──────────────────────┘
 
-## A session, step by step
+## A thread, step by step
 
 ### 1\. Brain init
 
-When you open a session in a new project, the daemon scans your codebase: every source file is catalogued, symbols are extracted, an import graph is built, frameworks and dependencies are detected. Then the LLM generates a dense summary of the project and saves it to `.vix/context/`. On subsequent sessions, this cache is reused — only modified files are re-indexed.
+When you open a thread in a new project, the daemon scans your codebase: every source file is catalogued, symbols are extracted, an import graph is built, frameworks and dependencies are detected. Then the LLM generates a dense summary of the project and saves it to `.vix/context/`. On subsequent threads, this cache is reused — only modified files are re-indexed.
 
 ### 2\. System prompt assembly
 
@@ -93,7 +93,7 @@ Every tool call is executed in-process by the daemon — no subprocess overhead 
 
 ### 5\. Context management
 
-The daemon tracks every file read across the session. If the model tries to re-read a file it has already seen, the call is rejected with an error message explaining why — preventing the model from burning tokens on redundant reads. Files are also invalidated from this cache when they are written, so a write followed by a read always gets fresh content.
+The daemon tracks every file read across the thread. If the model tries to re-read a file it has already seen, the call is rejected with an error message explaining why — preventing the model from burning tokens on redundant reads. Files are also invalidated from this cache when they are written, so a write followed by a read always gets fresh content.
 
 ## The brain in more detail
 
@@ -114,9 +114,9 @@ LSP servers are initialized as part of the brain setup. If gopls, pylsp, or type
 
 # Quick demo
 
-Here's what a typical Vix session looks like — from launching the agent to reviewing an inline diff:
+Here's what a typical Vix thread looks like — from launching the agent to reviewing an inline diff:
 
-![Vix demo — a full session from prompt to inline diff](/src/assets/demo.gif)
+![Vix demo — a full thread from prompt to inline diff](/src/assets/demo.gif)
 
 ---
 
@@ -310,7 +310,7 @@ Under the hood, vix is:
 4.  Starting any configured LSP servers
 5.  Generating a semantic summary of the project with the LLM
 
-The results are cached in `.vix/` at your project root. Subsequent sessions start instantly — only files you've modified are re-indexed.
+The results are cached in `.vix/` at your project root. Subsequent threads start instantly — only files you've modified are re-indexed.
 
 **Tip:** Add `.vix/` to your `.gitignore` unless you want to commit the brain cache. The `settings.json` config file inside it is worth committing; the `context/` and `access_stats.db` are not.
 
@@ -352,15 +352,15 @@ At the bottom of the screen you will always see:
 claude-sonnet-4-6  ·  your-project  ·  2 341 in · 487 out · $0.004  ·  18s
 ```
 
-From left to right: the active model, project name, input tokens, output tokens, estimated session cost, and elapsed time for the last turn.
+From left to right: the active model, project name, input tokens, output tokens, estimated thread cost, and elapsed time for the last turn.
 
 ## Stopping and restarting
 
 Press `Ctrl+C` to cancel an in-progress operation. Press `Ctrl+C` again (or `Ctrl+D`) to quit.
 
-The daemon keeps running in the background after you close the TUI. When you run `vix` again in the same project, you reconnect to the existing session — conversation history is preserved.
+The daemon keeps running in the background after you close the TUI. When you run `vix` again in the same project, you reconnect to the existing thread — conversation history is preserved.
 
-Each message keeps its original send time: the "Sent at …" timestamp on your messages is persisted with the session, so a replayed conversation shows when each message was actually sent rather than when you relaunched. Sessions saved before this was added simply omit the timestamp line.
+Each message keeps its original send time: the "Sent at …" timestamp on your messages is persisted with the thread, so a replayed conversation shows when each message was actually sent rather than when you relaunched. Threads saved before this was added simply omit the timestamp line.
 
 To start fresh:
 
@@ -405,7 +405,7 @@ The daemon is a long-running background process that owns everything stateful:
 -   The scheduled-jobs engine (cron jobs, the heartbeat)
 -   The access statistics database
 
-It listens on `/tmp/vixd.sock`. Multiple clients can connect to the same daemon simultaneously, though each gets its own isolated session.
+It listens on `/tmp/vixd.sock`. Multiple clients can connect to the same daemon simultaneously, though each gets its own isolated thread.
 
 The daemon has no UI. It logs to stdout:
 
@@ -427,7 +427,7 @@ The client is the thin terminal UI. Its only job is to:
 2.  Forward your input as JSON commands
 3.  Render the stream of events the daemon sends back
 
-It holds no state of its own. If the client crashes, the daemon — and your session — keeps running.
+It holds no state of its own. If the client crashes, the daemon — and your thread — keeps running.
 
 ## Lifecycle
 
@@ -441,7 +441,7 @@ vix daemon status   # is it running, and which version?
 vix daemon stop     # coordinated shutdown (all attached vix instances quit too)
 ```
 
-The daemon runs until stopped or signalled — closing the TUI leaves it (and your sessions, and any scheduled jobs) running. To make it survive reboots, register it as a login service:
+The daemon runs until stopped or signalled — closing the TUI leaves it (and your threads, and any scheduled jobs) running. To make it survive reboots, register it as a login service:
 
 shell
 
@@ -450,11 +450,11 @@ vix daemon install    # macOS LaunchAgent / Linux systemd user unit
 vix daemon uninstall  # remove the registration
 ```
 
-**Version gate:** client and daemon must be the exact same build. After upgrading vix, a long-running daemon from the old build refuses new sessions with a clear error — run `vix daemon stop && vix daemon start` to recycle it.
+**Version gate:** client and daemon must be the exact same build. After upgrading vix, a long-running daemon from the old build refuses new threads with a clear error — run `vix daemon stop && vix daemon start` to recycle it.
 
 ## Why the split matters
 
-**Sessions survive TUI crashes.** If the client dies mid-task, the daemon keeps working. Reconnect and you'll see the results waiting for you.
+**Threads survive TUI crashes.** If the client dies mid-task, the daemon keeps working. Reconnect and you'll see the results waiting for you.
 
 **Multiple windows.** Open two terminals, both running `vix` in the same project — they share the same daemon.
 
@@ -538,7 +538,7 @@ Deletes `.vix/context/` and re-runs both phases. Config, agents, and workflows a
 ├── agents/                ✅ commit — custom agent definitions
 ├── skills/                ✅ commit — custom skills
 ├── context/               ❌ gitignore — generated
-└── access_stats.db        ❌ gitignore — local session data
+└── access_stats.db        ❌ gitignore — local thread data
 ```
 
 ## Supported languages
@@ -574,7 +574,7 @@ Config, markup, and data files (`.json`, `.yaml`, `.toml`, `.md`, `.html`, `.css
 
 An agent is an LLM instance running in a loop. It receives a system prompt, a conversation history, and a list of tools. It generates a response — which may include tool calls. The daemon executes those tool calls, feeds the results back, and the loop continues until the model signals it's done or hits `max_turns`.
 
-Every session is powered by an agent. By default this is the `general` agent, defined in `~/.vix/agents/general.md`.
+Every thread is powered by an agent. By default this is the `general` agent, defined in `~/.vix/agents/general.md`.
 
 ## What is a tool?
 
@@ -623,8 +623,8 @@ Tool calls within a single response are executed in parallel.
 | spawn\_agent | Spawn a sub-agent with its own conversation, tools, and LLM instance. |
 | task\_output | Retrieve the result of a background sub-agent. |
 | ask\_question\_to\_user | Pause and ask the user one or more questions. |
-| todo\_write | Replace the session's TODO list (plan/track multi-step work). |
-| todo\_read | Return the session's current TODO list. |
+| todo\_write | Replace the thread's TODO list (plan/track multi-step work). |
+| todo\_read | Return the thread's current TODO list. |
 | tool\_orchestrator | Execute a Python script that chains multiple tools in one round-trip. |
 
 ## Custom agents
@@ -695,8 +695,8 @@ Anthropic also accepts an OAuth bearer token via `CLAUDE_CODE_OAUTH_TOKEN`. Each
 
 The active model can be set in several places — the most specific wins:
 
--   **Models tab (F3)** — pick the session's active model interactively.
--   An agent's `model:` frontmatter — overrides the session model whenever that agent runs.
+-   **Models tab (F3)** — pick the thread's active model interactively.
+-   An agent's `model:` frontmatter — overrides the thread model whenever that agent runs.
 -   A skill's `model:` frontmatter — for that `/skill` invocation.
 -   A workflow step's agent — different models per phase.
 
@@ -1144,7 +1144,7 @@ Project skills take precedence over global skills with the same name. Commit `.v
 
 # Context Compaction
 
-Every turn you exchange with the agent — your messages, the model's replies, and every tool call and its output — accumulates in the conversation history and is re-sent to the model on the next turn. On a long session this eventually fills the model's context window. **Compaction** keeps the session alive by summarizing the oldest turns into a dense briefing and dropping the raw messages they replace.
+Every turn you exchange with the agent — your messages, the model's replies, and every tool call and its output — accumulates in the conversation history and is re-sent to the model on the next turn. On a long thread this eventually fills the model's context window. **Compaction** keeps the thread alive by summarizing the oldest turns into a dense briefing and dropping the raw messages they replace.
 
 The result is a much smaller prompt that still carries the important facts — goals, decisions, file paths, and open tasks — so the agent can keep working without re-reading everything.
 
@@ -1233,13 +1233,13 @@ Both `~/.vix/settings.json` and the project-local `.vix/settings.json` are honou
 
 ---
 
-# The TUI (tabs, sessions, keys)
+# The TUI (tabs, threads, keys)
 
 > Section: Guides · vix docs · https://getvix.dev/docs#tui-basics
 
-# The TUI: Tabs, Sessions & Keys
+# The TUI: Tabs, Threads & Keys
 
-The `vix` client is a tabbed terminal UI over the daemon. This page covers the tab layout, running multiple sessions at once, slash commands, and the full keybinding reference.
+The `vix` client is a tabbed terminal UI over the daemon. This page covers the tab layout, running multiple threads at once, slash commands, and the full keybinding reference.
 
 ## Tabs
 
@@ -1247,37 +1247,37 @@ Switch tabs with the function keys:
 
 | Key | Tab | What it shows |
 | --- | --- | --- |
-| F1 | Sessions | List of open sessions; create, duplicate, or close them. |
-| F2 | Workspace | The active chat session — your main working view. |
+| F1 | Threads | List of open threads; create, duplicate, or close them. |
+| F2 | Workspace | The active chat thread — your main working view. |
 | F3 | Models | Pick the active model and manage provider credentials. |
 | F4 | Jobs & Triggers | Browse scheduled jobs and lifecycle hooks; space toggles one on/off. |
 | F5 | Settings | Global preferences (e.g. toggle reasoning/thinking output). |
 
 The Models tab is documented under [Models & Providers](/docs#models-providers).
 
-## Starting a session & the working directory
+## Starting a thread & the working directory
 
-A brand-new tab (a fresh launch with nothing to restore, or one you open with `Ctrl+T`) starts as a **draft**: the welcome screen shows the target **working directory** and the status bar reads _Draft — not started_. No session is created on the daemon until you send your first message. This lets you set the directory up front, and means quitting without typing leaves nothing behind.
+A brand-new tab (a fresh launch with nothing to restore, or one you open with `Ctrl+T`) starts as a **draft**: the welcome screen shows the target **working directory** and the status bar reads _Draft — not started_. No thread is created on the daemon until you send your first message. This lets you set the directory up front, and means quitting without typing leaves nothing behind.
 
-While the tab is still a draft, press `Ctrl+o` to open a directory picker (`↑`/`↓` select, `→` open a folder, `←` go up, `Enter` choose, `Esc` cancel). Your **first message commits the session** in the chosen directory, after which the working directory is **fixed for the life of that session** — to work somewhere else, start another session (`Ctrl+T`) and point it there.
+While the tab is still a draft, press `Ctrl+o` to open a directory picker (`↑`/`↓` select, `→` open a folder, `←` go up, `Enter` choose, `Esc` cancel). Your **first message commits the thread** in the chosen directory, after which the working directory is **fixed for the life of that thread** — to work somewhere else, start another thread (`Ctrl+T`) and point it there.
 
-The draft welcome also lists your **most-used working directories** — the top five directories ranked by how many open sessions use each. Press `Tab` to focus the welcome area, then `↑`/`↓` to highlight a directory and `Enter` to make it the draft's working directory (no need to walk the picker). A brand-new tab defaults to the **most recently used** working directory; the very first tab on launch uses where you started `vix` (or the [`--workdir`](/docs#cli-flags) flag).
+The draft welcome also lists your **most-used working directories** — the top five directories ranked by how many open threads use each. Press `Tab` to focus the welcome area, then `↑`/`↓` to highlight a directory and `Enter` to make it the draft's working directory (no need to walk the picker). A brand-new tab defaults to the **most recently used** working directory; the very first tab on launch uses where you started `vix` (or the [`--workdir`](/docs#cli-flags) flag).
 
 Note: when vix runs with an explicit `--config-dir`, changing the working directory only moves where files, shell commands and the code index resolve — your `.vix` config (skills, settings, agents) stays fixed at that config directory.
 
-## Multiple sessions
+## Multiple threads
 
-One daemon can drive many concurrent sessions in the same project, each with its own conversation. Cycle between them without leaving the Workspace tab:
+One daemon can drive many concurrent threads in the same project, each with its own conversation. Cycle between them without leaving the Workspace tab:
 
 | Key | Action |
 | --- | --- |
-| Ctrl+T | New session |
-| Ctrl+N | Next session |
-| Ctrl+P | Previous session |
+| Ctrl+T | New thread |
+| Ctrl+N | Next thread |
+| Ctrl+P | Previous thread |
 
-On the **Sessions tab (F1)**: `↑`/`↓` to navigate, `Enter` to open, `t` new, `d` duplicate (forks from the last completed turn), `x` close.
+On the **Threads tab (F1)**: `↑`/`↓` to navigate, `Enter` to open, `t` new, `d` duplicate (forks from the last completed turn), `x` close.
 
-Below your own sessions, a **Vix-initiated** group lists runs that vix started itself — [scheduled jobs](/docs#guide-jobs), heartbeat alerts, and failure reports. `Enter` opens a run, `x` dismisses it. The ● unread dot is persistent: it survives quitting vix, so work that happened while you were away is still flagged the next time you launch.
+Below your own threads, a **Vix-initiated** group lists runs that vix started itself — [scheduled jobs](/docs#guide-jobs), heartbeat alerts, and failure reports. `Enter` opens a run, `x` dismisses it. The ● unread dot is persistent: it survives quitting vix, so work that happened while you were away is still flagged the next time you launch.
 
 The **Jobs & Triggers tab (F4)** is a live catalogue of what vix runs for you: [scheduled jobs](/docs#guide-jobs) in one group and [lifecycle hooks](/docs#guide-hooks) in another. Each row shows whether it's enabled, its schedule (jobs) or event (hooks), and its last run; a job that is _currently executing_ shows a spinner, updated live. `↑`/`↓` to navigate and `space` to enable/disable the selected row — the change is written straight back to its `job.json`/`hook.json` and hot-reloaded. Hooks never show a running spinner (they fire and finish in milliseconds), only their last fire.
 
@@ -1291,7 +1291,7 @@ The **Jobs & Triggers tab (F4)** is a live catalogue of what vix runs for you: [
 | Ctrl+R | Open the input-history panel |
 | Shift+Tab | Cycle between Chat and configured workflows |
 | Tab | Toggle focus between input and the chat pane (on a draft welcome, focuses the recent-directories list) |
-| Ctrl+o | Change the working directory (draft session, before it starts) |
+| Ctrl+o | Change the working directory (draft thread, before it starts) |
 | Esc | Cancel the running operation |
 | @ | File-path autocomplete |
 | / | Slash-command & skill menu |
@@ -1327,7 +1327,7 @@ Type `/` in the input to open the menu. Built-in commands:
 
 | Command | What it does |
 | --- | --- |
-| /fork N | Fork a new session from turn N |
+| /fork N | Fork a new thread from turn N |
 | /trim N | Delete all messages after turn N |
 | /copy \[N\] | Copy a turn, or the whole conversation |
 | /goto N | Scroll to the start of turn N |
@@ -1337,7 +1337,7 @@ Type `/` in the input to open the menu. Built-in commands:
 
 Your own [skills](/docs#writing-skills) appear in the same menu as `/skill-name`. See also [Context compaction](/docs#compaction) for `/compact`.
 
-**Note:** there is no command-palette shortcut — `Ctrl+P` moves to the previous session. Actions like clearing the conversation are slash commands (`/clear`).
+**Note:** there is no command-palette shortcut — `Ctrl+P` moves to the previous thread. Actions like clearing the conversation are slash commands (`/clear`).
 
 ---
 
@@ -1353,7 +1353,7 @@ Chat mode is the default way to interact with vix. You type a message, the agent
 
 Type in the input box and press `Enter`. Multi-line input: press `Shift+Enter` (or `Alt+Enter`, `Ctrl+J`). Clear input without submitting: `Ctrl+Shift+U`.
 
-A new tab is a **draft** until your first message: it shows a welcome screen with the working directory and your most-used directories, and the session is created on the daemon only when you send. You can change the directory first with `Ctrl+o` (or pick from the recent list via `Tab` then `↑`/`↓`/`Enter`); once the session starts, its working directory is fixed. See [The TUI](/docs#tui-basics) for details.
+A new tab is a **draft** until your first message: it shows a welcome screen with the working directory and your most-used directories, and the thread is created on the daemon only when you send. You can change the directory first with `Ctrl+o` (or pick from the recent list via `Tab` then `↑`/`↓`/`Enter`); once the thread starts, its working directory is fixed. See [The TUI](/docs#tui-basics) for details.
 
 ## Interrupting the agent
 
@@ -1417,7 +1417,7 @@ Screenshot placeholder — beautiful code rendering preview
 
 Press `Shift+Tab` to cycle through available workflows. A workflow run executes in its own isolated step agents, so a follow-up chat message does not inherit the workflow's internal reasoning.
 
-However, a workflow's **visible output is recorded into the session transcript** when the run finishes, is interrupted, **or fails**. Reopening the session replays that output, and continuing in chat picks up with it as context — so you can read the result and then keep talking about it. A run that **fails** (for example, the API stays overloaded through every retry) replays exactly like a successful one: the agent's partial work plus the same `API overloaded — retrying … (attempt N/10)` notices you'd see live, so the failure tells its own story instead of vanishing.
+However, a workflow's **visible output is recorded into the thread transcript** when the run finishes, is interrupted, **or fails**. Reopening the thread replays that output, and continuing in chat picks up with it as context — so you can read the result and then keep talking about it. A run that **fails** (for example, the API stays overloaded through every retry) replays exactly like a successful one: the agent's partial work plus the same `API overloaded — retrying … (attempt N/10)` notices you'd see live, so the failure tells its own story instead of vanishing.
 
 ## Quitting
 
@@ -1628,7 +1628,7 @@ json
 
 # Scheduled Jobs
 
-Jobs let vix work for you on a schedule: audit your dependencies every morning, watch a repo for new pull requests, remind you about something next Tuesday, or check a whiteboard of tasks every half hour. Each run is a real agent session — same tools, same model, same safety rules — that lands in your Sessions tab when it has something to show.
+Jobs let vix work for you on a schedule: audit your dependencies every morning, watch a repo for new pull requests, remind you about something next Tuesday, or check a whiteboard of tasks every half hour. Each run is a real agent thread — same tools, same model, same safety rules — that lands in your Threads tab when it has something to show.
 
 The mental model is one sentence: **a job is a JSON file containing a schedule and a prompt.** Each job lives in its own directory (`~/.vix/jobs/<id>/job.json`), the daemon watches the directory, and saving a file is all it takes — no restart, no registration step.
 
@@ -1734,13 +1734,13 @@ json
 }
 ```
 
-Run it with `"trigger": { "type": "cron", "expr": "@every 2m" }`. When the poll finds nothing, the run ends after the bash step — **no model call, no session, no cost**. When something shows up, the agent wakes with the results already in hand. That's webhook-grade reactivity with nothing exposed to the network.
+Run it with `"trigger": { "type": "cron", "expr": "@every 2m" }`. When the poll finds nothing, the run ends after the bash step — **no model call, no thread, no cost**. When something shows up, the agent wakes with the results already in hand. That's webhook-grade reactivity with nothing exposed to the network.
 
-The same shape powers the **"Plan GitHub issues"** job. Point it at a repository — paste either `owner/repo` or a full `https://github.com/owner/repo` URL (it's normalized to `owner/repo`) — choose whether to watch issues, pull requests, or both, and pick how often it runs: **hourly** or **daily**. A first `bash` step detects how it can reach GitHub — the `gh` CLI when it's signed in, otherwise the public REST API — and `execute_if` branches on that token: no access at all stops the run with a clear error, the API fallback adds a one-line reminder to install and authenticate `gh`, and either way the fetched issues (and/or pull requests) flow straight into the planning step via `$(step.fetch)` — no temporary file. A `bash` step then reconciles a `tracker.tsv` in the job's own directory — every open item as `todo`, dropping items that have since closed. The agent claims **a single open item per run** — it picks a `todo`, flips it to `doing` so any parallel run skips it, and marks it `done` when finished (reconciling newly-opened items in and closed ones out each run) — investigates it, and writes its findings to the run's session: a short summary, a **legitimacy verdict** (is this a real, actionable bug / request / piece of feedback?), and a step-by-step implementation plan when the item is legit — or a note explaining why planning was skipped when it isn't. It never posts comments back to GitHub.
+The same shape powers the **"Plan GitHub issues"** job. Point it at a repository — paste either `owner/repo` or a full `https://github.com/owner/repo` URL (it's normalized to `owner/repo`) — choose whether to watch issues, pull requests, or both, and pick how often it runs: **hourly** or **daily**. A first `bash` step detects how it can reach GitHub — the `gh` CLI when it's signed in, otherwise the public REST API — and `execute_if` branches on that token: no access at all stops the run with a clear error, the API fallback adds a one-line reminder to install and authenticate `gh`, and either way the fetched issues (and/or pull requests) flow straight into the planning step via `$(step.fetch)` — no temporary file. A `bash` step then reconciles a `tracker.tsv` in the job's own directory — every open item as `todo`, dropping items that have since closed. The agent claims **a single open item per run** — it picks a `todo`, flips it to `doing` so any parallel run skips it, and marks it `done` when finished (reconciling newly-opened items in and closed ones out each run) — investigates it, and writes its findings to the run's thread: a short summary, a **legitimacy verdict** (is this a real, actionable bug / request / piece of feedback?), and a step-by-step implementation plan when the item is legit — or a note explaining why planning was skipped when it isn't. It never posts comments back to GitHub.
 
 The bookkeeping is **resilient to transient failures**. If a fetch fails outright — a network blip, a rate limit, or the machine waking before its connection is up — the run detects it and **leaves the tracker untouched** rather than mistaking an empty response for "no open items"; a single bad fetch can never wipe the tracker and re-investigate every issue from scratch. And if a run is cut short before it can mark its item `done` (a hard timeout or cancel), the next run **re-arms that item** for another attempt — bounded to two tries before it's set aside — so nothing gets stuck half-done and nothing loops forever.
 
-The findings open with an **H1 title** and a deterministic header naming the item, so the run's session is titled after it — e.g. `[Plan GitHub issues (get-vix/vix)] Addressing issue #29 — ANTHROPIC_BASE_URL not resolved from .env files` rather than a generic timestamp. The session keeps the **full working transcript** — the prompt, every tool call and result, and the final findings — so opening it shows exactly what vix did, and a follow-up message you send picks up grounded in that real history. Like every workflow step, the run also inherits your project context: `AGENTS.md`/`CLAUDE.md` and the skills catalog are in its system prompt, and it can invoke skills with the `skill` tool. Once a run finishes it reopens in plain chat mode, so you can simply reply to continue — there's no stale "workflow no longer exists" notice. A run that **fails** reopens the same way: its full transcript is kept — the agent's partial work plus the same `API overloaded — retrying … (attempt N/10)` notices an interactive run shows live — so you see exactly how it failed instead of an empty session.
+The findings open with an **H1 title** and a deterministic header naming the item, so the run's thread is titled after it — e.g. `[Plan GitHub issues (get-vix/vix)] Addressing issue #29 — ANTHROPIC_BASE_URL not resolved from .env files` rather than a generic timestamp. The thread keeps the **full working transcript** — the prompt, every tool call and result, and the final findings — so opening it shows exactly what vix did, and a follow-up message you send picks up grounded in that real history. Like every workflow step, the run also inherits your project context: `AGENTS.md`/`CLAUDE.md` and the skills catalog are in its system prompt, and it can invoke skills with the `skill` tool. Once a run finishes it reopens in plain chat mode, so you can simply reply to continue — there's no stale "workflow no longer exists" notice. A run that **fails** reopens the same way: its full transcript is kept — the agent's partial work plus the same `API overloaded — retrying … (attempt N/10)` notices an interactive run shows live — so you see exactly how it failed instead of an empty thread.
 
 ## Market research
 
@@ -1750,13 +1750,13 @@ The search runs through [Agent Reach](https://github.com/Panniantong/agent-reach
 
 ## Where results go
 
-Finished runs appear on the **Sessions tab (F1)** under a separate **Vix-initiated** group. Each titled run shows its bare title (for the GitHub-plan job, the per-item `[job] Addressing issue #N — …`); a failed run is flagged with a ⚠ marker. Press `enter` to open a run and read the full conversation, or `x` to dismiss it. The unread dot is persistent — quit vix, come back tomorrow, and anything that ran while you were away is still flagged. The group refreshes **live**: a run that lands while you're looking at the Sessions tab appears on its own, even before you've started a session in that window.
+Finished runs appear on the **Threads tab (F1)** under a separate **Vix-initiated** group. Each titled run shows its bare title (for the GitHub-plan job, the per-item `[job] Addressing issue #N — …`); a failed run is flagged with a ⚠ marker. Press `enter` to open a run and read the full conversation, or `x` to dismiss it. The unread dot is persistent — quit vix, come back tomorrow, and anything that ran while you were away is still flagged. The group refreshes **live**: a run that lands while you're looking at the Threads tab appears on its own, even before you've started a thread in that window.
 
 To see every job at a glance — including ones that haven't run yet — open the **Jobs & Triggers tab (F4)**. It lists each job with its schedule, next/last run, and a live spinner while it's executing, and lets you enable or disable any job (or [hook](/docs#guide-hooks)) with `space` — no need to hand-edit the spec file.
 
 -   **Failures wait for you.** If a run fails while no vix is open, the failed run is written with its full conversation — the agent's partial work and the retry notices — so the next launch replays exactly what happened. Failed runs are never auto-dismissed.
--   **Old runs clean themselves up.** Only the latest few runs per job stay in the list; a deeper history is kept in the closed-sessions archive.
--   **Quiet runs leave nothing.** Skipped checks and HEARTBEAT\_OK answers don't create sessions at all.
+-   **Old runs clean themselves up.** Only the latest few runs per job stay in the list; a deeper history is kept in the closed-threads archive.
+-   **Quiet runs leave nothing.** Skipped checks and HEARTBEAT\_OK answers don't create threads at all.
 
 ## Run it now
 
@@ -1765,10 +1765,10 @@ You don't have to wait for the schedule. Fire a job immediately by id with the C
 shell
 
 ```
-vix job run stale-branches   # prints the run's session id
+vix job run stale-branches   # prints the run's thread id
 ```
 
-The run proceeds in the background and lands under **Vix-initiated** sessions, exactly like a scheduled fire. It's handy for testing a new job, or for kicking one off out of band. A manual run _records its outcome_ but **leaves the schedule untouched** — it never advances the next cron slot or completes a one-shot — and it runs even when the job is disabled. The only thing it refuses is a job that's already running.
+The run proceeds in the background and lands under **Vix-initiated** threads, exactly like a scheduled fire. It's handy for testing a new job, or for kicking one off out of band. A manual run _records its outcome_ but **leaves the schedule untouched** — it never advances the next cron slot or completes a one-shot — and it runs even when the job is disabled. The only thing it refuses is a job that's already running.
 
 ## Keeping it running
 
@@ -1783,7 +1783,7 @@ vix daemon uninstall # remove it again
 
 ## Run logs
 
-Every run is recorded as append-only JSONL at `~/.vix/logs/jobs/<date>.jsonl`, one daily file. Each run emits a `started` line, an optional `error` line for each failure (with a `source` such as `prompt_resolve`, `agent`, or `timeout`), and a `finished` line carrying the `status` and `session_id`. Correlate a run by its `job_id`. Retention is `logs.retention_days` (default 10; 0 = keep forever).
+Every run is recorded as append-only JSONL at `~/.vix/logs/jobs/<date>.jsonl`, one daily file. Each run emits a `started` line, an optional `error` line for each failure (with a `source` such as `prompt_resolve`, `agent`, or `timeout`), and a `finished` line carrying the `status` and `thread_id`. Correlate a run by its `job_id`. Retention is `logs.retention_days` (default 10; 0 = keep forever).
 
 shell
 
@@ -1794,10 +1794,10 @@ grep -h '"phase":"finished"' ~/.vix/logs/jobs/*.jsonl | jq -c 'select(.job_id=="
 
 ## Safety
 
-Scheduled runs are unattended, so there is nobody to click "approve". By default they can read and write like a normal session. The brakes:
+Scheduled runs are unattended, so there is nobody to click "approve". By default they can read and write like a normal thread. The brakes:
 
 -   **Per-job permissions** — set `"permissions": { "auto_write": false }` and write attempts are denied and recorded instead of executed.
--   **deny\_list** in settings.json always wins, exactly as in interactive sessions.
+-   **deny\_list** in settings.json always wins, exactly as in interactive threads.
 -   **Workflow budgets and deny\_tools** — cap tokens, time, and iterations; block specific tools. Recommended for anything frequent.
 -   **Auto-disable** — five consecutive failures disable a job until you edit its file.
 
@@ -1811,7 +1811,7 @@ Scheduled runs are unattended, so there is nobody to click "approve". By default
 
 # Lifecycle Hooks
 
-Hooks let you run your own code at specific points in the agent loop: before a tool runs, after it completes, when a prompt is submitted, when a session starts, or when a turn finishes. Use them to enforce rules deterministically — block edits to protected files, auto-format after writes, validate prompts, send notifications — instead of hoping the model remembers.
+Hooks let you run your own code at specific points in the agent loop: before a tool runs, after it completes, when a prompt is submitted, when a thread starts, or when a turn finishes. Use them to enforce rules deterministically — block edits to protected files, auto-format after writes, validate prompts, send notifications — instead of hoping the model remembers.
 
 Where a [job](/docs#guide-jobs) is fired by a clock, a hook is fired by an **event**. Like jobs, a hook is just a JSON file (`~/.vix/hooks/<id>/hook.json`); the daemon watches the directory, so saving a file is all it takes.
 
@@ -1819,7 +1819,7 @@ Where a [job](/docs#guide-jobs) is fired by a clock, a hook is fired by an **eve
 
 ## Sync vs async
 
-**Async** hooks (the default) fire-and-forget — the turn never waits. Use them to notify, log, or kick off background work; async workflow/prompt hooks show up in the Sessions tab under "Vix-initiated". **Sync** hooks run inline and return a decision; only a sync hook with `"blocking": true` can actually veto or rewrite the action (and only on `PreToolUse`, `UserPromptSubmit`, and `PermissionRequest`). Sync hooks have a tight timeout and fail open, so a broken hook can never wedge the loop.
+**Async** hooks (the default) fire-and-forget — the turn never waits. Use them to notify, log, or kick off background work; async workflow/prompt hooks show up in the Threads tab under "Vix-initiated". **Sync** hooks run inline and return a decision; only a sync hook with `"blocking": true` can actually veto or rewrite the action (and only on `PreToolUse`, `UserPromptSubmit`, and `PermissionRequest`). Sync hooks have a tight timeout and fail open, so a broken hook can never wedge the loop.
 
 ## Block writes to protected files
 
@@ -1852,7 +1852,7 @@ json
 
 ## Notify the user from a hook
 
-When a hook needs to tell you something — a finding, a result, a nudge — it can create a one-message conversation with `vix session create`. The new session lands in the Sessions tab under **Vix-initiated**; open it and reply and it continues as a normal chat. It spends zero tokens — the message is your literal text. The spec is a JSON object read from stdin (or `--json` / `--file`); `message` and `cwd` are required.
+When a hook needs to tell you something — a finding, a result, a nudge — it can create a one-message conversation with `vix thread create`. The new thread lands in the Threads tab under **Vix-initiated**; open it and reply and it continues as a normal chat. It spends zero tokens — the message is your literal text. The spec is a JSON object read from stdin (or `--json` / `--file`); `message` and `cwd` are required.
 
 shell
 
@@ -1861,10 +1861,10 @@ echo '{
   "message": "Heads up: 3 dependencies have new security advisories.",
   "cwd": "/abs/project",
   "title": "Dependency advisory"
-}' | vix session create
+}' | vix thread create
 ```
 
-The session is created with `origin: "vix"`, so — like every vix-initiated session — it never fires hooks itself. A **command** hook spawns no session of its own, making it the cheap place to do bookkeeping (e.g. count events in a file) that only calls `vix session create` once a threshold is crossed.
+The thread is created with `origin: "vix"`, so — like every vix-initiated thread — it never fires hooks itself. A **command** hook spawns no thread of its own, making it the cheap place to do bookkeeping (e.g. count events in a file) that only calls `vix thread create` once a threshold is crossed.
 
 ## The decision contract
 
@@ -1882,7 +1882,7 @@ Workflow and prompt hooks decide via their final text — a JSON object as above
 
 ## Context passed to a hook
 
-Every hook receives a JSON envelope (command hooks on stdin) with `session_id`, `cwd`, `model`, `permission_mode`, `origin` (`user` or `vix`), plus event-specific fields like `tool_name` and `tool_input`. Filter inside the hook to scope it by directory, model, or who started the session. Hooks never fire inside vix-initiated sessions, so a hook's own tool calls can't re-trigger hooks.
+Every hook receives a JSON envelope (command hooks on stdin) with `thread_id`, `cwd`, `model`, `permission_mode`, `origin` (`user` or `vix`), plus event-specific fields like `tool_name` and `tool_input`. Filter inside the hook to scope it by directory, model, or who started the thread. Hooks never fire inside vix-initiated threads, so a hook's own tool calls can't re-trigger hooks.
 
 Full field list and event table: [Hook spec reference](/docs#hook-spec). Disable the engine entirely with `"features": { "hooks": false }` or `VIX_DISABLE_HOOKS=1`.
 
@@ -1896,7 +1896,7 @@ shell
 vix hook trigger nightly-summary
 ```
 
-Since a manual trigger has no action to veto, it always runs **fire-and-forget regardless of mode**, even when the hook is disabled — handy for testing one. A workflow- or prompt-form hook runs in an isolated session (its id is printed and it lands under **Vix-initiated**); a command hook runs its command and prints the fire id.
+Since a manual trigger has no action to veto, it always runs **fire-and-forget regardless of mode**, even when the hook is disabled — handy for testing one. A workflow- or prompt-form hook runs in an isolated thread (its id is printed and it lands under **Vix-initiated**); a command hook runs its command and prints the fire id.
 
 ## Run logs
 
@@ -1944,7 +1944,7 @@ Save to `.vix/agents/reviewer.md`. Available immediately — no restart required
 | --- | --- | --- |
 | name | filename | The agent's identifier |
 | description | — | One-line description shown in spawn\_agent listing |
-| model | session model | Override the LLM model for this agent |
+| model | thread model | Override the LLM model for this agent |
 | tools | all tools | Whitelist of tools (comma-separated) |
 | effort | — | Effort level hint passed to the model (e.g. low, medium, high) |
 | max\_turns | 20 | Max LLM turns before the agent stops |
@@ -1979,7 +1979,7 @@ Never modify files.
 
 ## Setting the default chat agent
 
-Set `"agent": "reviewer"` in `.vix/settings.json` to change the default for all chat sessions in a project.
+Set `"agent": "reviewer"` in `.vix/settings.json` to change the default for all chat threads in a project.
 
 ## Per-agent model selection
 
@@ -2057,7 +2057,7 @@ Be specific. Cite line numbers.
 | --- | --- | --- |
 | name | directory name | The slash-command name |
 | description | — | Shown in /skills list and system prompt |
-| model | session model | Override the model for this skill |
+| model | thread model | Override the model for this skill |
 | allowed-tools | all tools | Restrict which tools can be called |
 
 ## Argument substitution
@@ -2134,7 +2134,7 @@ Plugins are executable scripts or binaries that vix runs once at daemon startup 
 
 ## When are plugins loaded?
 
-Plugins are loaded once, when `vixd` starts, before any session connects. They are not re-run per session. Restart the daemon to pick up changes to plugins.
+Plugins are loaded once, when `vixd` starts, before any thread connects. They are not re-run per thread. Restart the daemon to pick up changes to plugins.
 
 ## Discovery
 
@@ -2293,7 +2293,7 @@ The agent's final text response to stdout. Tool calls to stderr.
 
 ### json
 
-A single JSON object with result, session ID, turn count, duration, and token usage.
+A single JSON object with result, thread ID, turn count, duration, and token usage.
 
 shell
 
@@ -2469,7 +2469,7 @@ The agent uses `lsp_query` automatically when it needs precise code navigation. 
 
 **Experimental.** The web UI, whiteboard, and voice walkthrough are a preview and may change or be removed. Everything here is optional — vix works fully from the terminal.
 
-`vixd` can serve a local browser dashboard ("Mission Control") for monitoring sessions and walking through plans on an interactive whiteboard.
+`vixd` can serve a local browser dashboard ("Mission Control") for monitoring threads and walking through plans on an interactive whiteboard.
 
 ## Enabling & disabling
 
@@ -2482,9 +2482,9 @@ The dashboard is served by the daemon you manage with `vix daemon start` (or a d
 
 ## What it shows
 
-A live list of sessions with updates streamed over a WebSocket, plus basic host vitals. It is read-only monitoring — the agent is still driven from the TUI (or headless).
+A live list of threads with updates streamed over a WebSocket, plus basic host vitals. It is read-only monitoring — the agent is still driven from the TUI (or headless).
 
-Dedicated **Jobs** and **Hooks** tabs list every registered [scheduled job](/docs#guide-jobs) and [lifecycle hook](/docs#guide-hooks), each with a detail page. Every field on those pages comes straight from the daemon over the same WebSocket: a job's trigger, workflow, working directory, timeout, permissions, and its **recent-run history** (status, duration, and a link to each run's session); a hook's event/matcher, mode, blocking flag, command/workflow/prompt, timeout, description, and its **recent-fire history**. The history mirrors each item's `state.json` (newest first, capped at the last 10 runs), so a never-run job shows "No runs yet" rather than placeholder data.
+Dedicated **Jobs** and **Hooks** tabs list every registered [scheduled job](/docs#guide-jobs) and [lifecycle hook](/docs#guide-hooks), each with a detail page. Every field on those pages comes straight from the daemon over the same WebSocket: a job's trigger, workflow, working directory, timeout, permissions, and its **recent-run history** (status, duration, and a link to each run's thread); a hook's event/matcher, mode, blocking flag, command/workflow/prompt, timeout, description, and its **recent-fire history**. The history mirrors each item's `state.json` (newest first, capped at the last 10 runs), so a never-run job shows "No runs yet" rather than placeholder data.
 
 ## Whiteboard & voice walkthrough
 
@@ -2567,7 +2567,7 @@ Drag a file from Finder into the terminal, or type its path. Vix detects file pa
 
 The path is replaced with a placeholder in the chat display — `[Image #1]`, `[PDF #1]`, or `[File #1]`. Images are base64-encoded and sent as vision input; text and PDF files are read by the daemon and their extracted text is embedded into the message.
 
-You can attach a file from _anywhere on disk_ — including paths outside your project, such as iCloud Drive documents under `~/Library/Mobile Documents/…`. Dragging a file is explicit intent, so attachment access isn't limited to the working directory the way the agent's own file tools are (deny-listed paths such as `~/.ssh` stay blocked). You can also attach while a session is still connecting — the chip appears right away and the file is validated when you send.
+You can attach a file from _anywhere on disk_ — including paths outside your project, such as iCloud Drive documents under `~/Library/Mobile Documents/…`. Dragging a file is explicit intent, so attachment access isn't limited to the working directory the way the agent's own file tools are (deny-listed paths such as `~/.ssh` stay blocked). You can also attach while a thread is still connecting — the chip appears right away and the file is validated when you send.
 
 ## Attachment panel
 
@@ -2630,7 +2630,7 @@ vix [flags]
 | \-p <prompt> | string | — | Run a single prompt headlessly and exit. Use -p - to read from stdin. |
 | \-w <name> | string | — | Workflow name to trigger. Must be used with -p. |
 | \--output-format <fmt> | string | text | Headless output format: text, json, stream-json. |
-| \--workdir <path> | string | $CWD | Set the project working directory for this session. |
+| \--workdir <path> | string | $CWD | Set the project working directory for this thread. |
 | \--config-dir <path> | string | — | Use this dir as the sole .vix config root (ignores ~/.vix and ./.vix). |
 | \--disable-automatic-write-permission | bool | false | Require user confirmation before each write\_file / edit\_file / delete\_file. By default, writes execute without confirmation. |
 | \--disable-automatic-directory-access | bool | false | Restrict tool calls to paths within the working directory. By default, other paths are reachable (with a prompt). |
@@ -2662,7 +2662,7 @@ All subcommands accept `--socket-path` and `--auth-token-path` to target a non-d
 
 ## vix job / vix hook
 
-Fire a scheduled job or a lifecycle hook immediately by id, out of band from its schedule or event. Both print the run's session id and accept `--socket-path` / `--auth-token-path`.
+Fire a scheduled job or a lifecycle hook immediately by id, out of band from its schedule or event. Both print the run's thread id and accept `--socket-path` / `--auth-token-path`.
 
 shell
 
@@ -2692,7 +2692,7 @@ vixd [flags]
 
 ## Credential & tool environment variables
 
-There is no `VIX_MODEL` variable — the model is resolved per session from the active agent's `model:` frontmatter and the Models tab (F3).
+There is no `VIX_MODEL` variable — the model is resolved per thread from the active agent's `model:` frontmatter and the Models tab (F3).
 
 | Variable | Description |
 | --- | --- |
@@ -2728,7 +2728,7 @@ json
 {
   "type": "result",
   "result": "...",
-  "session_id": "a3f2c891",
+  "thread_id": "a3f2c891",
   "is_error": false,
   "num_turns": 4,
   "duration_ms": 12341,
@@ -2766,7 +2766,7 @@ Every daemon event emitted as a newline-delimited JSON object, followed by the f
 1.  `~/.vix/settings.json` — user-global (lower precedence)
 2.  `.vix/settings.json` — project-local (overrides global)
 
-Pass `--config-dir <path>` to use a single directory as the sole config root (neither `~/.vix` nor `./.vix` is consulted) — useful for sandboxed or reproducible sessions.
+Pass `--config-dir <path>` to use a single directory as the sole config root (neither `~/.vix` nor `./.vix` is consulted) — useful for sandboxed or reproducible threads.
 
 `version: 1` is required. Files with missing or mismatched version are ignored.
 
@@ -2819,7 +2819,7 @@ json
 "agent": "general"
 ```
 
-The agent to use for chat sessions. Must match a file in `.vix/agents/` or `~/.vix/agents/`.
+The agent to use for chat threads. Must match a file in `.vix/agents/` or `~/.vix/agents/`.
 
 | Name | Description |
 | --- | --- |
@@ -2976,7 +2976,7 @@ Tunes automatic context compaction (`threshold`, `auto`, `keep_last_n_turns`). S
 
 ## mcp\_servers
 
-An array of Model Context Protocol servers to connect at session start. See [MCP Servers](/docs#mcp) for the field reference.
+An array of Model Context Protocol servers to connect at thread start. See [MCP Servers](/docs#mcp) for the field reference.
 
 ## tool\_timeouts
 
@@ -3059,7 +3059,7 @@ Supports $(variable) substitution and $(file:path) inclusion.
 | --- | --- | --- |
 | name | filename | Agent identifier. Used in spawn\_agent, workflow steps, and settings.json. |
 | description | empty | One-line description. Shown in spawn\_agent listing and TUI. |
-| model | session model | Override the LLM model. Use a provider-prefixed spec, e.g. `anthropic/claude-opus-4-8` or `openai/gpt-5.2`. |
+| model | thread model | Override the LLM model. Use a provider-prefixed spec, e.g. `anthropic/claude-opus-4-8` or `openai/gpt-5.2`. |
 | tools | all tools | Comma-separated whitelist. The LLM only sees listed tools. |
 | effort | — | Effort level hint passed to the model (e.g. low, medium, high). |
 | max\_turns | 20 | Maximum LLM turns before the agent stops and returns its last output. |
@@ -3355,7 +3355,7 @@ json
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | id | string | — | Unique job id. Defaults to the directory name. |
-| name | string | — | Display name used in notifications and the sessions list. |
+| name | string | — | Display name used in notifications and the threads list. |
 | enabled | boolean | ✅ | Disabled jobs are loaded but never fire. Toggle it from the Jobs & Triggers tab (F4) with space, or edit this field directly. |
 | trigger | object | ✅ | When to fire — see Trigger below. |
 | prompt | string | ✅ | What the run does. Literal text, $(file:path), or a mix; file references resolve against cwd at fire time. |
@@ -3363,9 +3363,9 @@ json
 | workflow | object | — | Inline workflow definition (same schema as a config/workflow.json entry), embedded in the job — no separate file. Mutually exclusive with workflow\_id. Both absent = plain chat turn with the general agent. |
 | cwd | string | ✅ | Absolute path of the project the run works in. |
 | permissions | object | — | auto\_write / auto\_dirs, both default true. When false, denied operations are recorded in the run result instead of prompting. |
-| skip\_if\_empty | boolean | — | Skip (zero tokens, no session) when the resolved prompt is effectively empty — only blank lines, headings, HTML comments — or its file is missing. |
+| skip\_if\_empty | boolean | — | Skip (zero tokens, no thread) when the resolved prompt is effectively empty — only blank lines, headings, HTML comments — or its file is missing. |
 | timeout | duration | — | Wall-clock cap per run (Go syntax: "90s", "10m"). Default 10m. |
-| created\_by | string | — | "user", "vix" (shipped jobs), or "agent:<session-id>" when the agent created it. |
+| created\_by | string | — | "user", "vix" (shipped jobs), or "agent:<thread-id>" when the agent created it. |
 
 ## Trigger
 
@@ -3399,7 +3399,7 @@ json
   "last_status": "ok",
   "last_error": "",
   "consecutive_errors": 0,
-  "last_session_id": "run-9f3a...",
+  "last_thread_id": "run-9f3a...",
   "validation_error": ""
 }
 ```
@@ -3410,7 +3410,7 @@ json
 | last\_status | ok | error | skipped | timeout. |
 | last\_error | Failure detail, or notes like denied operations on otherwise-ok runs. |
 | consecutive\_errors | Reset on success; at 5 the job is auto-disabled until its spec file is edited. |
-| last\_session\_id | The persisted run session — find it in the Sessions tab. |
+| last\_thread\_id | The persisted run thread — find it in the Threads tab. |
 | validation\_error | Non-empty when the spec file failed to parse or validate. Fix the file; the watcher re-checks on save. |
 
 ## Scheduler behaviour
@@ -3419,7 +3419,7 @@ json
 -   **Catch-up** — runs missed while the daemon was down fire once at the next start, capped at 3 (most overdue first); the rest are recorded as skipped.
 -   **Retry backoff** — after a failure, the next attempt is pushed to at least 30s, doubling per consecutive failure up to 60m (never earlier than the natural next slot).
 -   **Concurrency** — at most 2 runs execute in parallel by default (see settings below); a job never overlaps itself.
--   **Skip rules** — a run that executes no agent step (a gated poll workflow), answers HEARTBEAT\_OK, or trips skip\_if\_empty is recorded as skipped: no session, no notification, no tokens.
+-   **Skip rules** — a run that executes no agent step (a gated poll workflow), answers HEARTBEAT\_OK, or trips skip\_if\_empty is recorded as skipped: no thread, no notification, no tokens.
 -   **Unattended interaction policy** — confirmation prompts are auto-denied and recorded; questions take the first option; plans are auto-approved.
 
 ## Settings & kill switch
@@ -3447,7 +3447,7 @@ Complete field reference for lifecycle hooks. For the guided introduction, see [
 
 ## Files
 
-One spec per hook in `~/.vix/hooks/<id>/hook.json` (or a project's `.vix/hooks/`). User-authored and hot-reloaded on save. Any helper script the hook runs (e.g. `script.sh`) lives in the same directory. Each fire's outcome is recorded in a machine-written `~/.vix/hooks/<id>/state.json` (a sibling of the spec): last-fire summary plus a `recent_runs` history of the last 10 fires (status, event, async flag, duration, and session id for async workflow/prompt hooks). Never edit it by hand. The full audit trail of every fire stays in the run log under `~/.vix/logs/hooks/<date>.jsonl`.
+One spec per hook in `~/.vix/hooks/<id>/hook.json` (or a project's `.vix/hooks/`). User-authored and hot-reloaded on save. Any helper script the hook runs (e.g. `script.sh`) lives in the same directory. Each fire's outcome is recorded in a machine-written `~/.vix/hooks/<id>/state.json` (a sibling of the spec): last-fire summary plus a `recent_runs` history of the last 10 fires (status, event, async flag, duration, and thread id for async workflow/prompt hooks). Never edit it by hand. The full audit trail of every fire stays in the run log under `~/.vix/logs/hooks/<date>.jsonl`.
 
 ## Spec fields
 
@@ -3476,15 +3476,15 @@ json
 | --- | --- | --- | --- |
 | id | string | — | Unique hook id. Defaults to the directory name. |
 | enabled | boolean | ✅ | Disabled hooks are loaded but never fire. Toggle it from the Jobs & Triggers tab (F4) with space, or edit this field directly. |
-| trigger.event | string | ✅ | One of PreToolUse, PostToolUse, UserPromptSubmit, PermissionRequest, SessionStart, Stop, PreCompact, PostCompact, SubagentStart, SubagentStop. |
-| trigger.matcher | regex | — | Anchored regex over the event's field (tool name; source for SessionStart; trigger for compaction; agent type for subagent events). "" or "\*" matches all. |
+| trigger.event | string | ✅ | One of PreToolUse, PostToolUse, UserPromptSubmit, PermissionRequest, ThreadStart, Stop, PreCompact, PostCompact, SubagentStart, SubagentStop. |
+| trigger.matcher | regex | — | Anchored regex over the event's field (tool name; source for ThreadStart; trigger for compaction; agent type for subagent events). "" or "\*" matches all. |
 | mode | string | — | "sync" (runs inline, returns a decision) or "async" (fire-and-forget, default). |
 | blocking | boolean | — | Sync only. Lets a deny/modify take effect. Valid only on PreToolUse, UserPromptSubmit, and PermissionRequest. |
 | command | string | one of | Shell command (run via bash -c). Receives the context envelope on stdin. |
-| workflow\_id | string | one of | Name of a workflow in config/workflow.json to run in an isolated session (a single bash step works for a fast veto). |
-| workflow | object | one of | Inline workflow definition (same schema as a config/workflow.json entry), run in an isolated session. Mutually exclusive with workflow\_id. |
-| prompt | string | one of | Plain prompt evaluated by an LLM in an isolated session. |
-| cwd | string | — | Working directory. Defaults to the triggering session's cwd. |
+| workflow\_id | string | one of | Name of a workflow in config/workflow.json to run in an isolated thread (a single bash step works for a fast veto). |
+| workflow | object | one of | Inline workflow definition (same schema as a config/workflow.json entry), run in an isolated thread. Mutually exclusive with workflow\_id. |
+| prompt | string | one of | Plain prompt evaluated by an LLM in an isolated thread. |
+| cwd | string | — | Working directory. Defaults to the triggering thread's cwd. |
 | timeout | duration | — | Per-run cap (Go syntax). Defaults: 5s sync, 10m async. Timeout fails open. |
 
 Exactly one action is required: command, a workflow (workflow\_id or inline workflow), or prompt. workflow\_id and workflow are mutually exclusive.
@@ -3497,7 +3497,7 @@ Exactly one action is required: command, a workflow (workflow\_id or inline work
 | PostToolUse | after a tool completes | tool name | context only |
 | UserPromptSubmit | before a prompt enters the turn | — | deny / modify |
 | PermissionRequest | before the user confirms a tool | tool name | deny |
-| SessionStart | when a session begins | source | no |
+| ThreadStart | when a thread begins | source | no |
 | Stop | when a turn finishes | — | no |
 | PreCompact | before the conversation is compacted | trigger | no |
 | PostCompact | after a successful compaction | trigger | no |
@@ -3513,11 +3513,11 @@ Exactly one action is required: command, a workflow (workflow\_id or inline work
 
 ## Context envelope
 
-Common fields on every event: `session_id`, `hook_event_name`, `cwd`, `model`, `permission_mode`, `origin`, `headless`, `session_mode`, `agent`, `turn_count`, and (for vix-initiated sessions) `trigger_type`/`trigger_ref`. Event extras: `tool_name`/`tool_input` (tool events & PermissionRequest), `tool_response`/`is_error` (PostToolUse), `prompt` (UserPromptSubmit), `source` (SessionStart), `trigger` (PreCompact/PostCompact), `agent_type`/`agent_id` (SubagentStart/SubagentStop).
+Common fields on every event: `thread_id`, `hook_event_name`, `cwd`, `model`, `permission_mode`, `origin`, `headless`, `thread_mode`, `agent`, `turn_count`, and (for vix-initiated threads) `trigger_type`/`trigger_ref`. Event extras: `tool_name`/`tool_input` (tool events & PermissionRequest), `tool_response`/`is_error` (PostToolUse), `prompt` (UserPromptSubmit), `source` (ThreadStart), `trigger` (PreCompact/PostCompact), `agent_type`/`agent_id` (SubagentStart/SubagentStop).
 
 ## Disable
 
-`"features": { "hooks": false }` in settings.json, or `VIX_DISABLE_HOOKS=1`. Hooks never fire inside vix-initiated sessions (jobs and hook runs), which is the recursion guard.
+`"features": { "hooks": false }` in settings.json, or `VIX_DISABLE_HOOKS=1`. Hooks never fire inside vix-initiated threads (jobs and hook runs), which is the recursion guard.
 
 ---
 
@@ -3545,7 +3545,7 @@ The directory name is used as the default skill name if `name` is not set in fro
 | --- | --- | --- |
 | name | directory name | Slash-command name. Invoke with /name in chat. |
 | description | empty | One-line description. Shown in /skills listing. |
-| model | session model | Override the LLM model for this skill invocation. |
+| model | thread model | Override the LLM model for this skill invocation. |
 | allowed-tools | all tools | Comma-separated whitelist of tools available during this skill. |
 
 ## Argument substitution
@@ -3619,7 +3619,7 @@ Read a file from disk. PDFs are converted to Markdown automatically.
 | offset | integer | — | Start line (1-based). |
 | limit | integer | — | Max lines to return. |
 
-Output cap: 20,000 chars. Re-reading an unchanged file in the same session is rejected. When the target is a PDF, vix extracts its text layer and returns Markdown (headings, paragraphs, best-effort tables) instead of raw bytes — no external tools required. Scanned/image-only PDFs (no text layer) and password-protected PDFs are reported as such; OCR is not performed. Permissions-only encrypted PDFs that open without a password are decrypted automatically.
+Output cap: 20,000 chars. Re-reading an unchanged file in the same thread is rejected. When the target is a PDF, vix extracts its text layer and returns Markdown (headings, paragraphs, best-effort tables) instead of raw bytes — no external tools required. Scanned/image-only PDFs (no text layer) and password-protected PDFs are reported as such; OCR is not performed. Permissions-only encrypted PDFs that open without a password are decrypted automatically.
 
 ## read\_minified\_file
 
@@ -3804,7 +3804,7 @@ Multiple questions shown as tabs. Blocked in headless mode.
 
 ## todo\_write
 
-Replace the session's TODO list to plan and track multi-step work.
+Replace the thread's TODO list to plan and track multi-step work.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -3814,7 +3814,7 @@ Replace semantics. Validates duplicate ids, dependency cycles, and in-progress i
 
 ## todo\_read
 
-Return the session's current TODO list.
+Return the thread's current TODO list.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -3868,7 +3868,7 @@ shell
 sandbox-exec -p <profile> bash -c <command>
 ```
 
-The profile is generated fresh for each session with the project working directory (`cwd`) substituted in. It starts from **deny default** (everything denied) and then opens only what is needed:
+The profile is generated fresh for each thread with the project working directory (`cwd`) substituted in. It starts from **deny default** (everything denied) and then opens only what is needed:
 
 #### Writable paths
 
@@ -3928,9 +3928,9 @@ If `cwd` is a symlink, both the symlink path and the real path are bind-mounted 
 
 ### Allowed directories
 
-Both mechanisms support runtime-approved extra directories. When the agent runs a `bash` command (or a file tool) referencing a path outside `cwd`, vix detects this and pauses to ask the user for approval. If the user approves, the directory is added to the session's **allowed directories** list for the rest of the session and the sandbox profile is updated accordingly (read-write for bash, accessible for file tools).
+Both mechanisms support runtime-approved extra directories. When the agent runs a `bash` command (or a file tool) referencing a path outside `cwd`, vix detects this and pauses to ask the user for approval. If the user approves, the directory is added to the thread's **allowed directories** list for the rest of the thread and the sandbox profile is updated accordingly (read-write for bash, accessible for file tools).
 
-Approved directories can optionally be persisted to `.vix/settings.json` so they are pre-approved for future sessions.
+Approved directories can optionally be persisted to `.vix/settings.json` so they are pre-approved for future threads.
 
 In headless mode (`-p`), access to paths outside `cwd` is **denied automatically** without prompting.
 
@@ -3998,11 +3998,11 @@ A path is reachable without prompting when it sits under any of:
 -   the host's system directories (e.g. macOS `/usr`, `/bin`, `/Library`, `/etc` read-only and `/tmp`, `/var` read-write; the Linux set is analogous);
 -   any entry in `allowed_directories`.
 
-Anything outside that set surfaces a confirmation prompt in interactive sessions, or an error in headless mode. The `deny_list` always wins, even over an auto-allowed path. Lock down sensitive subpaths of `$HOME` (e.g. `~/.aws`, `~/.ssh`) with the deny list.
+Anything outside that set surfaces a confirmation prompt in interactive threads, or an error in headless mode. The `deny_list` always wins, even over an auto-allowed path. Lock down sensitive subpaths of `$HOME` (e.g. `~/.aws`, `~/.ssh`) with the deny list.
 
 ## allowed\_directories
 
-An array of extra directories that are pre-approved for the session. Directories you approve at runtime (when the agent asks for a path outside the default set) can also be persisted here.
+An array of extra directories that are pre-approved for the thread. Directories you approve at runtime (when the agent asks for a path outside the default set) can also be persisted here.
 
 json
 
@@ -4064,12 +4064,12 @@ A handful of lifecycle and activity events, plus crash reports. Every event carr
 | Event | When | Properties |
 | --- | --- | --- |
 | tui\_started | client launches | app mode (tui/headless), app version |
-| tui\_ended | client exits | session duration (seconds) |
+| tui\_ended | client exits | thread duration (seconds) |
 | turn\_sent | you submit a prompt/workflow | model name (e.g. `anthropic/claude-…`) |
 | daemon\_started | vixd starts | startup duration (ms) |
 | $exception | a panic is recovered | recover site + goroutine stack (Go internals, not your data) |
 
-Common properties attached to every event: vix version, OS, architecture, process mode, and a rotating session id. The distinct identifier is a random device UUID generated once and stored in your OS keychain — it is not tied to your name, email, or account. Coarse location may be derived server-side from the request IP (standard GeoIP); no precise location is sent. Events go to PostHog at `us.i.posthog.com`.
+Common properties attached to every event: vix version, OS, architecture, process mode, and a rotating thread id. The distinct identifier is a random device UUID generated once and stored in your OS keychain — it is not tied to your name, email, or account. Coarse location may be derived server-side from the request IP (standard GeoIP); no precise location is sent. Events go to PostHog at `us.i.posthog.com`.
 
 ## How to opt out
 
@@ -4120,7 +4120,7 @@ Vix ships a bundled `vix-help` skill that uses these files to answer questions a
 
 # The daemon protocol (custom clients)
 
-The TUI is just one client of `vixd`. The daemon speaks a small, stable protocol over its Unix socket, so you can build your own client — a native app, an editor plugin, a script — that reuses everything the daemon does (LLM streaming, tool execution, the brain, sessions, jobs). The repo ships a native macOS example under `apps/vix-mac`.
+The TUI is just one client of `vixd`. The daemon speaks a small, stable protocol over its Unix socket, so you can build your own client — a native app, an editor plugin, a script — that reuses everything the daemon does (LLM streaming, tool execution, the brain, threads, jobs). The repo ships a native macOS example under `apps/vix-mac`.
 
 ## Transport & framing
 
@@ -4130,7 +4130,7 @@ json
 
 ```
 // client -> daemon
-{ "type": "session.input", "auth_token": "<optional>", "data": { "text": "hi" } }
+{ "type": "thread.input", "auth_token": "<optional>", "data": { "text": "hi" } }
 
 // daemon -> client
 { "type": "event.stream_chunk", "data": { "text": "Hello" } }
@@ -4138,7 +4138,7 @@ json
 
 ## Handshake & version
 
-Open a session by sending `session.start` with a `client_version`. The daemon refuses any client whose version does not exactly match its own build. To connect to whatever daemon is running, first call the one-shot `ping` RPC — it returns the daemon's version — then stamp that into `session.start`. The daemon replies with `event.session_started` (or `event.error` with code `version_mismatch`).
+Open a thread by sending `thread.start` with a `client_version`. The daemon refuses any client whose version does not exactly match its own build. To connect to whatever daemon is running, first call the one-shot `ping` RPC — it returns the daemon's version — then stamp that into `thread.start`. The daemon replies with `event.thread_started` (or `event.error` with code `version_mismatch`).
 
 ## The event stream
 
@@ -4148,14 +4148,14 @@ After starting, the client consumes a stream of events: assistant text deltas (`
 
 Three events block the turn until the client answers — this is what makes a client interactive rather than a one-shot runner:
 
--   `event.confirm_request` → reply `session.confirm` (tool permission)
--   `event.user_question` → reply `session.user_answer`
--   `event.plan_proposed` → reply `session.plan_action`
+-   `event.confirm_request` → reply `thread.confirm` (tool permission)
+-   `event.user_question` → reply `thread.user_answer`
+-   `event.plan_proposed` → reply `thread.plan_action`
 
 ## Schema & codegen
 
 The full message surface is generated from the Go structs into a committed JSON Schema (`internal/protocol/schema/vix-protocol.schema.json`, via `make proto-schema`). The same generator emits Swift models for the macOS app (`make mac-models`). Drift tests fail the build if either committed artifact falls out of sync with the structs, so a client generated from the schema stays in lockstep with the daemon.
 
-This covers not just events and commands but also the RPC projection types returned by `session.list` / `job.list` / `hook.list` (`SessionSummary`, `JobSummary`, `HookSummary`) — so a custom client never hand-maintains any part of the wire contract.
+This covers not just events and commands but also the RPC projection types returned by `thread.list` / `job.list` / `hook.list` (`ThreadSummary`, `JobSummary`, `HookSummary`) — so a custom client never hand-maintains any part of the wire contract.
 
 ---

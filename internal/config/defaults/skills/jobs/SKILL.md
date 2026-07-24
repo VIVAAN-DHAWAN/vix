@@ -10,10 +10,10 @@ in its own subdirectory holding a `job.json` spec; the directory is
 hot-reloaded, so **creating a job = writing `~/.vix/jobs/<id>/job.json` with
 `write_file`**. There is no dedicated tool.
 
-Every run executes in an isolated headless session: either a plain chat turn
+Every run executes in an isolated headless thread: either a plain chat turn
 with the general agent, or a workflow when `workflow_id` (a named workflow) or
 `workflow` (an inline definition) is set. Finished runs appear in the user's
-Sessions tab under "Vix-initiated".
+Threads tab under "Vix-initiated".
 
 ## Job spec — `~/.vix/jobs/<id>/job.json`
 
@@ -29,7 +29,7 @@ Sessions tab under "Vix-initiated".
   "permissions": { "auto_write": true, "auto_dirs": true },
   "skip_if_empty": false,
   "timeout": "10m",
-  "created_by": "agent:<your-session-id>"
+  "created_by": "agent:<your-thread-id>"
 }
 ```
 
@@ -63,7 +63,7 @@ Field rules:
   (only blank lines, `#` headings, HTML comments) or its file is missing, the
   run is skipped before any model call. Zero tokens.
 - `timeout` — Go duration, default `10m`. The run is cancelled past it.
-- `created_by` — set `"agent:<session-id>"` when you create a job.
+- `created_by` — set `"agent:<thread-id>"` when you create a job.
 
 ## After writing a job: verify it registered
 
@@ -74,10 +74,10 @@ read it back after creating or editing a job and check the fields:
 - `validation_error` non-empty → fix the spec.
 - `next_run_at` set → scheduled correctly.
 - Later: `last_status` (`ok | error | skipped | timeout`), `last_error`,
-  `last_session_id` (the run's session), `consecutive_errors` (5 in a row
+  `last_thread_id` (the run's thread), `consecutive_errors` (5 in a row
   auto-disables the job until the spec file is edited).
 - `recent_runs` — the last 10 runs (newest last), each with `at`, `status`,
-  `error`, `session_id`, and `duration`. Useful for spotting a flapping job.
+  `error`, `thread_id`, and `duration`. Useful for spotting a flapping job.
 
 To test-fire a new job, give it a near-due schedule (an `at` a minute out, or
 `@every 1m`), watch one run land, then set the real schedule.
@@ -88,7 +88,7 @@ To test-fire a new job, give it a near-due schedule (an `at` a minute out, or
 reads `~/.vix/jobs/heartbeat/heartbeat.md` and follows it. The file is the *whiteboard*: add
 or remove tasks there — never touch the job. While the file holds only
 headings/comments the run skips with zero tokens. A run whose final answer is
-`HEARTBEAT_OK` also leaves no trace; anything else surfaces in the Sessions
+`HEARTBEAT_OK` also leaves no trace; anything else surfaces in the Threads
 tab. To give the user recurring checks, **append tasks to heartbeat.md**
 rather than creating new jobs, unless the schedule must differ.
 
@@ -96,7 +96,7 @@ rather than creating new jobs, unless the schedule must differ.
 
 Combine a frequent job with a workflow whose first step is a **bash** step and
 whose agent step is gated by `execute_if`. Nothing new → no model call, no
-session, recorded as skipped. Example workflow (in
+thread, recorded as skipped. Example workflow (in
 `~/.vix/config/workflow.json`):
 
 ```json
