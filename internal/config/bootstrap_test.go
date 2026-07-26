@@ -2,12 +2,36 @@ package config
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestNoDefaultReferencesLegacySessionIDVar guards the sessions->threads rename:
+// the workflow template variable is now $(thread.id), so no shipped default
+// (workflow.json, skills, prompts) may reference the legacy $(session.id) token,
+// which would silently fail to resolve for users who never authored it.
+func TestNoDefaultReferencesLegacySessionIDVar(t *testing.T) {
+	err := fs.WalkDir(defaultFiles, "defaults", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, rerr := defaultFiles.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		if strings.Contains(string(data), "$(session.id)") {
+			t.Errorf("%s references the renamed workflow variable $(session.id); use $(thread.id)", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embedded defaults: %v", err)
+	}
+}
 
 func readFileT(t *testing.T, path string) string {
 	t.Helper()

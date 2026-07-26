@@ -1807,6 +1807,9 @@ func (s *Thread) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt st
 	// runs, empty otherwise. Always present so the token never leaks unresolved.
 	baseVars["workflow.dir"] = s.jobDir
 	baseVars["thread.id"] = s.id
+	// Legacy alias: workflows authored before the sessions->threads rename
+	// reference $(session.id). Keep it resolving so they don't silently break.
+	baseVars["session.id"] = s.id
 
 	// Resolve entry point params — or, on resume, pick up at the saved cursor.
 	currentRef := &StepRef{

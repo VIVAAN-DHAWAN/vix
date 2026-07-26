@@ -202,7 +202,7 @@
             }
           ],
           "prompt": "$(file:prompts/plan_workflow/whiteboard.md)",
-          "output": ".vix/whiteboards/$(session.id).json",
+          "output": ".vix/whiteboards/$(thread.id).json",
           "stream": false
         },
         "open_whiteboard": {
@@ -213,7 +213,7 @@
               "description": "The implementation plan to pass to the whiteboard"
             }
           },
-          "command": "SCENES=$(python3 -c \"import urllib.parse,sys; sys.stdout.write(urllib.parse.quote(open('.vix/whiteboards/$(session.id).json').read().strip()))\") && PLAN=$(python3 -c \"import urllib.parse,sys; sys.stdout.write(urllib.parse.quote(sys.argv[1]))\" \"$(plan)\") && if [ \"$(platform)\" = \"darwin\" ]; then open \"http://127.0.0.1:1337/session/$(session.id)/whiteboard?scenes=$SCENES&plan=$PLAN&agent_id=agent_1201krde0b6jebpvqth0zxpcdqss\"; else xdg-open \"http://127.0.0.1:1337/session/$(session.id)/whiteboard?scenes=$SCENES&plan=$PLAN&agent_id=agent_1201krde0b6jebpvqth0zxpcdqss\"; fi",
+          "command": "SCENES=$(python3 -c \"import urllib.parse,sys; sys.stdout.write(urllib.parse.quote(open('.vix/whiteboards/$(thread.id).json').read().strip()))\") && PLAN=$(python3 -c \"import urllib.parse,sys; sys.stdout.write(urllib.parse.quote(sys.argv[1]))\" \"$(plan)\") && if [ \"$(platform)\" = \"darwin\" ]; then open \"http://127.0.0.1:1337/thread/$(thread.id)/whiteboard?scenes=$SCENES&plan=$PLAN&agent_id=agent_1201krde0b6jebpvqth0zxpcdqss\"; else xdg-open \"http://127.0.0.1:1337/thread/$(thread.id)/whiteboard?scenes=$SCENES&plan=$PLAN&agent_id=agent_1201krde0b6jebpvqth0zxpcdqss\"; fi",
           "silent": true,
           "next_steps": [
             {
