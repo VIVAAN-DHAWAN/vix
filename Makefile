@@ -1,4 +1,4 @@
-.PHONY: build build-web build-all pull push test test-e2e test-e2e-sharded release run-server run-ui patch-deps vendor-cgo-sources update-deps web-source proto-schema mac-models mac-probe mac-build bundle-mac run-mac
+.PHONY: build build-web build-all pull push test test-e2e test-e2e-sharded test-all test-perf perf-corpus perf-baseline perf-smoke release run-server run-ui patch-deps vendor-cgo-sources update-deps web-source proto-schema mac-models mac-probe mac-build bundle-mac run-mac
 
 # The web UI source lives in a private submodule (internal/daemon/web/source).
 # It is only needed to *rebuild* the UI; the built output (internal/daemon/web/dist/)
@@ -194,6 +194,33 @@ update-deps:
 test:
 	go test ./...
 
+# Number of benchmark repetitions for benchstat (higher = stabler, slower).
+COUNT ?= 10
+
+# Generate/validate the on-disk benchmark corpora (idempotent; gitignored).
+# Sizing knobs: PERF_BIG_MB (MiB per big file, default 20), PERF_HUGE=1 (1M files).
+perf-corpus:
+	go run ./cmd/perftool gen-corpus
+
+# Run the performance benchmarks, write perf/results/<commit>.txt, and print a
+# benchstat comparison vs the baseline and the previous committed result.
+# Does NOT commit — `make release` records the result on release.
+test-perf:
+	COUNT=$(COUNT) go run ./cmd/perftool run
+
+# Run the benchmarks once and write perf/results/baseline.txt. Commit it as the
+# frozen reference (first-run baseline).
+perf-baseline:
+	COUNT=$(COUNT) go run ./cmd/perftool baseline
+
+# Fast breakage guard: run every benchmark exactly once (-benchtime=1x).
+perf-smoke:
+	go run ./cmd/perftool smoke
+
+# Full pre-release verification: unit tests, containerized e2e, then perf.
+# e2e requires Docker and is slow (see the test-e2e target).
+test-all: test test-e2e test-perf
+
 # Map the host arch to Go's GOARCH naming for the e2e container.
 E2E_ARCH := $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
@@ -244,9 +271,14 @@ test-e2e-sharded:
 # Build these versions: darwin-arm64 + linux-amd64 + linux-arm64, Docker for Linux
 release:
 	@[ "$(VERSION)" ] || ( echo "Usage: make release VERSION=v1.x.x"; exit 1 )
+	@# Refuse to release a commit whose performance wasn't benchmarked.
+	@# perf/results/<HEAD>.txt must exist (run `make test-perf`) and the tree clean.
+	go run ./cmd/perftool gate
 	$(MAKE) build-web
 	@if [ -n "$$(git status --porcelain internal/daemon/web/dist)" ]; then \
 		git add internal/daemon/web/dist && \
 		git commit -m "chore: rebuild web dist for $(VERSION)"; \
 	fi
+	@# Commit this release's recorded benchmark results (perf/results/<commit>.txt).
+	go run ./cmd/perftool record
 	./script/release.sh $(VERSION) --repo get-vix/vix

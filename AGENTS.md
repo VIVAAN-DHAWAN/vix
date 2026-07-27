@@ -236,7 +236,53 @@ When the user asks for a plan, it must include **unit tests** and **end-to-end
 tests** covering the new or changed behaviour. Author the end-to-end tests with
 the `write-e2e-test` skill (project-local, `./.vix/skills/write-e2e-test/`),
 which drives the real vix TUI and vixd daemon against the mock LLM server; see
-`e2e/README.md` for the harness details.
+`e2e/README.md` for the harness details. When the change touches a
+performance-sensitive hot path (code scanning/parsing, LLM stream decoding,
+thread persistence, access stats), the plan should also add or update a
+**benchmark** — see "Performance tests" below.
+
+## Performance tests
+
+In addition to unit and e2e tests, vix has Go `testing.B` **benchmarks** for its
+hot paths, plus tooling that records one result per commit and compares releases
+with `benchstat`. Everything lives under `perf/` (see `perf/README.md`); the
+reusable, unit-tested logic is `internal/perf` and the orchestration is
+`cmd/perftool`.
+
+Conventions:
+
+- **The model is always stubbed** — an `httptest` server replaying canned SSE
+  (`internal/daemon/llm/bench_test.go`) or the in-process `fakeCompactionLLM`
+  (`internal/daemon/bench_test.go`). Benchmarks never hit the network.
+- **Disk is real, not abstracted** — benchmarks run against isolated
+  `b.TempDir()` dirs and generated corpora (`make perf-corpus`), and access
+  stats against an in-memory SQLite (`:memory:`). No FS abstraction is injected
+  into production code, so nothing extra ships in the binaries.
+- Each benchmark calls `benchQuiet(b)` to silence the stdlib logger (keeps
+  output benchstat-parseable and timings clean) and has a `*_Smoke` test that
+  runs its body once, so `make test` guards against breakage.
+
+Benchmarks live in `internal/daemon`, `internal/daemon/brain`, and
+`internal/daemon/llm` (`bench_test.go` in each; the package list is
+`perf.BenchPackages`).
+
+Make targets:
+
+```bash
+make perf-corpus     # generate on-disk corpora once (idempotent; gitignored)
+make test-perf       # run benchmarks, write perf/results/<commit>.txt, benchstat vs baseline + previous (no commit)
+make perf-baseline   # write perf/results/baseline.txt (frozen reference — commit it once)
+make perf-smoke      # run every benchmark once (-benchtime=1x) as a breakage guard
+make test-all        # unit tests, then e2e (Docker), then perf
+```
+
+Results are keyed by commit hash. `make test-perf` writes
+`perf/results/<HEAD>.txt`; that file is the "this commit was benchmarked"
+marker. **`make release` refuses to proceed** (`perftool gate`) until it exists
+and the working tree is clean, then commits it as the release's recorded result
+(`perftool record`). `COUNT=N` sets the benchstat repetition count (default 10).
+Numbers are machine-dependent — run releases from a consistent host and rely on
+benchstat *deltas*, not absolute values.
 
 ## Consent before implementation
 
