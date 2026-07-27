@@ -161,7 +161,8 @@ jq -r '.title // ""' "$out" 2>/dev/null | "$(workflow.dir)/tracker.sh" "$(workfl
 // actStubClaimE2E stands in for the agent step: it records which URL it
 // processed and NEVER touches the tracker, so any dedup must come from the
 // pre-act claim. It runs in the job dir so the marker sits beside the tracker.
-const actStubClaimE2E = `printf '%s\n' "$(step.select)" >> "$(workflow.dir)/processed.txt"`
+const actStubClaimE2E = `url="$(step.select)"
+printf '%s\n' "${url%$'\n'}" >> "$(workflow.dir)/processed.txt"`
 
 func claimJobSpec() string {
 	spec := map[string]any{

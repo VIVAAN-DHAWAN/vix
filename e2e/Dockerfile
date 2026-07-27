@@ -24,11 +24,12 @@ ARG TARGETARCH
 
 # bash + coreutils so the agent's bash tool (ls, cat, …) works inside the
 # container; grep + jq so lifecycle-hook commands can match/parse tool input the
-# way real hooks (and the docs' examples) do; ca-certificates is harmless and
-# handy. fontconfig/fonts let freeze render text glyphs in the PNGs.
+# way real hooks (and the docs' examples) do; sqlite3 for the GitHub watch-job
+# tracker.sh used by the jobs.github_claim scenario; ca-certificates is harmless
+# and handy. fontconfig/fonts let freeze render text glyphs in the PNGs.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash coreutils grep jq ca-certificates fontconfig fonts-dejavu bubblewrap tmux \
+      bash coreutils grep jq sqlite3 ca-certificates fontconfig fonts-dejavu bubblewrap tmux \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=freeze-builder /go/bin/freeze /usr/local/bin/freeze
