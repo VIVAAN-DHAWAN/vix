@@ -8,12 +8,12 @@ Come say hello and join the conversation in the **#contributors** channel on our
 
 We value contributions in this order:
 
-1. **Bug fixes** - especially crashes, data loss, and stack overflows
-2. **Cross-platform compatibility** - macOS, Linux, and Windows support
-3. **Security hardening** - shell injection, prompt injection, and privilege escalation prevention
-4. **Performance and robustness** - error handling, retry logic, and resource management
-5. **New tools and skills** - broadly useful additions
-6. **Documentation** - fixes and clarifications
+1. **Bug fixes** - especially crashes, data loss, and stack overflows.
+2. **Cross-platform compatibility** - macOS, Linux, and Windows support.
+3. **Security hardening** - shell injection, prompt injection, and privilege escalation prevention.
+4. **Performance and robustness** - error handling, retry logic, and resource management.
+5. **New tools and skills** - broadly useful additions.
+6. **Documentation** - fixes and clarifications.
 
 ## Development Setup
 
