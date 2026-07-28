@@ -42,27 +42,33 @@ func (s *Server) readHomeMCPServers() []mcp.ServerConfig {
 
 // MCPServerSummaries lists every configured MCP server for the MCP tab. Disabled
 // servers are reported without a probe; enabled servers are dialed (with a
-// bounded timeout) to report connection status and tool count. Order follows the
-// settings.json declaration order.
+// bounded timeout) to report connection status and tool count. OAuth servers
+// without a stored token are reported as "needs_auth" without a probe. Order
+// follows the settings.json declaration order.
 func (s *Server) MCPServerSummaries() []protocol.MCPServerSummary {
 	configs := s.readHomeMCPServers()
 	if len(configs) == 0 {
 		return nil
 	}
 
-	// Probe only the enabled servers.
-	var enabled []mcp.ServerConfig
+	// Probe only the enabled servers that can actually connect: non-OAuth
+	// servers, plus OAuth servers that already have a stored token.
+	var toProbe []mcp.ServerConfig
 	for _, cfg := range configs {
-		if cfg.Name != "" && cfg.IsEnabled() {
-			enabled = append(enabled, cfg)
+		if cfg.Name == "" || !cfg.IsEnabled() {
+			continue
 		}
+		if cfg.UsesOAuth() && !hasMCPToken(cfg.Name) {
+			continue
+		}
+		toProbe = append(toProbe, cfg)
 	}
 
-	statuses := make(map[string]mcp.ServerStatus, len(enabled))
-	if len(enabled) > 0 {
+	statuses := make(map[string]mcp.ServerStatus, len(toProbe))
+	if len(toProbe) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), mcpProbeTimeout)
 		defer cancel()
-		for _, st := range mcp.ProbeServers(ctx, enabled) {
+		for _, st := range mcp.ProbeServers(ctx, toProbe, mcp.WithTokenStore(newMCPTokenStore())) {
 			statuses[st.Name] = st
 		}
 	}
@@ -76,10 +82,24 @@ func (s *Server) MCPServerSummaries() []protocol.MCPServerSummary {
 			Name:    cfg.Name,
 			Enabled: cfg.IsEnabled(),
 		}
+		if cfg.UsesOAuth() {
+			if hasMCPToken(cfg.Name) {
+				sum.Auth = "authenticated"
+			} else {
+				sum.Auth = "needs_auth"
+			}
+		}
 		if !cfg.IsEnabled() {
 			sum.Status = "disabled"
 			// Type is still useful in the disabled row.
 			sum.Type = mcpNormalizedType(cfg)
+			out = append(out, sum)
+			continue
+		}
+		// OAuth server with no token yet: report needs_auth without a probe.
+		if cfg.UsesOAuth() && !hasMCPToken(cfg.Name) {
+			sum.Type = mcpNormalizedType(cfg)
+			sum.Status = "needs_auth"
 			out = append(out, sum)
 			continue
 		}

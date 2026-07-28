@@ -1027,6 +1027,24 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, setMCPEnabled(m.socketPath, m.authToken, srv.Name, !srv.Enabled)
 				}
 				return m, nil
+			case "a":
+				// Authenticate the selected OAuth server (needs_auth).
+				if m.mcpSelected >= 0 && m.mcpSelected < len(m.mcpServers) {
+					srv := m.mcpServers[m.mcpSelected]
+					if srv.Auth == "needs_auth" {
+						return m, authorizeMCP(m.socketPath, m.authToken, srv.Name)
+					}
+				}
+				return m, nil
+			case "o":
+				// Sign out of the selected authenticated OAuth server.
+				if m.mcpSelected >= 0 && m.mcpSelected < len(m.mcpServers) {
+					srv := m.mcpServers[m.mcpSelected]
+					if srv.Auth == "authenticated" {
+						return m, logoutMCP(m.socketPath, m.authToken, srv.Name)
+					}
+				}
+				return m, nil
 			}
 			return m, nil
 		}

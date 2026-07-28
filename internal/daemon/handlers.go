@@ -261,4 +261,32 @@ func RegisterBuiltinHandlers(s *Server) {
 		}
 		return map[string]any{"status": "ok"}, nil
 	})
+
+	// mcp.authorize starts the interactive OAuth flow for a server and returns
+	// the authorization URL to open in a browser. Backs `vix mcp auth` and the
+	// F4 tab's authenticate action.
+	s.RegisterHandler("mcp.authorize", func(data map[string]any) (map[string]any, error) {
+		name, _ := data["name"].(string)
+		if name == "" {
+			return map[string]any{"status": "error", "message": "missing 'name'"}, nil
+		}
+		authURL, err := s.BeginMCPAuth(name)
+		if err != nil {
+			return map[string]any{"status": "error", "message": err.Error()}, nil
+		}
+		return map[string]any{"status": "ok", "auth_url": authURL}, nil
+	})
+
+	// mcp.logout deletes the stored OAuth token for a server. Backs
+	// `vix mcp logout` and the F4 tab's sign-out action.
+	s.RegisterHandler("mcp.logout", func(data map[string]any) (map[string]any, error) {
+		name, _ := data["name"].(string)
+		if name == "" {
+			return map[string]any{"status": "error", "message": "missing 'name'"}, nil
+		}
+		if err := s.LogoutMCP(name); err != nil {
+			return map[string]any{"status": "error", "message": err.Error()}, nil
+		}
+		return map[string]any{"status": "ok"}, nil
+	})
 }

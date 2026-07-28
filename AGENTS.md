@@ -139,6 +139,49 @@ Connections are **per-thread**: `mcp.Pool` (`internal/daemon/mcp/pool.go`) is
 built in `Thread.initBrain`, skipping disabled servers and (for URL servers)
 deny-listed addresses.
 
+### OAuth for url servers
+
+A `url` server may add an `oauth` block (`mcp.OAuthConfig`, `types.go`) to
+authenticate via the OAuth 2.0 authorization-code flow (PKCE + loopback
+redirect) instead of static headers:
+
+```json
+{"name": "drive", "type": "url", "url": "https://drivemcp.googleapis.com/mcp/v1",
+ "oauth": {"client_id": "…", "client_secret": "${GDRIVE_SECRET}", "scopes": ["…"]}}
+```
+
+`auth_url`/`token_url` are optional — when omitted vix **auto-discovers** them
+from the server (RFC 9728 protected-resource metadata → RFC 8414 authorization-
+server metadata; `oauth_discovery.go`). `client_secret` accepts `${VAR}`.
+
+The **redirect URI** is hosted on the mission-control web server: a single fixed
+`http://127.0.0.1:<web-port>/mcp/oauth/callback` (default port 1337) that is
+**registered once and reused for every OAuth MCP server**
+(`Server.handleMCPOAuthCallback`, route added in `webserver.go`). The route is
+unauthenticated by design (the provider's browser redirect carries no vix token)
+but only completes a flow whose unguessable `state` matches a live pending entry
+in the daemon's `state → *mcp.AuthFlow` registry (`registerMCPAuthFlow` /
+`takeMCPAuthFlow`, single-use, expiring). When the web UI is **disabled**
+(`--web-port 0`) vix falls back to a **self-hosted ephemeral loopback listener**
+(`mcp.Authorize`); pin its port with `redirect_port` and register
+`http://127.0.0.1:<port>/callback` instead.
+
+Tokens are stored through the vix credential store (OS keyring, `0600`
+`auth.json` fallback) under key `mcp-oauth-<server>` (`mcp_oauth.go`,
+`mcpTokenStore`), refreshed automatically, and injected as `Authorization:
+Bearer`; a `401` triggers one refresh+retry (`client_http.go`). Consider
+deny-listing the credential file. The interactive flow is a one-time step —
+headless job threads never open a browser; they only consume/refresh a
+previously stored token (else `ErrNeedsAuth`).
+
+Authenticate out of band with **`vix mcp auth <server>`** (or `vix mcp logout
+<server>`), or from the **F4 MCP tab**: an OAuth server with no token shows
+`needs auth`; press `a` to authenticate, `o` to sign out. The daemon owns the
+loopback listener and token exchange (`Server.BeginMCPAuth`/`LogoutMCP`,
+`mcp.authorize`/`mcp.logout` handlers); the CLI/TUI just open the browser and
+poll `mcp.list`, whose `MCPServerSummary.Auth` is `authenticated` / `needs_auth`
+/ `""`.
+
 The TUI **MCP tab (F4)** lists every configured server with its transport type,
 status (`connected`/`error`/`disabled`), and tool count, and toggles a server's
 `enabled` field with Space. It is daemon-global (MCP is home-only). Data flow

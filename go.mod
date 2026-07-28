@@ -42,6 +42,7 @@ require (
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/net v0.41.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.42.0
 	modernc.org/sqlite v1.46.1
 )

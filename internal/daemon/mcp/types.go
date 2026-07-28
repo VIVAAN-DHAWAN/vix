@@ -18,6 +18,11 @@ type ServerConfig struct {
 	// Headers are sent with every HTTP request (e.g. Authorization).
 	// Values of the form "${VAR}" are expanded from the environment at connect time.
 	Headers map[string]string `json:"headers,omitempty"`
+	// OAuth, when set on a url server, enables an OAuth 2.0 authorization-code
+	// flow: the access token is injected as an Authorization: Bearer header and
+	// refreshed automatically. Endpoints are auto-discovered (RFC 9728 + RFC
+	// 8414) unless AuthURL/TokenURL are set explicitly.
+	OAuth *OAuthConfig `json:"oauth,omitempty"`
 	// AllowedTools, when non-empty, restricts which tools from this server are
 	// exposed to the LLM. Unlisted tools are silently dropped after tools/list.
 	AllowedTools []string `json:"allowed_tools,omitempty"`
@@ -34,6 +39,26 @@ type ServerConfig struct {
 // field (nil pointer) defaults to true.
 func (c ServerConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
+}
+
+// UsesOAuth reports whether this server authenticates via the OAuth 2.0 flow.
+func (c ServerConfig) UsesOAuth() bool {
+	return c.OAuth != nil && c.OAuth.ClientID != ""
+}
+
+// OAuthConfig describes an OAuth 2.0 authorization-code flow for a url MCP
+// server. ClientSecret may be given as "${VAR}" to read it from the environment.
+// AuthURL/TokenURL are optional: when omitted, vix discovers them from the
+// server via RFC 9728 (protected-resource metadata) and RFC 8414 (authorization-
+// server metadata).
+type OAuthConfig struct {
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+	AuthURL      string   `json:"auth_url,omitempty"`
+	TokenURL     string   `json:"token_url,omitempty"`
+	// RedirectPort pins the loopback callback port (0 = an ephemeral free port).
+	RedirectPort int `json:"redirect_port,omitempty"`
 }
 
 // ToolDef is a tool discovered from an MCP server via tools/list.

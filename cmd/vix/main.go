@@ -62,6 +62,12 @@ func main() {
 		os.Exit(runHookCommand(os.Args[2:]))
 	}
 
+	// `vix mcp auth|logout <server>` — manage OAuth authentication for a url MCP
+	// server. Sibling verb group to `vix daemon`/`vix thread`.
+	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
+		os.Exit(runMcpCommand(os.Args[2:]))
+	}
+
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	forceInit := flag.Bool("force-init", false, "Delete and re-create the .vix directory")
 	testMode := flag.Bool("test", false, "Fill chat with fake data for UI testing")
@@ -871,6 +877,97 @@ Flags:
 		fmt.Println(fireID)
 	}
 	return 0
+}
+
+// runMcpCommand implements `vix mcp auth <server>` and `vix mcp logout <server>`:
+// manage OAuth authentication for a url MCP server. `auth` starts the browser
+// consent flow (the daemon holds the loopback listener and exchanges the token)
+// and polls until the server reports authenticated. Returns the exit code.
+func runMcpCommand(args []string) int {
+	usage := func() {
+		fmt.Fprintf(os.Stderr, `Usage: vix mcp <auth|logout> <server> [flags]
+
+  auth <server>     Authenticate an OAuth MCP server. Opens your browser to the
+                    provider's consent screen; on approval the token is stored
+                    and the server's tools become available to new threads.
+  logout <server>   Delete the stored OAuth token for a server.
+
+Flags:
+  -socket-path string      Unix socket path (env VIX_SOCKET_PATH, default /tmp/vixd.sock)
+  -auth-token-path string  Shared-secret token file, must match the daemon's
+`)
+	}
+	if len(args) == 0 || (args[0] != "auth" && args[0] != "logout") {
+		usage()
+		return 1
+	}
+	action := args[0]
+
+	fs := flag.NewFlagSet("vix mcp "+action, flag.ExitOnError)
+	socketPath := fs.String("socket-path", "", "Unix socket path for the vix↔vixd connection. Env: VIX_SOCKET_PATH. Default: /tmp/vixd.sock.")
+	authTokenPath := fs.String("auth-token-path", "", "Path to a file holding the shared-secret token. Must match the daemon's -auth-token-path.")
+	fs.Parse(args[1:])
+	if fs.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "Error: missing MCP server name\n\n")
+		usage()
+		return 1
+	}
+	name := fs.Arg(0)
+
+	client, code := dialDaemon(*socketPath, *authTokenPath)
+	if client == nil {
+		return code
+	}
+
+	if action == "logout" {
+		if err := client.LogoutMCP(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Signed out of MCP server %q.\n", name)
+		return 0
+	}
+
+	authURL, err := client.AuthorizeMCP(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Opening your browser to authorize %q.\nIf it doesn't open, visit:\n\n  %s\n\n", name, authURL)
+	openURLBestEffort(authURL)
+
+	// Poll until the server reports authenticated (or we give up).
+	deadline := time.Now().Add(5 * time.Minute)
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+		servers, err := client.ListMCPServers()
+		if err != nil {
+			continue
+		}
+		for _, srv := range servers {
+			if srv.Name == name && srv.Auth == "authenticated" {
+				fmt.Printf("Authorized %q. Its tools are available to new threads.\n", name)
+				return 0
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Timed out waiting for authorization of %q.\n", name)
+	return 1
+}
+
+// openURLBestEffort opens url in the default browser, ignoring any error (the
+// caller has already printed the URL as a fallback).
+func openURLBestEffort(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
 }
 
 // daemonServicePaths returns the login-service definition for this platform:

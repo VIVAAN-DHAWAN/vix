@@ -72,6 +72,13 @@ func StartWebServer(ctx context.Context, s *Server, port int) {
 	// Fire an existing job immediately (add + trigger from the web UI).
 	mux.HandleFunc("/api/jobs/{id}/run", handleRunJob(s))
 
+	// OAuth redirect target for MCP url servers. Shared, fixed callback host so a
+	// single redirect URI (http://127.0.0.1:<web-port>/mcp/oauth/callback) can be
+	// registered once and reused for every OAuth MCP server. Unauthenticated by
+	// design (the provider's browser redirect carries no vix token); it validates
+	// an unguessable state token against a live pending flow.
+	mux.HandleFunc("/mcp/oauth/callback", s.handleMCPOAuthCallback)
+
 	// New per-thread API routes
 	mux.HandleFunc("/api/thread/{id}/interview-data", handleInterviewData(s))
 	mux.HandleFunc("/api/thread/{id}/signed-url", handleSignedURL(s))

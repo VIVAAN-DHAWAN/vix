@@ -875,7 +875,7 @@ func (s *Thread) initBrain() {
 			allowedServers = append(allowedServers, srv)
 		}
 		if len(allowedServers) > 0 {
-			pool := mcp.NewPool(s.ctx, allowedServers)
+			pool := mcp.NewPool(s.ctx, allowedServers, mcp.WithTokenStore(newMCPTokenStore()))
 			s.mcpPool = pool
 			s.tools = append(s.tools, pool.ToolSchemas()...)
 			log.Printf("[thread] MCP: %d server(s), %d tool(s) loaded",

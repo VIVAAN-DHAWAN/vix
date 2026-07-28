@@ -543,6 +543,9 @@ type MCPServerSummary struct {
 	Status    string `json:"status"`
 	ToolCount int    `json:"tool_count"`
 	Error     string `json:"error,omitempty"`
+	// Auth describes OAuth state for servers configured with `oauth`:
+	// "authenticated", "needs_auth", or "" (not an OAuth server).
+	Auth string `json:"auth,omitempty"`
 }
 
 // JobSummary is the lightweight projection of a scheduled job returned by the

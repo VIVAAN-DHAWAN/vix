@@ -43,14 +43,42 @@ func setMCPEnabled(socketPath, authToken, name string, enabled bool) tea.Cmd {
 	}
 }
 
+// authorizeMCP starts the OAuth flow for a server: it asks the daemon for the
+// authorization URL, opens the browser, then refreshes the list. The exchange
+// completes asynchronously in the daemon, which broadcasts event.mcp_changed to
+// refresh the tab once the token is stored.
+func authorizeMCP(socketPath, authToken, name string) tea.Cmd {
+	return func() tea.Msg {
+		client := daemon.NewClient(socketPath)
+		client.SetAuthToken(authToken)
+		if url, err := client.AuthorizeMCP(name); err == nil && url != "" {
+			openLoginBrowser(url)
+		}
+		return fetchMCPServers(socketPath, authToken)()
+	}
+}
+
+// logoutMCP deletes the stored OAuth token for a server, then refreshes the list.
+func logoutMCP(socketPath, authToken, name string) tea.Cmd {
+	return func() tea.Msg {
+		client := daemon.NewClient(socketPath)
+		client.SetAuthToken(authToken)
+		client.LogoutMCP(name)
+		return fetchMCPServers(socketPath, authToken)()
+	}
+}
+
 // mcpStatusLabel renders a server's status in the "Status" column, prefixing a ⚠
-// marker for connection failures so a broken server stands out.
+// marker for connection failures so a broken server stands out and surfacing the
+// OAuth "needs auth" / "signed in" states.
 func mcpStatusLabel(sum protocol.MCPServerSummary) string {
 	switch sum.Status {
 	case "connected":
 		return "connected"
 	case "disabled":
 		return "disabled"
+	case "needs_auth":
+		return "🔒 needs auth"
 	default:
 		return "⚠ error"
 	}
@@ -74,6 +102,7 @@ func renderMCPView(servers []protocol.MCPServerSummary, width, height int, s Sty
 		"",
 		"  "+descStyle.Render("Here is the list of all the MCP servers configured in your home settings."),
 		"  "+descStyle.Render("Press space to enable/disable the selected server."),
+		"  "+descStyle.Render("For OAuth servers: press a to authenticate, o to sign out."),
 		"  "+descStyle.Render("Docs: ")+linkStyle.Render(mcpTabDocURL),
 		"",
 		"  "+hintStyle.Render("Tip: MCP servers are defined under \"mcp_servers\" in ~/.vix/settings.json."),

@@ -180,6 +180,11 @@ func defaultStore() CredentialStore {
 // BackendFile) so callers (the UI) can warn when secrets are kept in cleartext.
 func CredentialBackend() string { return defaultStore().Backend() }
 
+// DefaultCredentialStore returns the process-wide credential store (OS keyring,
+// or the auth.json fallback). Exposed so other subsystems (e.g. MCP OAuth token
+// storage) persist secrets through the same backend as provider credentials.
+func DefaultCredentialStore() CredentialStore { return defaultStore() }
+
 // selectStore picks the backend: the keyring when usable, otherwise a plaintext
 // auth.json fallback at authFile (or a system-temp path when authFile is empty,
 // e.g. when the home dir is unavailable). Pure so it can be unit-tested without

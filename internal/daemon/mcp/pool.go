@@ -27,6 +27,28 @@ type Pool struct {
 	configs map[string]serverMeta
 }
 
+// options holds optional dependencies for NewPool/ProbeServers.
+type options struct {
+	store TokenStore
+}
+
+// Option configures NewPool/ProbeServers.
+type Option func(*options)
+
+// WithTokenStore supplies the OAuth token store used by url servers configured
+// with `oauth`. Without it, such servers fail to connect (ErrNeedsAuth).
+func WithTokenStore(store TokenStore) Option {
+	return func(o *options) { o.store = store }
+}
+
+func applyOptions(opts []Option) options {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
+	return o
+}
+
 // serverMeta holds security-relevant config for a connected server.
 type serverMeta struct {
 	requireConfirmation bool
@@ -46,19 +68,42 @@ func normalizedType(cfg ServerConfig) string {
 // connectClient dials a single MCP server, dispatching on its transport, and
 // runs the initialize + tools/list handshake. Returns a validation error for
 // misconfigured entries (missing url/command) without attempting a connection.
-func connectClient(ctx context.Context, cfg ServerConfig) (client, error) {
+// store supplies OAuth tokens for url servers configured with `oauth`; it may be
+// nil when no OAuth server is involved.
+func connectClient(ctx context.Context, cfg ServerConfig, store TokenStore) (client, error) {
 	switch strings.ToLower(cfg.Type) {
 	case "url", "http", "sse":
 		if cfg.URL == "" {
 			return nil, fmt.Errorf("type=%q requires a 'url' field", cfg.Type)
 		}
-		return newHTTPClient(cfg.Name, cfg.URL, cfg.Headers)
+		var oauth bearerSource
+		if cfg.UsesOAuth() {
+			src, err := buildOAuthSource(ctx, cfg, store)
+			if err != nil {
+				return nil, err
+			}
+			oauth = src
+		}
+		return newHTTPClient(cfg.Name, cfg.URL, cfg.Headers, oauth)
 	default: // "stdio" or empty → stdio
 		if cfg.Command == "" {
 			return nil, fmt.Errorf("stdio transport requires a 'command' field")
 		}
 		return newStdioClient(ctx, cfg.Name, cfg.Command, cfg.Args, cfg.Env)
 	}
+}
+
+// buildOAuthSource resolves cfg's OAuth config and returns a refreshing token
+// source, or ErrNeedsAuth when no token is stored yet.
+func buildOAuthSource(ctx context.Context, cfg ServerConfig, store TokenStore) (bearerSource, error) {
+	if store == nil {
+		return nil, fmt.Errorf("oauth server %q: no token store available", cfg.Name)
+	}
+	oc, err := resolveOAuthConfig(ctx, cfg, "")
+	if err != nil {
+		return nil, err
+	}
+	return newTokenSource(ctx, cfg, store, oc)
 }
 
 // allowedToolCount returns how many of c's tools survive cfg's AllowedTools
@@ -84,14 +129,15 @@ func allowedToolCount(cfg ServerConfig, c client) int {
 // and how many tools it exposes, then tears the connection down. It is used by
 // the MCP tab to report status without an active chat thread. Servers with an
 // empty name are skipped. The probe respects ctx for cancellation/timeout.
-func ProbeServers(ctx context.Context, configs []ServerConfig) []ServerStatus {
+func ProbeServers(ctx context.Context, configs []ServerConfig, opts ...Option) []ServerStatus {
+	o := applyOptions(opts)
 	out := make([]ServerStatus, 0, len(configs))
 	for _, cfg := range configs {
 		if cfg.Name == "" {
 			continue
 		}
 		st := ServerStatus{Name: cfg.Name, Type: normalizedType(cfg)}
-		c, err := connectClient(ctx, cfg)
+		c, err := connectClient(ctx, cfg, o.store)
 		if err != nil {
 			st.Error = err.Error()
 			out = append(out, st)
@@ -113,7 +159,8 @@ func ProbeServers(ctx context.Context, configs []ServerConfig) []ServerStatus {
 //
 // The caller is responsible for deny-list URL filtering before passing configs;
 // see thread.initBrain which calls isURLDenied before adding an entry.
-func NewPool(ctx context.Context, configs []ServerConfig) *Pool {
+func NewPool(ctx context.Context, configs []ServerConfig, opts ...Option) *Pool {
+	o := applyOptions(opts)
 	p := &Pool{
 		clients: make(map[string]client, len(configs)),
 		configs: make(map[string]serverMeta, len(configs)),
@@ -127,7 +174,7 @@ func NewPool(ctx context.Context, configs []ServerConfig) *Pool {
 		var c client
 		var err error
 
-		c, err = connectClient(ctx, cfg)
+		c, err = connectClient(ctx, cfg, o.store)
 
 		if err != nil {
 			log.Printf("[mcp] server %q: failed to connect: %v (skipping)", cfg.Name, err)

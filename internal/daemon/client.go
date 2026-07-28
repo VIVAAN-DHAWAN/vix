@@ -280,6 +280,42 @@ func (c *Client) SetMCPEnabled(name string, enabled bool) error {
 	return nil
 }
 
+// AuthorizeMCP starts the interactive OAuth flow for an MCP server and returns
+// the authorization URL to open in a browser. The exchange completes
+// asynchronously in the daemon; poll ListMCPServers for the resulting auth
+// state.
+func (c *Client) AuthorizeMCP(name string) (string, error) {
+	resp, err := c.sendRequest(map[string]any{
+		"command": "mcp.authorize",
+		"name":    name,
+	})
+	if err != nil {
+		return "", err
+	}
+	if resp["status"] != "ok" {
+		msg, _ := resp["message"].(string)
+		return "", fmt.Errorf("mcp.authorize failed: %s", msg)
+	}
+	authURL, _ := resp["auth_url"].(string)
+	return authURL, nil
+}
+
+// LogoutMCP deletes the stored OAuth token for an MCP server.
+func (c *Client) LogoutMCP(name string) error {
+	resp, err := c.sendRequest(map[string]any{
+		"command": "mcp.logout",
+		"name":    name,
+	})
+	if err != nil {
+		return err
+	}
+	if resp["status"] != "ok" {
+		msg, _ := resp["message"].(string)
+		return fmt.Errorf("mcp.logout failed: %s", msg)
+	}
+	return nil
+}
+
 // SetHookEnabled enables or disables a lifecycle hook by id (Space toggle in the
 // Jobs & Triggers tab).
 func (c *Client) SetHookEnabled(id string, enabled bool) error {

@@ -17,6 +17,7 @@ import (
 	"github.com/get-vix/vix/internal/config"
 	"github.com/get-vix/vix/internal/daemon/hooks"
 	"github.com/get-vix/vix/internal/daemon/jobs"
+	"github.com/get-vix/vix/internal/daemon/mcp"
 	"github.com/get-vix/vix/internal/protocol"
 	"github.com/get-vix/vix/internal/whiteboard"
 )
@@ -107,6 +108,12 @@ type Server struct {
 	// receives them. Guarded by instanceRegMu.
 	instanceRegMu sync.Mutex
 	instances     map[*instanceConn]struct{}
+
+	// mcpAuthFlows holds in-progress MCP OAuth authorizations keyed by their
+	// opaque state token, awaiting the browser redirect to the shared
+	// mission-control callback route (/mcp/oauth/callback). Guarded by mcpAuthMu.
+	mcpAuthMu    sync.Mutex
+	mcpAuthFlows map[string]*mcp.AuthFlow
 
 	// version is the daemon build version (vixd's main.Version). Threads from
 	// clients with a different version are refused (see handleThread). Empty
