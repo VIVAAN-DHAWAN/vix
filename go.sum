@@ -101,8 +101,6 @@ github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOF
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/openai/openai-go v1.12.0 h1:NBQCnXzqOTv5wsgNC36PrFEiskGfO5wccfCWDo9S1U0=
 github.com/openai/openai-go v1.12.0/go.mod h1:g461MYGXEXBVdV5SaR/5tNzNbSfwTBBefwc+LlDCK0Y=
-github.com/pgavlin/mermaid-ascii v0.0.0-20260322123205-ab8074a98bef h1:ahwKSUVBI7VmbTMvbS7IAD69srIeuT4aluyF69QqSRU=
-github.com/pgavlin/mermaid-ascii v0.0.0-20260322123205-ab8074a98bef/go.mod h1:k0/VCoO+6S9CkqpfQA04++cjZkWLidbyW+ZgRfCGNJY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/posthog/posthog-go v1.11.2 h1:ApKTtOhIeWhUBc4ByO+mlbg2o0iZaEGJnJHX2QDnn5Q=

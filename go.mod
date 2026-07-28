@@ -19,6 +19,7 @@ require (
 	github.com/openai/openai-go v1.12.0
 	github.com/pgavlin/mermaid-ascii v0.0.0-20260322123205-ab8074a98bef
 	github.com/posthog/posthog-go v1.11.2
+	github.com/rivo/uniseg v0.4.7
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sirupsen/logrus v1.9.0
 	github.com/tidwall/sjson v1.2.5
@@ -72,7 +73,6 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

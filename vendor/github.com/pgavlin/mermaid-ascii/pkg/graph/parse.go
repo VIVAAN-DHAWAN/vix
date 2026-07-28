@@ -598,41 +598,6 @@ func (p *graphParser) parseClassDef() {
 	}
 }
 
-// parseClass parses: class nodeId1,nodeId2,... className
-// It assigns the style class to existing nodes only. Crucially it never creates
-// nodes, so a trailing style statement like "class a,b good" does not leak a
-// phantom node named "class" into the diagram (which is what happened when this
-// statement fell through to parseChain).
-func (p *graphParser) parseClass() {
-	p.s.Next() // consume "class"
-	p.s.SkipWhitespace()
-
-	rest := strings.TrimSpace(parser.CollectLineText(p.s))
-	if p.s.Peek().Kind == parser.TokenNewline {
-		p.s.Next()
-	}
-
-	// Trailing ';' is legal in mermaid; drop it before splitting fields.
-	rest = strings.TrimRight(rest, ";")
-	fields := strings.Fields(rest)
-	if len(fields) < 2 {
-		return
-	}
-
-	className := fields[len(fields)-1]
-	idList := strings.Join(fields[:len(fields)-1], "")
-	for _, id := range strings.Split(idList, ",") {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if info, exists := p.props.nodeInfo[id]; exists {
-			info.styleClass = className
-			p.props.nodeInfo[id] = info
-		}
-	}
-}
-
 // parseStyleDirective parses: style nodeId styles...
 func (p *graphParser) parseStyleDirective() {
 	p.s.Next() // consume "style"
@@ -729,9 +694,6 @@ func (p *graphParser) parseStatement() {
 			return
 		case "classdef":
 			p.parseClassDef()
-			return
-		case "class":
-			p.parseClass()
 			return
 		case "style":
 			p.parseStyleDirective()

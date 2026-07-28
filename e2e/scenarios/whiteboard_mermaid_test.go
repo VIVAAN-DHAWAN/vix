@@ -176,6 +176,51 @@ func TestMermaidSubgraphRenders(t *testing.T) {
 	}
 }
 
+// TestMermaidDecisionNodeRendersAsDoubleBox covers the decision node ({...}).
+// Terminal box-drawing cannot form a clean rhombus for realistic labels (the
+// single-glyph-per-row diagonals scatter), so a decision node renders as a
+// connected double-line box. This asserts the box actually renders (double-line
+// box-drawing on screen), the label survives, the scattered-rhombus diagonals
+// are gone, and no raw mermaid source leaks.
+func TestMermaidDecisionNodeRendersAsDoubleBox(t *testing.T) {
+	h := harness.Start(t, harness.Meta{
+		Category:    "whiteboard",
+		Subcategory: "whiteboard.mermaid_decision",
+		Description: "a flowchart decision node ({...}) renders as a connected double-line box with a whiteboard link",
+		Wire:        harness.WireMessages,
+	}, harness.WithWebUI())
+
+	h.UI.WaitStable(400 * time.Millisecond)
+
+	h.Mock.Enqueue(
+		harness.Text("Deploy flow:\n\n```mermaid\ngraph TD\nA[Start] --> B{Deploy ready}\nB --> C[Ship]\nB --> D[Halt]\n```\n\nThat is the flow."),
+	)
+	h.UI.Type("draw the deploy decision")
+	h.UI.Enter()
+
+	h.UI.WaitFor("See it on the whiteboard")
+	h.UI.WaitStable(400 * time.Millisecond)
+	h.UI.Shot("mermaid-decision")
+
+	snap := h.UI.Snapshot()
+	// The decision node renders as a double-line box (its distinctive glyphs).
+	if !strings.ContainsAny(snap, "╔╗╚╝║═") {
+		t.Errorf("expected double-line box-drawing for the decision node; screen:\n%s", snap)
+	}
+	// The old scattered-rhombus diagonals must never appear.
+	if strings.ContainsAny(snap, "╱╲") {
+		t.Errorf("decision node drawn with scattered diagonals; screen:\n%s", snap)
+	}
+	// The decision label and the branch targets survive into the diagram.
+	if !h.UI.Contains("Deploy ready") || !h.UI.Contains("Ship") || !h.UI.Contains("Halt") {
+		t.Errorf("expected decision + branch labels in the rendered diagram; screen:\n%s", snap)
+	}
+	// Raw mermaid source must be replaced by the rendered diagram.
+	if h.UI.Contains("graph TD") {
+		t.Errorf("raw mermaid source still on screen; expected a rendered diagram")
+	}
+}
+
 func TestMermaidSequenceRendersWithLink(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category:    "whiteboard",

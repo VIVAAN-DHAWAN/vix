@@ -15,8 +15,8 @@ func (n *node) nameLines() []string {
 func (n *node) nameWidth() int {
 	w := 0
 	for _, line := range n.nameLines() {
-		if lw := dispWidth(line); lw > w {
-			w = lw
+		if len(line) > w {
+			w = len(line)
 		}
 	}
 	return w
@@ -54,11 +54,9 @@ func (n *node) setDrawing(g graph) *drawing {
 	return d
 }
 
-// wordWrap wraps text to fit within maxWidth display columns.
+// wordWrap wraps text to fit within maxWidth characters.
 // It preserves existing newlines, wraps at word boundaries when possible,
-// and falls back to grapheme-cluster breaks for words longer than maxWidth.
-// Widths are measured in terminal columns, so wide glyphs (emoji / East-Asian)
-// count as two and multibyte runes are never split mid-cluster.
+// and falls back to character-level breaks for words longer than maxWidth.
 func wordWrap(text string, maxWidth int) string {
 	if maxWidth <= 0 {
 		maxWidth = 1
@@ -66,41 +64,32 @@ func wordWrap(text string, maxWidth int) string {
 	lines := strings.Split(text, "\n")
 	var result []string
 	for _, line := range lines {
-		cells := splitCells(line)
-		if cellsWidth(cells) <= maxWidth {
-			result = append(result, cellsString(cells))
+		if len(line) <= maxWidth {
+			result = append(result, line)
 			continue
 		}
-		for cellsWidth(cells) > maxWidth {
-			// Find the cell index at which the prefix width first exceeds
-			// maxWidth, and the last space cell that fits within maxWidth.
-			breakAt := -1  // index of a space cell to break on
-			limitIdx := len(cells)
-			col := 0
-			for i, c := range cells {
-				col += c.w
-				if col > maxWidth {
-					limitIdx = i
-					break
-				}
-				if c.s == " " {
+		// Wrap this line
+		for len(line) > maxWidth {
+			// Find last space within maxWidth
+			breakAt := -1
+			for i := maxWidth; i >= 0; i-- {
+				if i < len(line) && line[i] == ' ' {
 					breakAt = i
+					break
 				}
 			}
 			if breakAt <= 0 {
-				// No usable space: hard break at the column limit.
-				if limitIdx < 1 {
-					limitIdx = 1
-				}
-				result = append(result, cellsString(cells[:limitIdx]))
-				cells = cells[limitIdx:]
+				// No space found, break at maxWidth
+				breakAt = maxWidth
+				result = append(result, line[:breakAt])
+				line = line[breakAt:]
 			} else {
-				result = append(result, cellsString(cells[:breakAt]))
-				cells = cells[breakAt+1:] // skip the space
+				result = append(result, line[:breakAt])
+				line = line[breakAt+1:] // skip the space
 			}
 		}
-		if cellsWidth(cells) > 0 {
-			result = append(result, cellsString(cells))
+		if len(line) > 0 {
+			result = append(result, line)
 		}
 	}
 	return strings.Join(result, "\n")
@@ -109,8 +98,6 @@ func wordWrap(text string, maxWidth int) string {
 // shapeExtraWidth returns the extra width a shape adds beyond text + border padding.
 func shapeExtraWidth(shape nodeShape, boxBorderPadding int) int {
 	switch shape {
-	case shapeDiamond:
-		return 2 * (1 + boxBorderPadding)
 	case shapeHexagon:
 		return 4
 	case shapeSubroutine:
@@ -122,13 +109,13 @@ func shapeExtraWidth(shape nodeShape, boxBorderPadding int) int {
 	}
 }
 
-// longestWord returns the display width of the widest whitespace-delimited word in text.
+// longestWord returns the length of the longest whitespace-delimited word in text.
 func longestWord(text string) int {
 	max := 0
 	for _, line := range strings.Split(text, "\n") {
 		for _, word := range strings.Fields(line) {
-			if w := dispWidth(word); w > max {
-				max = w
+			if len(word) > max {
+				max = len(word)
 			}
 		}
 	}
@@ -191,7 +178,7 @@ func (g *graph) constrainToTargetWidth() {
 			minX, maxX = maxX, minX
 		}
 		middleX := minX + (maxX-minX)/2
-		labelMin := dispWidth(e.text) + 2
+		labelMin := len(e.text) + 2
 		if labelMin > edgeLabelMins[middleX] {
 			edgeLabelMins[middleX] = labelMin
 		}
@@ -315,9 +302,6 @@ func (g *graph) constrainToTargetWidth() {
 			continue
 		}
 		rowHeight := n.nameHeight() + 2*g.boxBorderPadding
-		if n.shape == shapeDiamond {
-			rowHeight += 2
-		}
 		yCoord := n.gridCoord.y + 1
 		g.rowHeight[yCoord] = Max(g.rowHeight[yCoord], rowHeight)
 	}
@@ -335,11 +319,6 @@ func (g *graph) setColumnWidth(n *node) {
 
 	// Shapes that need extra width
 	switch n.shape {
-	case shapeDiamond:
-		// Diamond needs width = height for the diagonal lines.
-		// The text row needs extra horizontal space for the / and \ borders.
-		extraPerSide := 1 + g.boxBorderPadding // space for diagonal + padding
-		col2 += 2 * extraPerSide
 	case shapeHexagon:
 		// Hexagon has angled edges on left/right
 		col2 += 2 * 2 // 2 extra chars per side for the angled edges
@@ -361,10 +340,6 @@ func (g *graph) setColumnWidth(n *node) {
 	colsToBePlaced := []int{col1, col2, col3}
 
 	rowHeight := n.nameHeight() + 2*g.boxBorderPadding
-	// Diamond needs extra height for the diagonal shape
-	if n.shape == shapeDiamond {
-		rowHeight += 2 // extra rows for top and bottom points
-	}
 	rowsToBePlaced := []int{1, rowHeight, 1} // Border, padding + line, border
 
 	for idx, col := range colsToBePlaced {

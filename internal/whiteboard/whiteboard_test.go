@@ -335,6 +335,55 @@ func TestRenderASCIIFlowchart(t *testing.T) {
 	}
 }
 
+// TestRenderASCIIDecisionDoubleBox guards decision-node ({...}) rendering.
+// Terminal box-drawing cannot form a clean rhombus for realistic (wide, short)
+// labels — a single glyph per row leaves the diagonal edges several columns
+// apart, so they scatter instead of connecting. A decision node is therefore
+// drawn as a connected double-line box, visually distinct from plain single-line
+// rectangles. This is the regression guard for the scattered-diamond bug.
+func TestRenderASCIIDecisionDoubleBox(t *testing.T) {
+	out, err := RenderASCII("graph TD\nA[Start] --> B{vix MCP auth}\nB --> C[Done]", 0)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// The decision node renders as a double-line box (corners + both borders).
+	for _, want := range []string{"╔", "╗", "╚", "╝", "═", "║"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("decision box missing %q:\n%s", want, out)
+		}
+	}
+
+	// The old scattered-rhombus diagonals must be gone entirely.
+	for _, bad := range []string{"╱", "╲"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("decision node still drawn with diagonal %q (scattered rhombus):\n%s", bad, out)
+		}
+	}
+
+	// The label sits intact on a single row flanked by the double side borders.
+	var labelRow string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "vix MCP auth") {
+			labelRow = line
+			break
+		}
+	}
+	if labelRow == "" {
+		t.Fatalf("decision label row not found:\n%s", out)
+	}
+	if !strings.Contains(labelRow, "║") {
+		t.Errorf("decision label row not flanked by a double border:\n%q", labelRow)
+	}
+
+	// Edges attach to the double border via a merged junction (not a raw
+	// single-line tee overwriting the border): the outgoing edge here merges
+	// the bottom border into ╤.
+	if !strings.Contains(out, "╤") {
+		t.Errorf("outgoing edge did not merge into the double border (expected ╤):\n%s", out)
+	}
+}
+
 // TestRenderASCIISubgraphDoesNotError guards that a flowchart carrying subgraph
 // containers still renders in the terminal (or is handled) without erroring — the
 // terminal path is intentionally left unchanged by the whiteboard-clustering work.

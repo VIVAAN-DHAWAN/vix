@@ -69,7 +69,7 @@ func (g *graph) determinePath(e *edge) {
 
 func (g *graph) determineLabelLine(e *edge) {
 	// What line on the path should the label be placed?
-	lenLabel := dispWidth(e.text)
+	lenLabel := len(e.text)
 	if lenLabel == 0 {
 		return
 	}
