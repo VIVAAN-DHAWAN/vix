@@ -195,6 +195,15 @@ outer:
 		}
 	}
 
+	return finalizeGlobMatches(ctx, seenBase, typeFilter, includeHidden, maxResults, capped)
+}
+
+// finalizeGlobMatches applies the type filter, hidden-path filter, sorting,
+// result cap, and output formatting shared by both glob backends, so a match
+// set produced by either produces byte-identical output. seenBase maps each
+// matched path to the search base it was found under (used for accurate
+// hidden-component detection when several bases are searched).
+func finalizeGlobMatches(ctx context.Context, seenBase map[string]string, typeFilter string, includeHidden bool, maxResults int, capped bool) (string, error) {
 	matches := make([]string, 0, len(seenBase))
 	for m := range seenBase {
 		matches = append(matches, m)
@@ -261,69 +270,66 @@ func (b *fdGlobBackend) Name() string { return "fd" }
 
 func (b *fdGlobBackend) Run(ctx context.Context, patterns, paths []string, cwd, typeFilter string, includeHidden bool, maxResults int) (string, error) {
 	LogInfo("[tool.glob] backend=fd cwd=%s patterns=%v paths=%v type=%s include_hidden=%v max_results=%d", cwd, patterns, paths, typeFilter, includeHidden, maxResults)
-	searchPaths := paths
-	if len(searchPaths) == 0 {
-		searchPaths = []string{"."}
+	bases := paths
+	if len(bases) == 0 {
+		bases = []string{cwd}
 	}
 
-	// fd accepts a single pattern argument with any number of trailing search
-	// paths. To union multiple patterns, invoke fd once per pattern and merge
-	// results via a dedup map.
-	seen := make(map[string]struct{})
-	for _, pat := range patterns {
+	// fd's own `--glob` matches the basename only, so it cannot faithfully
+	// express `**` / multi-segment path patterns (e.g. `**/skills/**/SKILL.md`)
+	// the way the documented builtin doublestar backend does. So fd is used
+	// purely as a fast parallel *walker*: enumerate every entry under each base
+	// with `--hidden --no-ignore` (matching the candidate set the builtin
+	// backend walks), then match each base-relative path with doublestar. Both
+	// backends therefore share identical semantics and output form
+	// (filepath.Join(base, rel)); hidden/type filtering happens in
+	// finalizeGlobMatches.
+	seenBase := make(map[string]string)
+	capped := false
+outer:
+	for _, base := range bases {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if len(seen) >= maxResults {
-			break
-		}
-		args := []string{"--glob", "--follow", "--max-results", fmt.Sprintf("%d", maxResults)} // --follow: follow symlinks
-		if includeHidden {
-			args = append(args, "--hidden")
-		}
-		switch typeFilter {
-		case "f":
-			args = append(args, "--type", "f")
-		case "d":
-			args = append(args, "--type", "d")
-		}
-		args = append(args, pat)
-		args = append(args, searchPaths...)
-
-		cmd := exec.CommandContext(ctx, "fd", args...)
-		cmd.Dir = cwd
+		// `.` is an fd regex matching every name; `--follow` follows symlinks,
+		// `--color=never` keeps output plain. Enumerate relative to base.
+		cmd := exec.CommandContext(ctx, "fd", "--hidden", "--no-ignore", "--follow", "--color=never", ".", ".")
+		cmd.Dir = base
 		output, _ := cmd.CombinedOutput()
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		for _, line := range strings.Split(strings.TrimRight(string(output), "\n"), "\n") {
-			if line != "" {
-				seen[line] = struct{}{}
+			if line == "" {
+				continue
+			}
+			rel := filepath.ToSlash(strings.TrimPrefix(line, "./"))
+			rel = strings.TrimSuffix(rel, "/") // fd may append `/` to directories
+			if rel == "" {
+				continue
+			}
+			matched := false
+			for _, pat := range patterns {
+				if ok, _ := doublestar.Match(pat, rel); ok {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if len(seenBase) >= maxResults {
+				capped = true
+				break outer
+			}
+			full := filepath.Join(base, filepath.FromSlash(rel))
+			if _, ok := seenBase[full]; !ok {
+				seenBase[full] = base
 			}
 		}
 	}
 
-	lines := make([]string, 0, len(seen))
-	for l := range seen {
-		lines = append(lines, l)
-	}
-	sort.Strings(lines)
-	capped := false
-	if len(lines) > maxResults {
-		lines = lines[:maxResults]
-		capped = true
-	}
-	if len(lines) == 0 {
-		return "(no matches)", nil
-	}
-	result := strings.Join(lines, "\n")
-	if capped {
-		result += fmt.Sprintf("\n... (capped at %d results — raise max_results or narrow the pattern if more are needed)", maxResults)
-	}
-	if len(result) > maxOutput {
-		result = result[:maxOutput] + fmt.Sprintf("\n... (truncated at %d chars)", maxOutput)
-	}
-	return result, nil
+	return finalizeGlobMatches(ctx, seenBase, typeFilter, includeHidden, maxResults, capped)
 }
 
 // --- Factory functions ---

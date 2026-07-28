@@ -270,6 +270,89 @@ func TestFdGlobBackendMultiplePatterns(t *testing.T) {
 	}
 }
 
+// globParityTree writes a small nested tree used to compare backends. Returns
+// the root dir.
+func globParityTree(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, f := range []string{
+		"top.go",
+		"README.md",
+		"a/c.go",
+		"a/b/SKILL.md",
+		"pkg/skills/hooks/SKILL.md",
+		"pkg/skills/jobs/SKILL.md",
+		"x/y/z/deep.txt",
+	} {
+		p := filepath.Join(dir, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestGlobBackendParity locks the fd backend to identical output as the builtin
+// doublestar backend across representative patterns — including the
+// `**`-in-the-middle shape (`**/skills/**/SKILL.md`) that regressed the
+// review-github-prs job, plus anchored (`a/**/...`) and top-level (`*.go`)
+// patterns fd's native `--glob` gets wrong.
+func TestGlobBackendParity(t *testing.T) {
+	if _, err := exec.LookPath("fd"); err != nil {
+		t.Skip("fd not installed")
+	}
+	dir := globParityTree(t)
+	builtin := &builtinGlobBackend{}
+	fd := &fdGlobBackend{}
+
+	for _, pat := range []string{
+		"**/SKILL.md",
+		"**/skills/**/SKILL.md",
+		"**/*.go",
+		"a/**/SKILL.md",
+		"*.go",
+		"**/*/deep.txt",
+		"nomatch/**/*.zzz",
+	} {
+		bOut, err := builtin.Run(context.Background(), []string{pat}, []string{dir}, dir, "", true, 1000)
+		if err != nil {
+			t.Fatalf("builtin %q: %v", pat, err)
+		}
+		fOut, err := fd.Run(context.Background(), []string{pat}, []string{dir}, dir, "", true, 1000)
+		if err != nil {
+			t.Fatalf("fd %q: %v", pat, err)
+		}
+		if bOut != fOut {
+			t.Errorf("backend mismatch for %q:\n--- builtin ---\n%s\n--- fd ---\n%s", pat, bOut, fOut)
+		}
+	}
+}
+
+// TestFdGlobBackendMatchesNestedGlobstar is the direct regression for the
+// reported bug: a `**`-in-the-middle pattern must match under the fd backend.
+func TestFdGlobBackendMatchesNestedGlobstar(t *testing.T) {
+	if _, err := exec.LookPath("fd"); err != nil {
+		t.Skip("fd not installed")
+	}
+	dir := globParityTree(t)
+	target := filepath.Join(dir, "pkg", "skills", "hooks", "SKILL.md")
+
+	fd := &fdGlobBackend{}
+	out, err := fd.Run(context.Background(), []string{"**/skills/**/SKILL.md"}, []string{dir}, dir, "", true, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, target) {
+		t.Errorf("fd failed to match **-in-the-middle pattern; got %q, want to contain %s", out, target)
+	}
+	if strings.Contains(out, "no matches") {
+		t.Errorf("fd returned no matches for a pattern that should match: %q", out)
+	}
+}
+
 func TestBuiltinGlobBackendHiddenFilterMultiPath(t *testing.T) {
 	root := t.TempDir()
 	visible := filepath.Join(root, "visible")
