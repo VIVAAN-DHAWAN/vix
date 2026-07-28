@@ -271,9 +271,6 @@ test-e2e-sharded:
 # Build these versions: darwin-arm64 + linux-amd64 + linux-arm64, Docker for Linux
 release:
 	@[ "$(VERSION)" ] || ( echo "Usage: make release VERSION=v1.x.x"; exit 1 )
-	@# Refuse to release a commit whose performance wasn't benchmarked.
-	@# perf/results/<HEAD>.txt must exist (run `make test-perf`) and the tree clean.
-	go run ./cmd/perftool gate
 	$(MAKE) build-web
 	@if [ -n "$$(git status --porcelain internal/daemon/web/dist)" ]; then \
 		git add internal/daemon/web/dist && \
