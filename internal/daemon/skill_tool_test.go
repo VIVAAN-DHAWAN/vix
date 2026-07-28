@@ -102,3 +102,50 @@ func TestSkillToolSchema_Shape(t *testing.T) {
 		t.Errorf("required = %v, want [name]", required)
 	}
 }
+
+// TestSkillTool_ConfirmedPathDispatches guards the regression where workflow
+// steps and subagents — which dispatch through executeToolConfirmed, not
+// executeToolDirect — got "unknown tool: skill" even though the skill tool was
+// advertised to them. Both paths must resolve the skill against the registry.
+func TestSkillTool_ConfirmedPathDispatches(t *testing.T) {
+	root := t.TempDir()
+	dir := writeSkill(t, root, "review-pr", `---
+name: review-pr
+description: Review a PR
+---
+Review $ARGUMENTS thoroughly.
+`)
+	os.WriteFile(filepath.Join(dir, "reference.md"), []byte("ref"), 0o644)
+
+	s := newSkillThread(t, root)
+	res := s.executeToolConfirmed(context.Background(), "skill", map[string]any{
+		"name":      "review-pr",
+		"arguments": "https://example.com/pr/1",
+	})
+	if res == nil || res.IsError {
+		t.Fatalf("expected success, got %+v", res)
+	}
+	if strings.Contains(res.Output, "unknown tool") {
+		t.Fatalf("skill dispatch regressed to unknown tool: %q", res.Output)
+	}
+	if !strings.Contains(res.Output, "Review https://example.com/pr/1 thoroughly.") {
+		t.Errorf("body not rendered with args: %q", res.Output)
+	}
+	if !strings.Contains(res.Output, filepath.Join(dir, "reference.md")) {
+		t.Errorf("bundled file path not listed: %q", res.Output)
+	}
+}
+
+func TestSkillTool_ConfirmedPathUnknownSkill(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "deploy", "---\nname: deploy\ndescription: x\n---\nbody\n")
+	s := newSkillThread(t, root)
+
+	res := s.executeToolConfirmed(context.Background(), "skill", map[string]any{"name": "nope"})
+	if res == nil || !res.IsError {
+		t.Fatalf("expected error for unknown skill, got %+v", res)
+	}
+	if strings.Contains(res.Output, "unknown tool") {
+		t.Errorf("should report no-such-skill, not unknown tool: %q", res.Output)
+	}
+}

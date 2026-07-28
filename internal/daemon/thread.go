@@ -1374,6 +1374,26 @@ func (s *Thread) promptDirAccess(ctx context.Context, name string, params map[st
 	return confirmData.Approved, false
 }
 
+// dispatchSkillTool resolves the `skill` tool inline against the thread's skill
+// registry, which server-level `tool.*` handlers can't reach. It is shared by
+// both dispatch paths — executeToolDirect (main agent) and executeToolConfirmed
+// (workflow steps and subagents) — so a skill invoked from a workflow or
+// subagent loads exactly as it does from a chat turn, instead of failing with
+// "unknown tool: skill". Returns the skill body plus a listing of bundled files
+// (progressive disclosure levels 2 and 3).
+func (s *Thread) dispatchSkillTool(params map[string]any) *ToolResult {
+	skillName, _ := params["name"].(string)
+	if skillName == "" {
+		return &ToolResult{Output: "skill: missing required field \"name\"", IsError: true}
+	}
+	sk := s.skills.Get(skillName)
+	if sk == nil {
+		return &ToolResult{Output: fmt.Sprintf("skill: no skill named %q", skillName), IsError: true}
+	}
+	args, _ := params["arguments"].(string)
+	return &ToolResult{Output: sk.LoadForTool(args)}
+}
+
 // executeToolDirect calls a tool handler directly (in-process, no socket).
 func (s *Thread) executeToolDirect(ctx context.Context, name string, params map[string]any) *ToolResult {
 	// Deny list: reject any tool call that targets a path or URL listed in
@@ -1442,16 +1462,7 @@ func (s *Thread) executeToolDirect(ctx context.Context, name string, params map[
 	// which server-level handlers can't reach. Returns the skill body plus a
 	// listing of bundled files (progressive disclosure levels 2 and 3).
 	if name == "skill" {
-		skillName, _ := params["name"].(string)
-		if skillName == "" {
-			return &ToolResult{Output: "skill: missing required field \"name\"", IsError: true}
-		}
-		sk := s.skills.Get(skillName)
-		if sk == nil {
-			return &ToolResult{Output: fmt.Sprintf("skill: no skill named %q", skillName), IsError: true}
-		}
-		args, _ := params["arguments"].(string)
-		return &ToolResult{Output: sk.LoadForTool(args)}
+		return s.dispatchSkillTool(params)
 	}
 
 	// Route MCP tools directly to the thread's MCP pool.
@@ -1593,6 +1604,13 @@ func (s *Thread) executeToolConfirmed(ctx context.Context, name string, params m
 	case "todo_write":
 		output, isErr := s.handleTodoWrite(ctx, params)
 		return &ToolResult{Output: output, IsError: isErr}
+	case "skill":
+		// The `skill` tool is dispatched inline (not a registered tool.*
+		// handler), so workflow steps and subagents must route it here too —
+		// otherwise a skill invoked from a workflow agent step fails with
+		// "unknown tool: skill" even though ensureWorkflowAgentContext
+		// advertised it.
+		return s.dispatchSkillTool(params)
 	}
 
 	// Read-before-edit gate: subagents and workflow agents share the parent

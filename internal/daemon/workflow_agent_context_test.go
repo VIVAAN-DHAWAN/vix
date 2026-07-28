@@ -97,3 +97,53 @@ func TestEnsureWorkflowAgentContext_NoSkillsNoTool(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkflowAgentSkillAdvertiseDispatchParity ties the two halves together:
+// once ensureWorkflowAgentContext advertises the `skill` tool to a workflow
+// agent, the confirmed-dispatch path used by workflow steps must actually be
+// able to run it (returning the skill body, not "unknown tool: skill").
+func TestWorkflowAgentSkillAdvertiseDispatchParity(t *testing.T) {
+	cwd := t.TempDir()
+	skillsRoot := t.TempDir()
+	writeSkill(t, skillsRoot, "review-pr", "---\nname: review-pr\ndescription: Review a PR\n---\nReview it.\n")
+
+	srv := &Server{handlers: make(map[string]HandlerFunc)}
+	RegisterToolHandlers(srv)
+	s := &Thread{
+		server:                         srv,
+		cwd:                            cwd,
+		headless:                       true,
+		enableAutomaticWritePermission: true,
+		enableAutomaticDirectoryAccess: true,
+		readFiles:                      make(map[string]bool),
+		skills:                         agent.LoadSkills(skillsRoot),
+		paths:                          config.NewVixPaths("", t.TempDir(), cwd),
+		projectConfig: ProjectConfig{
+			ToolTimeouts: ToolTimeouts{Default: 30 * time.Second, Max: 60 * time.Second},
+		},
+	}
+
+	a := &AgentRunner{Tools: []llm.ToolParam{{Name: "read_file"}}}
+	s.ensureWorkflowAgentContext(a)
+
+	advertised := false
+	for _, tl := range a.Tools {
+		if tl.Name == "skill" {
+			advertised = true
+		}
+	}
+	if !advertised {
+		t.Fatal("skill tool was not advertised to the workflow agent")
+	}
+
+	res := s.executeToolConfirmed(t.Context(), "skill", map[string]any{"name": "review-pr"})
+	if res == nil || res.IsError {
+		t.Fatalf("advertised skill must dispatch, got %+v", res)
+	}
+	if strings.Contains(res.Output, "unknown tool") {
+		t.Fatalf("advertised skill dispatched to unknown tool: %q", res.Output)
+	}
+	if !strings.Contains(res.Output, "Review it.") {
+		t.Errorf("skill body not returned: %q", res.Output)
+	}
+}
