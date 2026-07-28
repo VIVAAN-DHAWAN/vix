@@ -570,6 +570,13 @@ type Model struct {
 	mdRenderer     *MarkdownRenderer
 	commandPalette CommandPalette
 
+	// whiteboardBase is the local web UI origin (e.g. "http://localhost:1337")
+	// reported by the daemon in thread_started and captured by ThreadClient. It
+	// is a cache of the last non-empty value read from the session's client in
+	// syncMermaidCtx. Empty when the web UI is disabled. Used to build whiteboard
+	// links for mermaid diagrams.
+	whiteboardBase string
+
 	// lastChatWidth records the effective (panel-aware) chat width the markdown
 	// renderer and cached messages were last reconciled at. reconcileChatWidth
 	// uses it to detect panel/thread/resize transitions and re-flow once.
@@ -3006,6 +3013,7 @@ func (m *Model) applyEventToThread(idx int, event protocol.ThreadEvent) []tea.Cm
 		json.Unmarshal(data, &chunk)
 		sess.assistantBuf += chunk.Text
 		if time.Since(sess.lastStreamRender) >= streamRenderInterval {
+			m.syncMermaidCtx(sess)
 			sess.assistantRendered = m.mdRenderer.Render(sess.assistantBuf)
 			sess.lastStreamRender = time.Now()
 		}
@@ -3840,6 +3848,7 @@ func (m *Model) handleCommandAction(action string, sess *ThreadState) []tea.Cmd 
 
 // flushThreadBuf commits the streaming assistant buffer to the thread's chatMessages.
 func (m *Model) flushThreadBuf(sess *ThreadState) {
+	m.syncMermaidCtx(sess)
 	if sess.showThinking && sess.thinkingBuf != "" {
 		sess.chatMessages = append(sess.chatMessages, renderThinkingMessage(sess.thinkingBuf, m.styles, m.mdRenderer.width+4))
 	}
@@ -3856,6 +3865,7 @@ func (m *Model) flushThreadBuf(sess *ThreadState) {
 // from a daemon event.replay (sent when attaching to a persisted thread).
 // Restore-time warnings are appended as system messages.
 func (m *Model) applyReplay(sess *ThreadState, rep protocol.EventReplay) {
+	m.syncMermaidCtx(sess)
 	sess.chatMessages = m.buildReplayChatMessages(rep)
 	sess.chatCache.invalidate()
 	sess.todos = rep.Todos
@@ -4393,11 +4403,31 @@ func (m *Model) rerenderThreadMessages() {
 	if sess == nil {
 		return
 	}
+	m.syncMermaidCtx(sess)
 	width := m.mdRenderer.width + 4
 	for i, msg := range sess.chatMessages {
 		sess.chatMessages[i] = msg.rerender(m.mdRenderer, m.styles, width)
 	}
 	sess.chatCache.invalidate()
+}
+
+// syncMermaidCtx points the shared markdown renderer at a session's daemon
+// thread id (and the daemon's whiteboard base) so ```mermaid blocks render with
+// a correct per-thread "See it on the whiteboard" link.
+func (m *Model) syncMermaidCtx(sess *ThreadState) {
+	if sess == nil {
+		return
+	}
+	// The daemon reports the whiteboard base in the thread_started event, which
+	// ThreadClient consumes during connect (the TUI event loop never sees it), so
+	// read it straight from the client. Cache the last non-empty value so a render
+	// during a brief reconnect (client momentarily nil) still has it.
+	if sess.client != nil {
+		if b := sess.client.WhiteboardBase(); b != "" {
+			m.whiteboardBase = b
+		}
+	}
+	m.mdRenderer.SetWhiteboardContext(m.whiteboardBase, sess.daemonThreadID)
 }
 
 // rowTarget identifies what a single Threads-tab row points at: a live thread

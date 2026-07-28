@@ -405,6 +405,9 @@
         },
         "thread_id": {
           "type": "string"
+        },
+        "whiteboard_base": {
+          "type": "string"
         }
       },
       "required": [

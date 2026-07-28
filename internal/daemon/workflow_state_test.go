@@ -56,6 +56,46 @@ func streamedText(evs []protocol.ThreadEvent) string {
 	return sb.String()
 }
 
+// TestExecuteWorkflow_ResumeAfterFanIn covers atomic fan-out resume: when a run
+// is resumed with the cursor at the fan_in (its joined list persisted), the
+// fan_in recovers the list and routes onward WITHOUT re-running the fan_out
+// branches.
+func TestExecuteWorkflow_ResumeAfterFanIn(t *testing.T) {
+	s := newWorkflowTestThread(t)
+	wf := &WorkflowDef{
+		Name:       "fanresume",
+		EntryPoint: StepRef{ID: "discover"},
+		Steps: map[string]WorkflowStepDef{
+			"discover": {Type: "bash", Command: `echo '["a","b"]'`, JSONOutput: true, NextSteps: []StepRef{{ID: "fanout"}}},
+			"fanout":   {Type: "fan_out", Over: "$(step.discover)", As: "item", BarrierID: "B", Branch: &StepRef{ID: "work"}, NextSteps: []StepRef{{ID: "join"}}},
+			"work":     {Type: "bash", Command: `echo "WORK-$(item)"`},
+			"join":     {Type: "fan_in", BarrierID: "B", As: "results", NextSteps: []StepRef{{ID: "report"}}},
+			"report":   {Type: "bash", Command: `echo AFTER_JOIN`},
+		},
+	}
+	resume := &WorkflowRunState{
+		Name:       "fanresume",
+		Status:     WorkflowStatusPaused,
+		Prompt:     "obj",
+		CurrentRef: &StepRef{ID: "join"},
+		Iteration:  2,
+		StepResults: map[string]*StepResult{
+			"join": {Output: `["WORK-a","WORK-b"]`, Value: []any{"WORK-a", "WORK-b"}},
+		},
+	}
+
+	if err := s.executeWorkflow(s.ctx, wf, "ignored", resume); err != nil {
+		t.Fatalf("executeWorkflow resume: %v", err)
+	}
+	out := streamedText(drainEvents(s))
+	if strings.Contains(out, "WORK-a") || strings.Contains(out, "WORK-b") {
+		t.Errorf("resume after fan_in must not re-run branches, got:\n%s", out)
+	}
+	if !strings.Contains(out, "AFTER_JOIN") {
+		t.Errorf("resume after fan_in should recover the join and continue, got:\n%s", out)
+	}
+}
+
 // ── budget gating ──
 
 func TestExecuteWorkflow_BudgetIterationsRoutesToOnExceeded(t *testing.T) {

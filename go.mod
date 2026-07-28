@@ -17,8 +17,10 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.3.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/openai/openai-go v1.12.0
+	github.com/pgavlin/mermaid-ascii v0.0.0-20260322123205-ab8074a98bef
 	github.com/posthog/posthog-go v1.11.2
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/sirupsen/logrus v1.9.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/tree-sitter-grammars/tree-sitter-kotlin v1.1.0
 	github.com/tree-sitter/go-tree-sitter v0.25.0
@@ -58,8 +60,10 @@ require (
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/elliotchance/orderedmap/v2 v2.2.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/gookit/color v1.5.4 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
@@ -82,3 +86,9 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// Diamond-rendering fix, upstreamed as pgavlin/mermaid-ascii#1. Drop this once
+// merged and bump the require above. Re-vendor after fork tweaks with:
+//   GOSUMDB=off GOFLAGS=-mod=mod go mod download github.com/pgavlin/mermaid-ascii && go mod vendor
+// (GOSUMDB=off is only needed until sum.golang.org indexes the fork commit.)
+replace github.com/pgavlin/mermaid-ascii => github.com/kirby88/mermaid-ascii v0.0.0-20260727160108-bb79308cf13d

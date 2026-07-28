@@ -124,6 +124,19 @@ type homeFile struct{ rel, content string }
 // (e.g. WithEnv("LLAMACPP_BASE_URL", "{{MOCK_URL}}/v1")).
 func WithEnv(k, v string) Option { return func(c *config) { c.env[k] = v } }
 
+// WithWebUI re-enables the mission-control web UI (disabled by default in the
+// harness) on a fixed local port. The daemon then reports a non-empty
+// WhiteboardBase in thread_started, which the TUI needs to render the "See it on
+// the whiteboard" link for mermaid diagrams. The web server need not be
+// reachable — the link is just a URL — so a taken port is harmless (the daemon
+// logs the bind failure and carries on).
+func WithWebUI() Option {
+	return func(c *config) {
+		c.env["VIX_NO_MISSION_CONTROL"] = "0"
+		c.env["VIX_WEB_PORT"] = "47318"
+	}
+}
+
 // WithSettings writes raw JSON to the project-level .vix/settings.json (under the
 // workdir), so it survives vixd's HOME bootstrap. Use for deny_list, features…
 // The content supports the {{WORKDIR}}, {{HOME}} and {{MOCK_URL}} placeholders

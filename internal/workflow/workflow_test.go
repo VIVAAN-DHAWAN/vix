@@ -35,6 +35,72 @@ func TestValidate(t *testing.T) {
 		{"valid agent step", func(d *Def) { d.Steps["s"] = StepDef{Type: "agent", Agent: "general", Prompt: "go"} }, false},
 		{"budget on_exceeded unknown", func(d *Def) { d.Budget = &Budget{OnExceeded: &StepRef{ID: "nope"}} }, true},
 		{"budget negative", func(d *Def) { d.Budget = &Budget{MaxIterations: -1} }, true},
+
+		// if-node validation
+		{"valid if with then+else", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "if", Condition: "true", Then: &StepRef{ID: "a"}, Else: &StepRef{ID: "b"}}
+			d.Steps["a"] = StepDef{Type: "bash", Command: "true"}
+			d.Steps["b"] = StepDef{Type: "bash", Command: "true"}
+		}, false},
+		{"valid if with then only", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "if", Condition: "true", Then: &StepRef{ID: "a"}}
+			d.Steps["a"] = StepDef{Type: "bash", Command: "true"}
+		}, false},
+		{"valid if then=stop", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "if", Condition: "true", Then: &StepRef{ID: "stop"}}
+		}, false},
+		{"if missing condition", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "if", Then: &StepRef{ID: "s"}}
+		}, true},
+		{"if missing then", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "if", Condition: "true"}
+		}, true},
+		{"if then unknown", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "if", Condition: "true", Then: &StepRef{ID: "ghost"}}
+		}, true},
+		{"if else unknown", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "if", Condition: "true", Then: &StepRef{ID: "s"}, Else: &StepRef{ID: "ghost"}}
+		}, true},
+		{"if with prompt rejected", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "if", Condition: "true", Then: &StepRef{ID: "s"}, Prompt: "x"}
+		}, true},
+
+		// fan_out / fan_in validation
+		{"valid fan_out+fan_in pair", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "fan_out", Over: "$(step.x)", As: "item", BarrierID: "B", Branch: &StepRef{ID: "w"}, NextSteps: []StepRef{{ID: "j"}}}
+			d.Steps["w"] = StepDef{Type: "bash", Command: "true"}
+			d.Steps["j"] = StepDef{Type: "fan_in", BarrierID: "B", As: "results"}
+		}, false},
+		{"fan_out missing over", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "fan_out", As: "item", BarrierID: "B", Branch: &StepRef{ID: "s"}}
+			d.Steps["j"] = StepDef{Type: "fan_in", BarrierID: "B", As: "r"}
+		}, true},
+		{"fan_out missing branch", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "fan_out", Over: "$(x)", As: "item", BarrierID: "B"}
+			d.Steps["j"] = StepDef{Type: "fan_in", BarrierID: "B", As: "r"}
+		}, true},
+		{"fan_out branch unknown", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "fan_out", Over: "$(x)", As: "item", BarrierID: "B", Branch: &StepRef{ID: "ghost"}}
+			d.Steps["j"] = StepDef{Type: "fan_in", BarrierID: "B", As: "r"}
+		}, true},
+		{"fan_out without matching fan_in", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "fan_out", Over: "$(x)", As: "item", BarrierID: "B", Branch: &StepRef{ID: "s"}}
+		}, true},
+		{"fan_in without matching fan_out", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "fan_in", BarrierID: "B", As: "r"}
+		}, true},
+		{"fan_in bad on_branch_error", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "fan_out", Over: "$(x)", As: "item", BarrierID: "B", Branch: &StepRef{ID: "w"}}
+			d.Steps["w"] = StepDef{Type: "bash", Command: "true"}
+			d.Steps["j"] = StepDef{Type: "fan_in", BarrierID: "B", As: "r", OnBranchError: "explode"}
+		}, true},
+		{"nested fan_out rejected", func(d *Def) {
+			d.Steps["s"] = StepDef{Type: "fan_out", Over: "$(x)", As: "item", BarrierID: "B", Branch: &StepRef{ID: "inner"}, NextSteps: []StepRef{{ID: "j"}}}
+			d.Steps["inner"] = StepDef{Type: "fan_out", Over: "$(y)", As: "z", BarrierID: "C", Branch: &StepRef{ID: "w"}, NextSteps: []StepRef{{ID: "jc"}}}
+			d.Steps["w"] = StepDef{Type: "bash", Command: "true"}
+			d.Steps["j"] = StepDef{Type: "fan_in", BarrierID: "B", As: "r"}
+			d.Steps["jc"] = StepDef{Type: "fan_in", BarrierID: "C", As: "rc"}
+		}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -390,12 +390,14 @@ public struct EventThreadStarted: Codable, Sendable, Equatable {
     public var parentId: String?
     public var startedAt: String
     public var threadId: String
+    public var whiteboardBase: String?
 
-    public init(forkTurnIdx: Int64? = nil, parentId: String? = nil, startedAt: String, threadId: String) {
+    public init(forkTurnIdx: Int64? = nil, parentId: String? = nil, startedAt: String, threadId: String, whiteboardBase: String? = nil) {
         self.forkTurnIdx = forkTurnIdx
         self.parentId = parentId
         self.startedAt = startedAt
         self.threadId = threadId
+        self.whiteboardBase = whiteboardBase
     }
 
     enum CodingKeys: String, CodingKey {
@@ -403,6 +405,7 @@ public struct EventThreadStarted: Codable, Sendable, Equatable {
         case parentId = "parent_id"
         case startedAt = "started_at"
         case threadId = "thread_id"
+        case whiteboardBase = "whiteboard_base"
     }
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/get-vix/vix/internal/daemon/mcp"
 	promptloader "github.com/get-vix/vix/internal/daemon/prompt"
 	"github.com/get-vix/vix/internal/protocol"
+	"github.com/get-vix/vix/internal/whiteboard"
 	wf "github.com/get-vix/vix/internal/workflow"
 )
 
@@ -58,8 +59,18 @@ func validateWorkflow(pf *WorkflowDef) error { return wf.Validate(pf) }
 // StepResult holds output from a completed workflow step.
 type StepResult struct {
 	Output string            `json:"output"`
-	Parsed map[string]any    `json:"parsed,omitempty"` // nil if json_output was false or parse failed
+	Parsed map[string]any    `json:"parsed,omitempty"` // nil if json_output was false, parse failed, or the root wasn't an object
+	Value  any               `json:"value,omitempty"`  // full parsed JSON (object OR array) when json_output succeeded; the typed value that crosses edges
 	Params map[string]string `json:"params,omitempty"` // input params received by this step
+}
+
+// branchResult is one fan_out branch's terminal outcome: the typed value it
+// produced (its last step's parsed Value, or raw text), plus any error. fan_in
+// joins these per its on_branch_error policy.
+type branchResult struct {
+	Value  any
+	Output string
+	Err    error
 }
 
 // AgentRunner is a persistent agent with maintained history.
@@ -101,6 +112,14 @@ type WorkflowRun struct {
 	StepAgents  map[string]*AgentRunner // step_id -> runner used
 	StepResults map[string]*StepResult  // step_id -> result
 	State       *WorkflowRunState       // live persisted position/accounting for this run
+
+	// Barriers holds the per-branch outputs collected by a fan_out node,
+	// keyed by barrier_id, in element order. The matching fan_in reads it to
+	// bind its `as` results list. In-memory only: an interrupted run re-runs
+	// the whole fan_out block on resume (atomic-block semantics), and fan_out
+	// also persists the joined list as a StepResult so a resume landing on the
+	// fan_in can still recover it.
+	Barriers map[string][]branchResult
 
 	// transcript accumulates the user-visible output of agent steps in
 	// execution order so it can be mirrored into the thread's chat transcript
@@ -1106,6 +1125,39 @@ func stripMarkdownFence(s string) string {
 // For each step, it sets "step.<id>" to the raw output and includes input params
 // as "step.<id>.<param>". If the step had json_output and parsing succeeded,
 // each JSON key becomes "step.<id>.<key>".
+// projectToString renders a typed value into the string world used by bash
+// execute_if/condition and template interpolation: strings pass through
+// unchanged; everything else (numbers, bools, lists, objects) is JSON-encoded.
+// This is the one boundary rule between the typed value store and the two
+// string-only surfaces.
+func projectToString(v any) string {
+	switch val := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return val
+	default:
+		if b, err := json.MarshalIndent(v, "", "  "); err == nil {
+			return string(b)
+		}
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// flattenTypedInto walks a typed value and writes its string projection under
+// prefix, recursing into objects so nested fields resolve as $(prefix.key)
+// (and further, $(prefix.key.subkey)). The prefix itself always gets the
+// projection of the whole value. Lists are projected as JSON at their key (no
+// per-index flattening — indexed access is a typed-pool concern).
+func flattenTypedInto(vars map[string]string, prefix string, v any) {
+	vars[prefix] = projectToString(v)
+	if obj, ok := v.(map[string]any); ok {
+		for k, sub := range obj {
+			flattenTypedInto(vars, prefix+"."+k, sub)
+		}
+	}
+}
+
 func buildStepVars(results map[string]*StepResult) map[string]string {
 	vars := make(map[string]string)
 	for sid, r := range results {
@@ -1117,15 +1169,33 @@ func buildStepVars(results map[string]*StepResult) map[string]string {
 		// Include parsed JSON fields (only when json_output was true and parse succeeded)
 		if r.Parsed != nil {
 			for k, v := range r.Parsed {
-				switch val := v.(type) {
-				case string:
-					vars["step."+sid+"."+k] = val
-				default:
-					_ = val
-					if b, err := json.MarshalIndent(v, "", "  "); err == nil {
-						vars["step."+sid+"."+k] = string(b)
-					}
-				}
+				flattenTypedInto(vars, "step."+sid+"."+k, v)
+			}
+		}
+	}
+	return vars
+}
+
+// buildTypedStepVars mirrors buildStepVars but preserves typed values, so
+// consumers that need real lists/objects (e.g. a fan_out node's `over`
+// reference) can retrieve them without a JSON round-trip. Keys match the string
+// pool: step.<id> is the raw text output, step.<id> is overridden by the parsed
+// Value when json_output produced one, and step.<id>.<field> exposes each
+// top-level parsed field typed.
+func buildTypedStepVars(results map[string]*StepResult) map[string]any {
+	vars := make(map[string]any)
+	for sid, r := range results {
+		if r.Value != nil {
+			vars["step."+sid] = r.Value
+		} else {
+			vars["step."+sid] = r.Output
+		}
+		for k, v := range r.Params {
+			vars["step."+sid+"."+k] = v
+		}
+		if r.Parsed != nil {
+			for k, v := range r.Parsed {
+				vars["step."+sid+"."+k] = v
 			}
 		}
 	}
@@ -1379,6 +1449,9 @@ func (s *Thread) executeToolStep(ctx context.Context, step WorkflowStepDef, base
 		}
 		return nil, "User selected: " + answer, nil
 
+	case "whiteboard_open":
+		return s.openPlanWhiteboard(baseVars)
+
 	default:
 		result := s.executeToolConfirmed(ctx, step.Tool, map[string]any{})
 		if result.IsError {
@@ -1386,6 +1459,336 @@ func (s *Thread) executeToolStep(ctx context.Context, step WorkflowStepDef, base
 		}
 		return nil, result.Output, nil
 	}
+}
+
+// openPlanWhiteboard converts the plan workflow's authored mermaid scenes
+// (written to .vix/whiteboards/<thread>.json by the generate step) into
+// positioned canvas scenes, builds the per-thread whiteboard URL (scenes + the
+// plan text + voice agent), and opens it in the browser. It replaces the old
+// python-based open step; layout now happens in Go.
+func (s *Thread) openPlanWhiteboard(vars map[string]string) (nextRefs []StepRef, output string, err error) {
+	path := filepath.Join(s.cwd, ".vix", "whiteboards", s.id+".json")
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return nil, "", fmt.Errorf("read whiteboard scenes: %w", readErr)
+	}
+
+	base := whiteboard.WhiteboardBase(s.server.webPort)
+	if base == "" {
+		base = "http://localhost:1337"
+	}
+
+	url, buildErr := planWhiteboardURL(base, s.id, vars["plan"], data)
+	if buildErr != nil {
+		return nil, "", buildErr
+	}
+
+	openBrowser(url)
+	return nil, url, nil
+}
+
+// planWhiteboardURL converts the authored mermaid scenes JSON (data) into
+// positioned canvas scenes and builds the per-thread whiteboard URL carrying the
+// scenes, the plan text, and the voice agent. Pure (no I/O) so it is unit
+// testable.
+func planWhiteboardURL(base, threadID, plan string, data []byte) (string, error) {
+	// Voice agent used by the whiteboard walkthrough (matches the historical
+	// pinned agent for the plan experience).
+	const planAgentID = "agent_1201krde0b6jebpvqth0zxpcdqss"
+
+	// The generate step emits a JSON array of {name, context, mermaid}. Tolerate
+	// a leading/trailing markdown fence in case the model wrapped its output.
+	raw := strings.TrimSpace(string(data))
+	if strings.HasPrefix(raw, "```") {
+		raw = strings.TrimPrefix(raw, "```json")
+		raw = strings.TrimPrefix(raw, "```")
+		raw = strings.TrimSuffix(strings.TrimSpace(raw), "```")
+		raw = strings.TrimSpace(raw)
+	}
+	var items []whiteboard.MermaidScene
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return "", fmt.Errorf("parse whiteboard scenes: %w", err)
+	}
+
+	scenesQ, err := whiteboard.CompressScenes(whiteboard.ScenesFromMermaid(items))
+	if err != nil {
+		return "", fmt.Errorf("encode scenes: %w", err)
+	}
+
+	return fmt.Sprintf("%s/thread/%s/whiteboard?scenes_z=%s&plan_z=%s&agent_id=%s",
+		base, threadID, scenesQ, whiteboard.CompressText(plan), planAgentID), nil
+}
+
+// resolveOverList resolves a fan_out's `over` expression to a typed list. The
+// expression is a single $(name) reference; the name is looked up first in the
+// run's typed var pool (e.g. a prior fan_in's `as` binding), then in the typed
+// step-result pool. A JSON-array string also resolves (best effort), so a
+// bash/agent step that printed a JSON array works too.
+func resolveOverList(over string, typedVars map[string]any, results map[string]*StepResult) ([]any, error) {
+	key := strings.TrimSpace(over)
+	if strings.HasPrefix(key, "$(") && strings.HasSuffix(key, ")") {
+		key = key[2 : len(key)-1]
+	}
+	var v any
+	if tv, ok := typedVars[key]; ok {
+		v = tv
+	} else if tv, ok := buildTypedStepVars(results)[key]; ok {
+		v = tv
+	} else {
+		return nil, fmt.Errorf("over reference %q resolved to nothing", over)
+	}
+	switch val := v.(type) {
+	case []any:
+		return val, nil
+	case string:
+		var list []any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(val)), &list); err == nil {
+			return list, nil
+		}
+		return nil, fmt.Errorf("over reference %q is a string that is not a JSON array", over)
+	default:
+		return nil, fmt.Errorf("over reference %q is not a list (got %T)", over, v)
+	}
+}
+
+// firstPassingNext returns the first next_step whose execute_if passes (empty =
+// always), or nil when none match. Used for sequential routing inside a branch.
+func firstPassingNext(next []StepRef, vars map[string]string, cwd string) *StepRef {
+	for _, ns := range next {
+		cond := resolveBashExpansions(resolveTemplateString(ns.ExecuteIf, vars), cwd)
+		if evaluateExecuteIf(cond, cwd) {
+			return &StepRef{ID: ns.ID, Params: ns.Params}
+		}
+	}
+	return nil
+}
+
+// branchValue returns the typed value a branch contributes to a fan_in join:
+// its terminal step's parsed Value when present, else the raw text output.
+func branchValue(r branchResult) any {
+	if r.Value != nil {
+		return r.Value
+	}
+	return r.Output
+}
+
+// findFanIn returns the fan_in step (id + def) that joins the given barrier, or
+// ("", nil) when none exists. Validation guarantees at most one.
+func findFanIn(pf *WorkflowDef, barrierID string) (string, *WorkflowStepDef) {
+	for id, step := range pf.Steps {
+		if step.Type == "fan_in" && step.BarrierID == barrierID {
+			s := step
+			return id, &s
+		}
+	}
+	return "", nil
+}
+
+// branchCtx carries the shared, read-only context a fan_out branch needs.
+type branchCtx struct {
+	pf            *WorkflowDef
+	exec          *WorkflowRun
+	cred          config.Credential
+	parentModel   string
+	prompt        string
+	executeTool   func(name string, params map[string]any, cwd string) (*ToolResult, error)
+	baseVars      map[string]string      // snapshot: envVars + workflow.* + runtime accounting
+	globalResults map[string]*StepResult // read-only snapshot of upstream step results
+	itemName      string                 // the fan_out `as` binding name
+	logicalStep   *int
+	mu            *sync.Mutex // guards logicalStep and cross-branch reads of exec.StepAgents
+}
+
+// runBranchChain executes one fan_out branch: a sequential chain starting at
+// entry with the fan_out element bound as $(<itemName>). It supports bash,
+// agent, and if steps and follows single (execute_if-filtered) next_steps, so a
+// branch can itself decide to run more steps — the per-branch pipeline. The
+// terminal step's typed value (or text) becomes the branch result. All step
+// results are branch-local, so concurrent branches never collide. idx is the
+// element index, used only to disambiguate step events in the UI.
+func (s *Thread) runBranchChain(ctx context.Context, bc *branchCtx, entry *StepRef, item any, idx int) branchResult {
+	local := map[string]*StepResult{}
+	localAgents := map[string]*AgentRunner{}
+	cur := &StepRef{ID: entry.ID, Params: entry.Params}
+	var last branchResult
+
+	for guard := 0; cur != nil && cur.ID != "" && cur.ID != "stop" && guard < 200; guard++ {
+		if ctx.Err() != nil {
+			return branchResult{Err: ctx.Err()}
+		}
+		bstep := bc.pf.Steps[cur.ID]
+		bstepID := cur.ID
+
+		vars := make(map[string]string, len(bc.baseVars)+8)
+		for k, v := range bc.baseVars {
+			vars[k] = v
+		}
+		for k, v := range buildStepVars(bc.globalResults) {
+			vars[k] = v
+		}
+		for k, v := range buildStepVars(local) {
+			vars[k] = v
+		}
+		flattenTypedInto(vars, bc.itemName, item)
+		stepParams := resolveParams(cur.Params, vars)
+		for k, v := range stepParams {
+			vars[k] = v
+		}
+
+		bc.mu.Lock()
+		*bc.logicalStep++
+		myStep := *bc.logicalStep
+		bc.mu.Unlock()
+
+		silent := bstep.Silent
+		stepCtx := ctx
+		if silent {
+			stepCtx = withSilentCtx(ctx)
+		}
+		label := fmt.Sprintf("%s[%d]", bstepID, idx)
+
+		switch bstep.Type {
+		case "if":
+			cond := resolveBashExpansions(resolveTemplateString(bstep.Condition, vars), s.cwd)
+			nb := bstep.Else
+			if evaluateExecuteIf(cond, s.cwd) {
+				nb = bstep.Then
+			}
+			if nb == nil || nb.ID == "" || nb.ID == "stop" {
+				cur = nil
+			} else {
+				cur = &StepRef{ID: nb.ID, Params: nb.Params}
+			}
+			continue
+
+		case "bash":
+			s.emitIfVisible(silent, "event.workflow_step_start", protocol.EventWorkflowStepStart{StepID: label, StepIdx: myStep, Explanation: bstep.Explanation})
+			resolvedCmd := resolveBashExpansions(resolveTemplateString(bstep.Command, vars), s.cwd)
+			resolvedInput := resolveBashExpansions(resolveTemplateString(bstep.Input, vars), s.cwd)
+			bashTimeout := resolveBashStepTimeout(bstep.TimeoutSec, s.projectConfig.BashStepTimeouts)
+			bctx, bcancel := context.WithTimeout(stepCtx, bashTimeout)
+			outputStr, err := runBashWithContext(bctx, resolvedCmd, s.cwd, resolvedInput, func(line string) {
+				s.emitIfVisible(silent, "event.stream_chunk", protocol.EventStreamChunk{Text: line + "\n"})
+			})
+			bcancel()
+			local[bstepID] = &StepResult{Output: outputStr, Params: stepParams}
+			last = branchResult{Value: outputStr, Output: outputStr}
+			if err != nil {
+				s.emitIfVisible(silent, "event.workflow_step_done", protocol.EventWorkflowStepDone{StepID: label, StepIdx: myStep, Success: false, Command: resolvedCmd, BashOutput: bashOutputPreview(outputStr, 5)})
+				return branchResult{Err: fmt.Errorf("branch step '%s' bash failed: %w", bstepID, err)}
+			}
+			s.emitIfVisible(silent, "event.workflow_step_done", protocol.EventWorkflowStepDone{StepID: label, StepIdx: myStep, Success: true, Command: resolvedCmd, BashOutput: bashOutputPreview(outputStr, 5)})
+
+		case "agent":
+			var agent *AgentRunner
+			if bstep.Agent != "" {
+				cfg, ok := s.customAgents[bstep.Agent]
+				if !ok {
+					return branchResult{Err: fmt.Errorf("branch step '%s': agent '%s' not found", bstepID, bstep.Agent)}
+				}
+				if bstep.Effort != "" {
+					cfg.Effort = bstep.Effort
+				}
+				ar, err := NewAgentRunner(cfg, bc.cred, bc.parentModel, s.cwd, s.server.plugins, s.projectConfig.ToolTimeouts, s.searchDirsSlice()...)
+				if err != nil {
+					return branchResult{Err: fmt.Errorf("branch step '%s': %w", bstepID, err)}
+				}
+				agent = ar
+			} else if bstep.ForkFrom != "" {
+				bc.mu.Lock()
+				src, ok := localAgents[bstep.ForkFrom]
+				if !ok {
+					src, ok = bc.exec.StepAgents[bstep.ForkFrom]
+				}
+				bc.mu.Unlock()
+				if !ok {
+					return branchResult{Err: fmt.Errorf("branch step '%s': fork_from '%s' has no agent instance", bstepID, bstep.ForkFrom)}
+				}
+				ar, err := src.Clone(bc.cred)
+				if err != nil {
+					return branchResult{Err: fmt.Errorf("branch step '%s': %w", bstepID, err)}
+				}
+				agent = ar
+			} else {
+				return branchResult{Err: fmt.Errorf("branch step '%s': must have 'agent' or 'fork_from'", bstepID)}
+			}
+			if s.headless {
+				agent.Tools = ExcludeTools(agent.Tools, "ask_question_to_user")
+			}
+			if bstep.Signal {
+				agent.Tools = appendSignalTool(agent.Tools)
+			}
+
+			resolvedMessage := resolveBashExpansions(promptloader.GetLoader().Resolve(bstep.Prompt, vars, s.searchDirs(), nil), s.cwd)
+			streamCb := func(delta string) {
+				if bstep.IsStreamVisible() {
+					s.emitIfVisible(silent, "event.stream_chunk", protocol.EventStreamChunk{Text: delta})
+				}
+			}
+			stepExecuteTool := func(name string, params map[string]any, cwd string) (*ToolResult, error) {
+				if name == "workflow_signal" {
+					return s.handleWorkflowSignal(bc.pf, bc.exec.State, bstepID, params), nil
+				}
+				for _, t := range bstep.DenyTools {
+					if t == name {
+						return &ToolResult{Output: fmt.Sprintf("tool '%s' is denied in step '%s'", name, bstepID), IsError: true}, nil
+					}
+				}
+				return bc.executeTool(name, params, cwd)
+			}
+			stepHooks := s.hooksForStep(silent)
+			if bc.exec.State != nil {
+				base := stepHooks.OnStreamDone
+				stepHooks.OnStreamDone = func(in, out, cc, cr, el int64) {
+					atomic.AddInt64(&bc.exec.State.Budget.TokensUsed, in+out+cc+cr)
+					if base != nil {
+						base(in, out, cc, cr, el)
+					}
+				}
+			}
+			baseOnRetry := stepHooks.OnRetry
+			stepHooks.OnRetry = func(attempt, maxRetries, waitSecs int, reason string) {
+				bc.exec.recordRetry(bstepID, reason, attempt, maxRetries, waitSecs)
+				if baseOnRetry != nil {
+					baseOnRetry(attempt, maxRetries, waitSecs, reason)
+				}
+			}
+
+			s.emitIfVisible(silent, "event.workflow_step_start", protocol.EventWorkflowStepStart{StepID: label, StepIdx: myStep, Explanation: bstep.Explanation})
+			s.ensureWorkflowAgentContext(agent)
+			output, err := agent.Send(stepCtx, resolvedMessage, stepExecuteTool, streamCb, s.cwd, stepHooks)
+			if err != nil {
+				s.emitIfVisible(silent, "event.workflow_step_done", protocol.EventWorkflowStepDone{StepID: label, StepIdx: myStep, Success: false})
+				return branchResult{Err: fmt.Errorf("branch step '%s' failed: %w", bstepID, err)}
+			}
+
+			var parsedValue any
+			if bstep.JSONOutput {
+				stripped := stripMarkdownFence(output)
+				var v any
+				if json.Unmarshal([]byte(stripped), &v) == nil {
+					parsedValue = v
+				}
+			}
+			local[bstepID] = &StepResult{Output: output, Value: parsedValue, Params: stepParams}
+			bc.mu.Lock()
+			localAgents[bstepID] = agent
+			bc.mu.Unlock()
+			tv := any(output)
+			if parsedValue != nil {
+				tv = parsedValue
+			}
+			last = branchResult{Value: tv, Output: output}
+			bc.exec.recordTranscriptEntry(bstep, bstepID, output)
+			s.emitIfVisible(silent, "event.workflow_step_done", protocol.EventWorkflowStepDone{StepID: label, StepIdx: myStep, Success: true})
+
+		default:
+			return branchResult{Err: fmt.Errorf("branch step '%s': type %q is not allowed inside a fan_out branch", bstepID, bstep.Type)}
+		}
+
+		cur = firstPassingNext(bstep.NextSteps, vars, s.cwd)
+	}
+	return last
 }
 
 // executeParallelSteps launches multiple steps in parallel goroutines.
@@ -1709,6 +2112,7 @@ func (s *Thread) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt st
 		Def:         pf,
 		StepAgents:  make(map[string]*AgentRunner),
 		StepResults: make(map[string]*StepResult),
+		Barriers:    make(map[string][]branchResult),
 	}
 
 	if resume != nil {
@@ -1826,12 +2230,33 @@ func (s *Thread) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt st
 	var routedFrom string
 	var logicalStep int
 
+	// typedVars carries typed values (lists/objects) bound by fan_in `as`
+	// results across steps, so a later fan_out can iterate them. String
+	// consumers read the projected form from baseVars under the same name.
+	typedVars := map[string]any{}
+	// Rehydrate typedVars/baseVars from any persisted fan_in results on resume,
+	// so a run resumed after a fan_in still resolves $(<as>) for its downstream
+	// steps (fan_out persists the joined list under the fan_in's step id).
+	for id, st := range pf.Steps {
+		if st.Type == "fan_in" {
+			if res, ok := exec.StepResults[id]; ok && res.Value != nil {
+				typedVars[st.As] = res.Value
+				baseVars[st.As] = projectToString(res.Value)
+			}
+		}
+	}
+	var fanoutMu sync.Mutex
+
 	// Hard iteration cap. The configured budget governs the real limit (and
 	// routes to on_exceeded below); this is a safety net against runaway
-	// loops, widened when a budget legitimately allows more iterations.
+	// loops, widened when a budget legitimately allows more iterations. The
+	// headroom is doubled + 50 because invisible control-flow nodes (if) run in
+	// this loop but don't advance the iteration budget, so a budget of N real
+	// iterations can involve up to ~2N loop passes once routing is expressed as
+	// if nodes.
 	maxIterations := 200
-	if pf.Budget != nil && pf.Budget.MaxIterations > 0 && pf.Budget.MaxIterations+50 > maxIterations {
-		maxIterations = pf.Budget.MaxIterations + 50
+	if pf.Budget != nil && pf.Budget.MaxIterations > 0 && pf.Budget.MaxIterations*2+50 > maxIterations {
+		maxIterations = pf.Budget.MaxIterations*2 + 50
 	}
 
 	// Finalize on every exit path: completed runs clear their persisted state;
@@ -1886,7 +2311,6 @@ func (s *Thread) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt st
 		step := pf.Steps[currentRef.ID]
 		stepID := currentRef.ID
 		stepParams := currentRef.Params
-		logicalStep++
 		state.Budget.ElapsedSeconds = elapsed.seconds()
 
 		if ctx.Err() != nil {
@@ -1925,12 +2349,22 @@ func (s *Thread) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt st
 			}
 		}
 
+		// Control-flow nodes (if) are invisible, zero-cost routing: they don't
+		// advance the iteration budget, don't consume a logical step index, and
+		// emit no step events. This keeps a workflow's real-work accounting (and
+		// the Goal loop's max_iterations budget) unchanged when routing is
+		// expressed as if nodes instead of execute_if edges.
+		isControlNode := step.Type == "if"
+
 		// Each workflow_signal is only visible to the routing decisions that
 		// follow it: starting a new signal-capable step clears the previous one.
 		if step.Signal {
 			state.Signal = SignalState{}
 		}
-		state.Iteration++
+		if !isControlNode {
+			logicalStep++
+			state.Iteration++
+		}
 
 		// Refresh live accounting vars ($(workflow.*)) for prompts and
 		// execute_if conditions, then checkpoint the run so an interruption
@@ -1944,16 +2378,187 @@ func (s *Thread) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt st
 			stepCtx = withSilentCtx(ctx)
 		}
 
-		s.emitIfVisible(silent, "event.workflow_step_start", protocol.EventWorkflowStepStart{
-			StepID:      stepID,
-			StepIdx:     logicalStep,
-			Total:       0,
-			Explanation: step.Explanation,
-		})
+		if !isControlNode {
+			s.emitIfVisible(silent, "event.workflow_step_start", protocol.EventWorkflowStepStart{
+				StepID:      stepID,
+				StepIdx:     logicalStep,
+				Total:       0,
+				Explanation: step.Explanation,
+			})
+		}
 
 		stepStart := time.Now()
 
 		switch step.Type {
+		case "if":
+			// Invisible control-flow node: evaluate the condition and route to
+			// exactly one edge. No step events, no cost — see isControlNode.
+			vars := make(map[string]string, len(baseVars))
+			for k, v := range baseVars {
+				vars[k] = v
+			}
+			for k, v := range buildStepVars(exec.StepResults) {
+				vars[k] = v
+			}
+			for k, v := range stepParams {
+				vars[k] = v
+			}
+
+			resolvedCondition := resolveBashExpansions(resolveTemplateString(step.Condition, vars), s.cwd)
+			branch := step.Else
+			if evaluateExecuteIf(resolvedCondition, s.cwd) {
+				branch = step.Then
+			}
+
+			if branch == nil || branch.ID == "" {
+				currentRef = nil
+			} else if branch.ID == "stop" {
+				stopped = true
+				goto done
+			} else {
+				currentRef = &StepRef{ID: branch.ID, Params: resolveParams(branch.Params, vars)}
+			}
+
+		case "fan_out":
+			vars := make(map[string]string, len(baseVars))
+			for k, v := range baseVars {
+				vars[k] = v
+			}
+			for k, v := range buildStepVars(exec.StepResults) {
+				vars[k] = v
+			}
+			for k, v := range stepParams {
+				vars[k] = v
+			}
+
+			list, listErr := resolveOverList(step.Over, typedVars, exec.StepResults)
+			if listErr != nil {
+				s.emitIfVisible(silent, "event.workflow_step_done", protocol.EventWorkflowStepDone{StepID: stepID, StepIdx: logicalStep, Success: false, DurationMs: time.Since(stepStart).Milliseconds()})
+				s.emit("event.workflow_complete", protocol.EventWorkflowComplete{WorkflowName: pf.Name, Success: false, StepCosts: stepCosts, DurationMs: time.Since(workflowStart).Milliseconds()})
+				s.activePlan = nil
+				return fmt.Errorf("step '%s' fan_out: %w", stepID, listErr)
+			}
+
+			maxPar := step.MaxParallel
+			if maxPar <= 0 {
+				maxPar = runtime.GOMAXPROCS(0)
+			}
+			if maxPar < 1 {
+				maxPar = 1
+			}
+
+			baseSnap := make(map[string]string, len(baseVars))
+			for k, v := range baseVars {
+				baseSnap[k] = v
+			}
+			globalSnap := make(map[string]*StepResult, len(exec.StepResults))
+			for k, v := range exec.StepResults {
+				globalSnap[k] = v
+			}
+			bc := &branchCtx{
+				pf: pf, exec: exec, cred: cred, parentModel: parentModel, prompt: prompt,
+				executeTool: executeTool, baseVars: baseSnap, globalResults: globalSnap,
+				itemName: step.As, logicalStep: &logicalStep, mu: &fanoutMu,
+			}
+
+			results := make([]branchResult, len(list))
+			sem := make(chan struct{}, maxPar)
+			var bwg sync.WaitGroup
+			for i := range list {
+				bwg.Add(1)
+				sem <- struct{}{}
+				go func(idx int, item any) {
+					defer bwg.Done()
+					defer func() { <-sem }()
+					results[idx] = s.runBranchChain(stepCtx, bc, step.Branch, item, idx)
+				}(i, list[i])
+			}
+			bwg.Wait()
+			exec.Barriers[step.BarrierID] = results
+
+			// Join immediately per the matching fan_in's policy, and persist the
+			// list under the fan_in's step id so a resume can recover it.
+			fanInID, fanIn := findFanIn(pf, step.BarrierID)
+			onErr := "abort"
+			if fanIn != nil && fanIn.OnBranchError != "" {
+				onErr = fanIn.OnBranchError
+			}
+			values := []any{}
+			for bi, r := range results {
+				if r.Err != nil {
+					if onErr == "collect" {
+						continue
+					}
+					s.emitIfVisible(silent, "event.workflow_step_done", protocol.EventWorkflowStepDone{StepID: stepID, StepIdx: logicalStep, Success: false, DurationMs: time.Since(stepStart).Milliseconds()})
+					s.emit("event.workflow_complete", protocol.EventWorkflowComplete{WorkflowName: pf.Name, Success: false, StepCosts: stepCosts, DurationMs: time.Since(workflowStart).Milliseconds()})
+					s.activePlan = nil
+					return fmt.Errorf("step '%s' fan_out: branch %d failed: %w", stepID, bi, r.Err)
+				}
+				values = append(values, branchValue(r))
+			}
+			if fanIn != nil {
+				typedVars[fanIn.As] = values
+				baseVars[fanIn.As] = projectToString(values)
+				exec.StepResults[fanInID] = &StepResult{Output: projectToString(values), Value: values}
+			}
+			exec.StepResults[stepID] = &StepResult{Output: fmt.Sprintf("fanned out %d branch(es) over barrier %q", len(list), step.BarrierID), Params: stepParams}
+
+			if !silent {
+				stepCosts = append(stepCosts, protocol.StepCost{StepID: stepID, Explanation: step.Explanation, DurationMs: time.Since(stepStart).Milliseconds()})
+			}
+			s.emitIfVisible(silent, "event.workflow_step_done", protocol.EventWorkflowStepDone{StepID: stepID, StepIdx: logicalStep, Success: true, DurationMs: time.Since(stepStart).Milliseconds()})
+
+			next := firstPassingNext(step.NextSteps, vars, s.cwd)
+			if next == nil {
+				currentRef = nil
+			} else if next.ID == "stop" {
+				stopped = true
+				goto done
+			} else {
+				currentRef = &StepRef{ID: next.ID, Params: resolveParams(next.Params, vars)}
+			}
+
+		case "fan_in":
+			// The join was computed by fan_out and persisted under this step id;
+			// rebind it (idempotent, and resume-safe) then route onward.
+			var values []any
+			if res, ok := exec.StepResults[stepID]; ok {
+				if lst, ok := res.Value.([]any); ok {
+					values = lst
+				}
+			}
+			if values == nil {
+				values = []any{}
+			}
+			typedVars[step.As] = values
+			baseVars[step.As] = projectToString(values)
+
+			vars := make(map[string]string, len(baseVars))
+			for k, v := range baseVars {
+				vars[k] = v
+			}
+			for k, v := range buildStepVars(exec.StepResults) {
+				vars[k] = v
+			}
+			for k, v := range stepParams {
+				vars[k] = v
+			}
+
+			if !silent {
+				stepCosts = append(stepCosts, protocol.StepCost{StepID: stepID, Explanation: step.Explanation, DurationMs: time.Since(stepStart).Milliseconds()})
+			}
+			s.emitIfVisible(silent, "event.workflow_step_done", protocol.EventWorkflowStepDone{StepID: stepID, StepIdx: logicalStep, Success: true, DurationMs: time.Since(stepStart).Milliseconds()})
+
+			next := firstPassingNext(step.NextSteps, vars, s.cwd)
+			if next == nil {
+				currentRef = nil
+			} else if next.ID == "stop" {
+				stopped = true
+				goto done
+			} else {
+				currentRef = &StepRef{ID: next.ID, Params: resolveParams(next.Params, vars)}
+			}
+
 		case "bash":
 			vars := make(map[string]string, len(baseVars))
 			for k, v := range baseVars {
@@ -2526,19 +3131,26 @@ func (s *Thread) executeWorkflow(ctx context.Context, pf *WorkflowDef, prompt st
 				return fmt.Errorf("step '%s' failed: %w", stepID, err)
 			}
 
-			// Parse JSON if json_output is set
+			// Parse JSON if json_output is set. Value holds the full parsed
+			// document (object OR array); Parsed keeps the object-only view for
+			// back-compat with $(step.id.field) expansion.
 			var parsed map[string]any
+			var parsedValue any
 			if step.JSONOutput {
 				stripped := stripMarkdownFence(output)
-				var obj map[string]any
-				if err := json.Unmarshal([]byte(stripped), &obj); err == nil {
-					parsed = obj
+				var v any
+				if err := json.Unmarshal([]byte(stripped), &v); err == nil {
+					parsedValue = v
+					if obj, ok := v.(map[string]any); ok {
+						parsed = obj
+					}
 				}
 			}
 
 			exec.StepResults[stepID] = &StepResult{
 				Output: output,
 				Parsed: parsed,
+				Value:  parsedValue,
 				Params: stepParams,
 			}
 			exec.recordTranscriptEntry(step, stepID, output)

@@ -1184,6 +1184,86 @@ func TestBuildStepVars(t *testing.T) {
 			t.Error("expected no step.plan.display when Parsed is nil")
 		}
 	})
+
+	t.Run("nested object fields flatten and project as JSON", func(t *testing.T) {
+		results := map[string]*StepResult{
+			"item": {
+				Parsed: map[string]any{
+					"target": map[string]any{"path": "src/a.go", "risk": "high"},
+				},
+			},
+		}
+		vars := buildStepVars(results)
+		if vars["step.item.target.path"] != "src/a.go" {
+			t.Errorf("expected nested path 'src/a.go', got %q", vars["step.item.target.path"])
+		}
+		if vars["step.item.target.risk"] != "high" {
+			t.Errorf("expected nested risk 'high', got %q", vars["step.item.target.risk"])
+		}
+		// The object field itself projects as JSON (back-compat).
+		if !strings.Contains(vars["step.item.target"], `"path"`) {
+			t.Errorf("expected object field to project as JSON, got %q", vars["step.item.target"])
+		}
+	})
+}
+
+// ── projectToString ──
+
+func TestProjectToString(t *testing.T) {
+	if got := projectToString("plain"); got != "plain" {
+		t.Errorf("string should pass through, got %q", got)
+	}
+	if got := projectToString(nil); got != "" {
+		t.Errorf("nil should be empty, got %q", got)
+	}
+	if got := projectToString([]any{"a", "b"}); !strings.Contains(got, `"a"`) || !strings.Contains(got, `"b"`) {
+		t.Errorf("list should JSON-encode, got %q", got)
+	}
+	if got := projectToString(map[string]any{"k": "v"}); !strings.Contains(got, `"k"`) {
+		t.Errorf("object should JSON-encode, got %q", got)
+	}
+}
+
+// ── buildTypedStepVars ──
+
+func TestBuildTypedStepVars(t *testing.T) {
+	t.Run("Value overrides raw output when present", func(t *testing.T) {
+		list := []any{map[string]any{"path": "a"}, map[string]any{"path": "b"}}
+		results := map[string]*StepResult{
+			"discover": {Output: `["a","b"]`, Value: list},
+		}
+		vars := buildTypedStepVars(results)
+		got, ok := vars["step.discover"].([]any)
+		if !ok {
+			t.Fatalf("expected typed []any for step.discover, got %T", vars["step.discover"])
+		}
+		if len(got) != 2 {
+			t.Errorf("expected 2 elements, got %d", len(got))
+		}
+	})
+
+	t.Run("falls back to raw output string when no Value", func(t *testing.T) {
+		results := map[string]*StepResult{
+			"explore": {Output: "some text"},
+		}
+		vars := buildTypedStepVars(results)
+		if vars["step.explore"] != "some text" {
+			t.Errorf("expected raw output string, got %v", vars["step.explore"])
+		}
+	})
+
+	t.Run("parsed fields exposed typed", func(t *testing.T) {
+		results := map[string]*StepResult{
+			"item": {Parsed: map[string]any{"count": float64(3), "name": "x"}},
+		}
+		vars := buildTypedStepVars(results)
+		if vars["step.item.count"] != float64(3) {
+			t.Errorf("expected typed number 3, got %v (%T)", vars["step.item.count"], vars["step.item.count"])
+		}
+		if vars["step.item.name"] != "x" {
+			t.Errorf("expected 'x', got %v", vars["step.item.name"])
+		}
+	})
 }
 
 // ── resolveBashStepTimeout ──

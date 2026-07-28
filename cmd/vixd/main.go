@@ -194,6 +194,7 @@ func main() {
 	}, cred, ctx)
 	daemon.RegisterToolHandlers(server)
 	if *webPort > 0 && !*noMissionControl {
+		server.SetWebPort(*webPort)
 		go daemon.StartWebServer(ctx, server, *webPort)
 	}
 	if *pprofPort > 0 {

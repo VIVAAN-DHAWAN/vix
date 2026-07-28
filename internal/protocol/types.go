@@ -214,6 +214,10 @@ type EventThreadStarted struct {
 	StartedAt   string `json:"started_at"` // RFC3339
 	ParentID    string `json:"parent_id,omitempty"`
 	ForkTurnIdx int    `json:"fork_turn_idx,omitempty"`
+	// WhiteboardBase is the local web UI origin (e.g. "http://localhost:1337")
+	// used by the client to build whiteboard links for mermaid diagrams. Empty
+	// when the web UI is disabled, in which case the client shows no link.
+	WhiteboardBase string `json:"whiteboard_base,omitempty"`
 }
 
 // EventInitState carries brain init progress.

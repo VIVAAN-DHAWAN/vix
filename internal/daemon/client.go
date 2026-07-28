@@ -461,6 +461,12 @@ type ThreadClient struct {
 	mu         sync.Mutex // protects writes
 	threadID   string
 	startedAt  time.Time
+	// whiteboardBase is the local web UI origin (e.g. "http://localhost:1337")
+	// reported by the daemon in the thread_started event, or "" when the web UI
+	// is disabled. The TUI uses it to build "See it on the whiteboard" links for
+	// mermaid diagrams. Captured here because StartThread consumes the
+	// thread_started event before the TUI's event loop can see it.
+	whiteboardBase string
 	// Shared-secret token stamped onto every outgoing ThreadCommand. Set
 	// via SetAuthToken before Connect; matches the daemon's
 	// -auth-token-path. Empty when the daemon side is also unauthenticated.
@@ -502,6 +508,10 @@ func (sc *ThreadClient) ThreadID() string {
 
 // StartedAt returns the time the daemon thread was created.
 func (sc *ThreadClient) StartedAt() time.Time { return sc.startedAt }
+
+// WhiteboardBase returns the local web UI origin reported by the daemon in the
+// thread_started event, or "" when the web UI is disabled.
+func (sc *ThreadClient) WhiteboardBase() string { return sc.whiteboardBase }
 
 // Connect establishes a persistent connection and starts an agent thread.
 func (sc *ThreadClient) Connect(cwd, configDir, model string, forceInit bool, enableAutomaticWritePermission bool, enableAutomaticDirectoryAccess bool, headless bool) error {
@@ -615,6 +625,7 @@ func (sc *ThreadClient) connectWith(startData protocol.ThreadStartData) error {
 		var started protocol.EventThreadStarted
 		json.Unmarshal(data, &started)
 		sc.threadID = started.ThreadID
+		sc.whiteboardBase = started.WhiteboardBase
 		if t, err := time.Parse(time.RFC3339, started.StartedAt); err == nil {
 			sc.startedAt = t
 		}

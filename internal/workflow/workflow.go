@@ -57,7 +57,7 @@ type StepOption struct {
 
 // StepDef defines one step in the workflow.
 type StepDef struct {
-	Type        string              `json:"type"`                   // "agent", "tool", or "bash" (required)
+	Type        string              `json:"type"`                   // "agent", "tool", "bash", or "if" (required)
 	Effort      string              `json:"effort,omitempty"`       // "adaptive", "low", "medium", "high", "max"
 	NextSteps   []StepRef           `json:"next_steps,omitempty"`   // next steps to execute (empty = end workflow)
 	InputParams map[string]InputDef `json:"input_params,omitempty"` // declared input parameters for this step
@@ -80,6 +80,21 @@ type StepDef struct {
 	TimeoutSec  *int                `json:"timeout_sec,omitempty"`  // per-step timeout (type="bash" only); pointer distinguishes absent from 0
 	Signal      bool                `json:"signal,omitempty"`       // agent steps: expose the workflow_signal tool to the agent
 	OnError     *StepRef            `json:"on_error,omitempty"`     // agent steps: route here instead of aborting when the step fails
+
+	// if-step fields (type="if"): a bash condition selects a single edge.
+	Condition string   `json:"condition,omitempty"` // bash test evaluated like execute_if (exit 0 = true)
+	Then      *StepRef `json:"then,omitempty"`      // taken when the condition is true (required for type="if")
+	Else      *StepRef `json:"else,omitempty"`      // taken when the condition is false (optional; absent = end)
+
+	// fan_out fields (type="fan_out"): run one branch per element of a list.
+	Over        string   `json:"over,omitempty"`         // $(...) reference to a typed list to iterate
+	As          string   `json:"as,omitempty"`           // binding name: the per-element item (fan_out) or the collected results list (fan_in)
+	BarrierID   string   `json:"barrier_id,omitempty"`   // correlates a fan_out with its fan_in
+	MaxParallel int      `json:"max_parallel,omitempty"` // concurrency cap; 0/absent = min(N, GOMAXPROCS)
+	Branch      *StepRef `json:"branch,omitempty"`       // per-element branch entry point (required for type="fan_out")
+
+	// fan_in fields (type="fan_in"): join the barrier's branches into one list.
+	OnBranchError string `json:"on_branch_error,omitempty"` // "abort" (default) or "collect" (drop failed branches)
 }
 
 // IsStreamVisible returns whether streaming output should be shown for this step.
@@ -184,8 +199,8 @@ func Validate(pf *Def) error {
 		if step.Type == "" {
 			return fmt.Errorf("step '%s': missing type", stepID)
 		}
-		if step.Type != "agent" && step.Type != "tool" && step.Type != "bash" {
-			return fmt.Errorf("step '%s': unknown type '%s' (must be 'agent', 'tool', or 'bash')", stepID, step.Type)
+		if step.Type != "agent" && step.Type != "tool" && step.Type != "bash" && step.Type != "if" && step.Type != "fan_out" && step.Type != "fan_in" {
+			return fmt.Errorf("step '%s': unknown type '%s' (must be 'agent', 'tool', 'bash', 'if', 'fan_out', or 'fan_in')", stepID, step.Type)
 		}
 
 		for _, ns := range step.NextSteps {
@@ -241,6 +256,83 @@ func Validate(pf *Def) error {
 			continue
 		}
 
+		if step.Type == "if" {
+			if step.Condition == "" {
+				return fmt.Errorf("step '%s': type 'if' requires a 'condition'", stepID)
+			}
+			if step.Then == nil || step.Then.ID == "" {
+				return fmt.Errorf("step '%s': type 'if' requires a 'then' target", stepID)
+			}
+			if step.Agent != "" || step.ForkFrom != "" || step.Prompt != "" || step.Command != "" || step.Tool != "" {
+				return fmt.Errorf("step '%s': type 'if' cannot have 'agent', 'fork_from', 'prompt', 'command', or 'tool'", stepID)
+			}
+			if step.Then.ID != "stop" {
+				if _, ok := pf.Steps[step.Then.ID]; !ok {
+					return fmt.Errorf("step '%s': then '%s' references unknown step", stepID, step.Then.ID)
+				}
+			}
+			if step.Else != nil && step.Else.ID != "" && step.Else.ID != "stop" {
+				if _, ok := pf.Steps[step.Else.ID]; !ok {
+					return fmt.Errorf("step '%s': else '%s' references unknown step", stepID, step.Else.ID)
+				}
+			}
+			continue
+		}
+
+		if step.Type == "fan_out" {
+			if step.Over == "" {
+				return fmt.Errorf("step '%s': type 'fan_out' requires 'over'", stepID)
+			}
+			if step.As == "" {
+				return fmt.Errorf("step '%s': type 'fan_out' requires 'as'", stepID)
+			}
+			if step.BarrierID == "" {
+				return fmt.Errorf("step '%s': type 'fan_out' requires 'barrier_id'", stepID)
+			}
+			if step.Branch == nil || step.Branch.ID == "" {
+				return fmt.Errorf("step '%s': type 'fan_out' requires a 'branch' entry point", stepID)
+			}
+			if step.MaxParallel < 0 {
+				return fmt.Errorf("step '%s': max_parallel must be >= 0", stepID)
+			}
+			if step.Agent != "" || step.ForkFrom != "" || step.Prompt != "" || step.Command != "" || step.Tool != "" {
+				return fmt.Errorf("step '%s': type 'fan_out' cannot have 'agent', 'fork_from', 'prompt', 'command', or 'tool'", stepID)
+			}
+			if step.Branch.ID != "stop" {
+				if _, ok := pf.Steps[step.Branch.ID]; !ok {
+					return fmt.Errorf("step '%s': branch '%s' references unknown step", stepID, step.Branch.ID)
+				}
+			}
+			// Reject nested fan_out: a branch subtree may not reach another
+			// fan_out (v1 keeps the barrier model flat).
+			if step.Branch.ID != "stop" {
+				reached := map[string]bool{}
+				collectReachable(pf, step.Branch.ID, reached)
+				for id := range reached {
+					if pf.Steps[id].Type == "fan_out" {
+						return fmt.Errorf("step '%s': branch subtree reaches nested fan_out '%s' (unsupported)", stepID, id)
+					}
+				}
+			}
+			continue
+		}
+
+		if step.Type == "fan_in" {
+			if step.BarrierID == "" {
+				return fmt.Errorf("step '%s': type 'fan_in' requires 'barrier_id'", stepID)
+			}
+			if step.As == "" {
+				return fmt.Errorf("step '%s': type 'fan_in' requires 'as'", stepID)
+			}
+			if step.OnBranchError != "" && step.OnBranchError != "abort" && step.OnBranchError != "collect" {
+				return fmt.Errorf("step '%s': on_branch_error must be 'abort' or 'collect'", stepID)
+			}
+			if step.Agent != "" || step.ForkFrom != "" || step.Prompt != "" || step.Command != "" || step.Tool != "" {
+				return fmt.Errorf("step '%s': type 'fan_in' cannot have 'agent', 'fork_from', 'prompt', 'command', or 'tool'", stepID)
+			}
+			continue
+		}
+
 		// timeout_sec is only enforced on bash steps today; reject it elsewhere
 		// rather than silently ignoring so configs fail loudly at load time.
 		if step.TimeoutSec != nil {
@@ -269,5 +361,69 @@ func Validate(pf *Def) error {
 		}
 	}
 
+	// Barrier pairing: every fan_out barrier_id must match exactly one fan_in
+	// barrier_id and vice versa, so a fan_out always has a join and no fan_in
+	// waits on branches that never spawn.
+	fanOutBarriers := map[string]int{}
+	fanInBarriers := map[string]int{}
+	for _, step := range pf.Steps {
+		switch step.Type {
+		case "fan_out":
+			fanOutBarriers[step.BarrierID]++
+		case "fan_in":
+			fanInBarriers[step.BarrierID]++
+		}
+	}
+	for bid, n := range fanOutBarriers {
+		if n > 1 {
+			return fmt.Errorf("barrier '%s': %d fan_out nodes share it (must be exactly one)", bid, n)
+		}
+		if fanInBarriers[bid] != 1 {
+			return fmt.Errorf("barrier '%s': fan_out has no matching fan_in", bid)
+		}
+	}
+	for bid, n := range fanInBarriers {
+		if n > 1 {
+			return fmt.Errorf("barrier '%s': %d fan_in nodes share it (must be exactly one)", bid, n)
+		}
+		if fanOutBarriers[bid] != 1 {
+			return fmt.Errorf("barrier '%s': fan_in has no matching fan_out", bid)
+		}
+	}
+
 	return nil
+}
+
+// collectReachable records every step id reachable from start by following
+// next_steps, then/else, branch, on_error, and tool option edges. Used to
+// reject nested fan_out. A visited set makes it cycle-safe.
+func collectReachable(pf *Def, start string, visited map[string]bool) {
+	if start == "" || start == "stop" || visited[start] {
+		return
+	}
+	step, ok := pf.Steps[start]
+	if !ok {
+		return
+	}
+	visited[start] = true
+	for _, ns := range step.NextSteps {
+		collectReachable(pf, ns.ID, visited)
+	}
+	if step.Then != nil {
+		collectReachable(pf, step.Then.ID, visited)
+	}
+	if step.Else != nil {
+		collectReachable(pf, step.Else.ID, visited)
+	}
+	if step.Branch != nil {
+		collectReachable(pf, step.Branch.ID, visited)
+	}
+	if step.OnError != nil {
+		collectReachable(pf, step.OnError.ID, visited)
+	}
+	for _, opt := range step.Options {
+		for _, s := range opt.Steps {
+			collectReachable(pf, s.ID, visited)
+		}
+	}
 }

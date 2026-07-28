@@ -37,25 +37,36 @@
           },
           "next_steps": [
             {
-              "id": "wrap_up",
-              "execute_if": "[ \"$(workflow.signal.status)\" = \"blocked\" ]"
-            },
-            {
-              "id": "verify",
-              "params": {
-                "objective": "$(workflow.prompt)"
-              },
-              "execute_if": "[ \"$(workflow.signal.status)\" = \"complete\" ]"
-            },
-            {
-              "id": "pursue",
-              "params": {
-                "objective": "$(workflow.prompt)",
-                "feedback": "Previous iteration ended without a completion signal. Continue from where you left off."
-              },
-              "execute_if": "[ -z \"$(workflow.signal.status)\" ]"
+              "id": "route_after_pursue"
             }
           ]
+        },
+        "route_after_pursue": {
+          "type": "if",
+          "condition": "[ \"$(workflow.signal.status)\" = \"blocked\" ]",
+          "then": {
+            "id": "wrap_up"
+          },
+          "else": {
+            "id": "route_pursue_complete"
+          }
+        },
+        "route_pursue_complete": {
+          "type": "if",
+          "condition": "[ \"$(workflow.signal.status)\" = \"complete\" ]",
+          "then": {
+            "id": "verify",
+            "params": {
+              "objective": "$(workflow.prompt)"
+            }
+          },
+          "else": {
+            "id": "pursue",
+            "params": {
+              "objective": "$(workflow.prompt)",
+              "feedback": "Previous iteration ended without a completion signal. Continue from where you left off."
+            }
+          }
         },
         "verify": {
           "type": "agent",
@@ -73,18 +84,23 @@
           "stream": true,
           "next_steps": [
             {
-              "id": "wrap_up",
-              "execute_if": "[ \"$(step.verify.verdict)\" = \"pass\" ]"
-            },
-            {
-              "id": "pursue",
-              "params": {
-                "objective": "$(workflow.prompt)",
-                "feedback": "An independent audit rejected the completion claim. Address these gaps before signalling complete again:\n$(step.verify.feedback)"
-              },
-              "execute_if": "[ \"$(step.verify.verdict)\" != \"pass\" ]"
+              "id": "route_after_verify"
             }
           ]
+        },
+        "route_after_verify": {
+          "type": "if",
+          "condition": "[ \"$(step.verify.verdict)\" = \"pass\" ]",
+          "then": {
+            "id": "wrap_up"
+          },
+          "else": {
+            "id": "pursue",
+            "params": {
+              "objective": "$(workflow.prompt)",
+              "feedback": "An independent audit rejected the completion claim. Address these gaps before signalling complete again:\n$(step.verify.feedback)"
+            }
+          }
         },
         "wrap_up": {
           "type": "agent",
@@ -206,14 +222,14 @@
           "stream": false
         },
         "open_whiteboard": {
-          "type": "bash",
+          "type": "tool",
+          "tool": "whiteboard_open",
           "explanation": "Opening whiteboard in your browser",
           "input_params": {
             "plan": {
               "description": "The implementation plan to pass to the whiteboard"
             }
           },
-          "command": "SCENES=$(python3 -c \"import urllib.parse,sys; sys.stdout.write(urllib.parse.quote(open('.vix/whiteboards/$(thread.id).json').read().strip()))\") && PLAN=$(python3 -c \"import urllib.parse,sys; sys.stdout.write(urllib.parse.quote(sys.argv[1]))\" \"$(plan)\") && if [ \"$(platform)\" = \"darwin\" ]; then open \"http://127.0.0.1:1337/thread/$(thread.id)/whiteboard?scenes=$SCENES&plan=$PLAN&agent_id=agent_1201krde0b6jebpvqth0zxpcdqss\"; else xdg-open \"http://127.0.0.1:1337/thread/$(thread.id)/whiteboard?scenes=$SCENES&plan=$PLAN&agent_id=agent_1201krde0b6jebpvqth0zxpcdqss\"; fi",
           "silent": true,
           "next_steps": [
             {

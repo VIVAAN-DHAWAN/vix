@@ -18,6 +18,7 @@ import (
 	"github.com/get-vix/vix/internal/daemon/hooks"
 	"github.com/get-vix/vix/internal/daemon/jobs"
 	"github.com/get-vix/vix/internal/protocol"
+	"github.com/get-vix/vix/internal/whiteboard"
 )
 
 // HandlerFunc is the type for daemon request handlers.
@@ -58,6 +59,11 @@ type Server struct {
 
 	// User-level config directory (~/.vix/)
 	homeVixDir string
+
+	// webPort is the local web UI port (vixd's --web-port), or 0 when the web
+	// UI is disabled. Used to build whiteboard links handed to clients via
+	// event.thread_started. Set once at startup with SetWebPort.
+	webPort int
 
 	// cwd is vixd's own working directory, captured once at construction. Used
 	// as the default working directory offered to web-UI job creation (the
@@ -292,6 +298,13 @@ func (s *Server) SetVersion(v string) {
 // Version returns the daemon build version recorded via SetVersion.
 func (s *Server) Version() string {
 	return s.version
+}
+
+// SetWebPort records the local web UI port (vixd's --web-port), or 0 when the
+// web UI is disabled. Used to build whiteboard links handed to clients via
+// event.thread_started. Call before ListenAndServe.
+func (s *Server) SetWebPort(p int) {
+	s.webPort = p
 }
 
 // instanceConnected records a newly attached vix instance.
@@ -867,10 +880,11 @@ func (s *Server) handleThread(conn net.Conn, scanner *bufio.Scanner, startCmd pr
 	s.writeEvent(conn, protocol.ThreadEvent{
 		Type: "event.thread_started",
 		Data: protocol.EventThreadStarted{
-			ThreadID:    threadID,
-			StartedAt:   thread.startTime.Format(time.RFC3339),
-			ParentID:    thread.parentID,
-			ForkTurnIdx: thread.forkTurnIdx,
+			ThreadID:       threadID,
+			StartedAt:      thread.startTime.Format(time.RFC3339),
+			ParentID:       thread.parentID,
+			ForkTurnIdx:    thread.forkTurnIdx,
+			WhiteboardBase: whiteboard.WhiteboardBase(s.webPort),
 		},
 	})
 

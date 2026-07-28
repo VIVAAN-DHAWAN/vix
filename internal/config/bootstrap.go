@@ -28,6 +28,7 @@ var managedDefaultFiles = []string{
 	"skills/review-pr/SKILL.md",
 	"skills/vix-help/SKILL.md",
 	"skills/vix-help/references/vix-manual.md",
+	"skills/workflow/SKILL.md",
 }
 
 // BootstrapHomeVixDir writes default config, agent, and prompt files into
