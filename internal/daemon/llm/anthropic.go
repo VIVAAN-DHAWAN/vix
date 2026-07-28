@@ -373,7 +373,7 @@ func toAnthropicMessages(messages []MessageParam) ([]anthropic.MessageParam, err
 				}
 				blocks = append(blocks, anthropic.NewThinkingBlock(b.Signature, b.Text))
 			case BlockToolUse:
-				blocks = append(blocks, anthropic.NewToolUseBlock(b.ID, b.Input, b.Name))
+				blocks = append(blocks, anthropic.NewToolUseBlock(b.ID, normalizeToolInput(b.Input), b.Name))
 			case BlockToolResult:
 				blocks = append(blocks, anthropic.NewToolResultBlock(b.ToolUseID, b.Output, b.IsError))
 			default:

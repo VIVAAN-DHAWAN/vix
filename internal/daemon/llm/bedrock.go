@@ -546,9 +546,9 @@ type bdContent struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
 	// tool_use
-	ID    string         `json:"id,omitempty"`
-	Name  string         `json:"name,omitempty"`
-	Input map[string]any `json:"input,omitempty"`
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
 	// tool_result
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"`
@@ -658,7 +658,14 @@ func toBedrockContent(cb ContentBlock) (bdContent, error) {
 	case BlockThinking:
 		return bdContent{Type: "thinking", Thinking: cb.Text, Signature: cb.Signature}, nil
 	case BlockToolUse:
-		return bdContent{Type: "tool_use", ID: cb.ID, Name: cb.Name, Input: cb.Input}, nil
+		// Marshal to raw JSON so a no-arg call still serializes `input` as an
+		// object (`{}`); an empty map under `omitempty` would be dropped, which
+		// the Bedrock/Anthropic API rejects.
+		inputJSON, err := json.Marshal(normalizeToolInput(cb.Input))
+		if err != nil {
+			return bdContent{}, fmt.Errorf("bedrock: marshal tool_use input for %q: %w", cb.Name, err)
+		}
+		return bdContent{Type: "tool_use", ID: cb.ID, Name: cb.Name, Input: inputJSON}, nil
 	case BlockToolResult:
 		return bdContent{Type: "tool_result", ToolUseID: cb.ToolUseID, Content: cb.Output, IsError: cb.IsError}, nil
 	case BlockImage:

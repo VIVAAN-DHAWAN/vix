@@ -259,7 +259,7 @@ func buildResponsesInput(messages []MessageParam) responses.ResponseInputParam {
 					pendingText = append(pendingText, b.Text)
 				case BlockToolUse:
 					flushText()
-					args, _ := json.Marshal(b.Input)
+					args, _ := json.Marshal(normalizeToolInput(b.Input))
 					input = append(input, responses.ResponseInputItemParamOfFunctionCall(string(args), b.ID, b.Name))
 				case BlockThinking:
 					// Only re-emit reasoning items produced by THIS provider

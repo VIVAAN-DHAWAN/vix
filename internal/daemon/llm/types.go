@@ -173,6 +173,19 @@ func NewToolUseBlock(id, name string, input map[string]any) ContentBlock {
 	return ContentBlock{Type: BlockToolUse, ID: id, Name: name, Input: input}
 }
 
+// normalizeToolInput guarantees a non-nil object for a tool_use block's input.
+// Every provider API requires `input` to be an object even when the tool takes
+// no arguments; a no-arg call streams in as an empty map, which the
+// `json:"input,omitempty"` tag drops on persist, leaving a nil map after
+// reload. Coercing nil to an empty map at the request boundary keeps the
+// serialized `input` a valid object (`{}`) instead of null/omitted.
+func normalizeToolInput(in map[string]any) map[string]any {
+	if in == nil {
+		return map[string]any{}
+	}
+	return in
+}
+
 // NewToolResultBlock builds a user tool_result block.
 func NewToolResultBlock(toolUseID, output string, isError bool) ContentBlock {
 	return ContentBlock{Type: BlockToolResult, ToolUseID: toolUseID, Output: output, IsError: isError}
