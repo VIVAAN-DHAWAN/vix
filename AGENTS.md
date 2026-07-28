@@ -77,6 +77,37 @@ access run `make web-source` once to fetch the source, then `make build-web`
 after any frontend changes and commit the regenerated `dist/`. Use `make pull` to
 sync the latest source from the submodule and rebuild.
 
+## Whiteboard diagrams (mermaid-ascii fork)
+
+Terminal Mermaid rendering (`internal/whiteboard`, `RenderASCII`) delegates to the
+vendored `github.com/pgavlin/mermaid-ascii`. We currently pin it to a **personal
+fork** (`github.com/kirby88/mermaid-ascii`) via a `replace` in `go.mod`, carrying
+a diamond/decision-node rendering fix that is **upstreamed as
+[pgavlin/mermaid-ascii#1](https://github.com/pgavlin/mermaid-ascii/pull/1)**.
+
+Because the fork is committed in `vendor/` + `go.sum`, ordinary builds and CI use
+the vendored copy and never contact `sum.golang.org` — the checksum-DB dance below
+is only needed by a **maintainer re-vendoring** after a fork change.
+
+**Iterating on the fork:**
+
+1. Edit the fork clone (branch `fix-diamond-rendering`), `go test ./...`, commit,
+   `git push` (this also updates PR #1).
+2. Repoint vix and re-vendor:
+
+   ```bash
+   go mod edit -replace github.com/pgavlin/mermaid-ascii=github.com/kirby88/mermaid-ascii@<newcommit>
+   GOSUMDB=off GOFLAGS=-mod=mod go mod download github.com/pgavlin/mermaid-ascii && go mod vendor
+   ```
+
+   `GOSUMDB=off` bypasses the `500` that `sum.golang.org` returns for freshly
+   pushed fork commits it hasn't indexed yet; the hash lands in `go.sum` on first
+   use, so it's a one-shot per commit.
+
+**When PR #1 merges upstream:** drop the `replace` block from `go.mod`, bump the
+`github.com/pgavlin/mermaid-ascii` `require` to pgavlin's new commit, and
+`go mod vendor`. (The `replace` line in `go.mod` carries the same reminder.)
+
 ## Running
 
 Start the daemon and client in separate terminals:
@@ -120,6 +151,43 @@ probes enabled servers on demand (`mcp.ProbeServers`, bounded timeout);
 `internal/ui/mcp.go` (fetch/toggle/render) and `internal/ui/model.go`
 (`TabKindMcp`, F-keys). The F-key order is Threads F1, Workspace F2, Models F3,
 **MCP F4**, Jobs & Triggers F5, Settings F6.
+
+## Workflows
+
+Workflows are declarative multi-step graphs (`internal/workflow` = data model +
+`Load`/`Validate`; `internal/daemon/workflow.go` = executor). They live in
+`config/workflow.json` (named, layered/managed) or inline in a job/hook spec.
+Nodes do work; edges (`next_steps` with `params`) carry data. Routing runs in
+the Go engine (zero model tokens). The shipped **Goal** and **Plan** workflows
+live in `internal/config/defaults/config/workflow.json`; the model-facing surface
+is the `workflow` skill (`internal/config/defaults/skills/workflow/`).
+
+Values crossing edges are **typed** (`StepResult.Value any`); a string
+projection is derived only for the two string-only surfaces — bash
+`condition`/`execute_if` and prompt templating (scalars pass through,
+lists/objects become JSON). Helpers: `buildStepVars` (string pool),
+`buildTypedStepVars` (typed pool), `projectToString`.
+
+Step `type`s:
+
+- `agent` / `bash` / `tool` — the original work nodes.
+- `if` — `{condition, then, else}`; invisible zero-cost routing (no step event,
+  no iteration-budget cost). Prefer over piling `execute_if` on `next_steps`.
+- `fan_out` — `{over, as, barrier_id, branch, max_parallel, next_steps}`. Runs
+  one branch chain per element of the typed list `over` resolves to (dynamic N;
+  an upstream agent `json_output` array lets the model size it). Each branch
+  binds the element as `$(<as>)` and runs its own chain (bash/agent/if — no
+  nested fan_out), so branches can take different depths. Bounded by
+  `max_parallel` (default `min(N, GOMAXPROCS)`). Branch execution:
+  `Thread.runBranchChain`.
+- `fan_in` — `{barrier_id, as, on_branch_error, next_steps}`. Joins the matching
+  barrier into the ordered list `$(<as>)`. `on_branch_error` is `abort` (default,
+  fail the run) or `collect` (drop failed branches). Barriers pair 1:1 (checked
+  in `Validate`).
+
+Resume is **atomic per fan-out block**: an interrupted run re-runs a fan_out's
+branches; `fan_out` also persists the joined list under the `fan_in`'s step id so
+a resume landing on the `fan_in` recovers it.
 
 ## Scheduled jobs
 
