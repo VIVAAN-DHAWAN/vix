@@ -362,8 +362,16 @@ func (b *bedrockClient) runStream(
 		select {
 		case fr := <-frameCh:
 			if fr.err == io.EOF || fr.err == io.ErrUnexpectedEOF {
-				// Abrupt EOF before the clean empty-event-type terminator —
-				// treat as a retryable connection loss, not a successful response.
+				// Bedrock ends invoke-with-response-stream on the message_stop
+				// chunk and closes the body — it never sends the empty-event-type
+				// terminator handled below. Treating that EOF as truncation
+				// discarded every completed response and retried until the
+				// attempt limit, surfacing as "Connection lost" with the correct
+				// answer already on screen. EOF is only a real truncation when
+				// the model never signalled message_stop.
+				if acc.sawStop {
+					return acc.toMessage(), nil
+				}
 				log.Printf("[llm req=%s] eventstream truncated after %d frames: %v", reqID, eventCount, fr.err)
 				return nil, fmt.Errorf("bedrock: stream truncated: %w", fr.err)
 			}
@@ -427,6 +435,12 @@ type bedrockAccumulator struct {
 	curThinking  strings.Builder
 	curSignature string
 	curInput     strings.Builder
+
+	// sawStop records that the model signalled message_stop. Bedrock closes the
+	// eventstream right after that frame without the empty-event-type terminator
+	// the reader below otherwise waits for, so EOF is only an error when the
+	// stop event never arrived.
+	sawStop bool
 }
 
 func (a *bedrockAccumulator) apply(ev bdStreamEvent, onDelta func(string), onThinkingDelta func(string)) {
@@ -503,6 +517,7 @@ func (a *bedrockAccumulator) apply(ev bdStreamEvent, onDelta func(string), onThi
 		}
 	case "message_stop":
 		// amazon-bedrock-invocationMetrics here; token counts already captured above.
+		a.sawStop = true
 	}
 
 }
