@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -120,5 +121,119 @@ func TestRunStreamStillFailsOnEOFWithoutMessageStop(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected a truncation error when message_stop never arrived, got nil")
+	}
+}
+
+// --- request replay: thinking blocks -------------------------------------
+
+// decodeRequest builds a request and returns its parsed messages array.
+func decodeRequest(t *testing.T, messages []MessageParam) []map[string]any {
+	t.Helper()
+	raw, err := testBedrockClient().buildRequest(nil, messages, nil, 1024)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	var got struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	return got.Messages
+}
+
+func blockTypes(t *testing.T, msg map[string]any) []string {
+	t.Helper()
+	var out []string
+	content, _ := msg["content"].([]any)
+	for _, c := range content {
+		cm, _ := c.(map[string]any)
+		out = append(out, fmt.Sprint(cm["type"]))
+	}
+	return out
+}
+
+// Bedrock returns thinking blocks carrying a signature but no text. Replaying
+// one emits {"type":"thinking","signature":...} with no `thinking` key, because
+// bdContent tags it omitempty — and the API rejects that with
+// "messages.N.content.0.thinking.thinking: Field required", killing every
+// request after the first in a thread.
+func TestBuildRequestDropsSignatureOnlyThinkingBlock(t *testing.T) {
+	msgs := []MessageParam{
+		{Role: RoleUser, Content: []ContentBlock{{Type: BlockText, Text: "hi"}}},
+		{Role: RoleAssistant, Content: []ContentBlock{
+			{Type: BlockThinking, Text: "", Signature: "c2lnbmF0dXJl"},
+			{Type: BlockText, Text: "hello"},
+		}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: BlockText, Text: "again"}}},
+	}
+	got := decodeRequest(t, msgs)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(got))
+	}
+	if types := blockTypes(t, got[1]); len(types) != 1 || types[0] != "text" {
+		t.Errorf("assistant blocks = %v, want only [text]", types)
+	}
+}
+
+// A thinking block that actually has text is still replayed, with the
+// `thinking` field present — the fix must not strip usable reasoning.
+func TestBuildRequestKeepsThinkingWithText(t *testing.T) {
+	msgs := []MessageParam{
+		{Role: RoleUser, Content: []ContentBlock{{Type: BlockText, Text: "hi"}}},
+		{Role: RoleAssistant, Content: []ContentBlock{
+			{Type: BlockThinking, Text: "let me think", Signature: "c2ln"},
+			{Type: BlockText, Text: "hello"},
+		}},
+	}
+	got := decodeRequest(t, msgs)
+	types := blockTypes(t, got[1])
+	if len(types) != 2 || types[0] != "thinking" {
+		t.Fatalf("assistant blocks = %v, want [thinking text]", types)
+	}
+	content, _ := got[1]["content"].([]any)
+	first, _ := content[0].(map[string]any)
+	if first["thinking"] != "let me think" {
+		t.Errorf("thinking field = %v, want %q", first["thinking"], "let me think")
+	}
+}
+
+// Stripping the only block would leave an empty content array, which the API
+// rejects in turn — the message must be dropped instead.
+func TestBuildRequestSkipsMessageEmptiedByStripping(t *testing.T) {
+	msgs := []MessageParam{
+		{Role: RoleUser, Content: []ContentBlock{{Type: BlockText, Text: "hi"}}},
+		{Role: RoleAssistant, Content: []ContentBlock{
+			{Type: BlockThinking, Text: "", Signature: "c2ln"},
+		}},
+	}
+	got := decodeRequest(t, msgs)
+	if len(got) != 1 {
+		t.Fatalf("expected the emptied assistant message to be dropped, got %d messages", len(got))
+	}
+	for _, m := range got {
+		if content, _ := m["content"].([]any); len(content) == 0 {
+			t.Error("emitted a message with an empty content array")
+		}
+	}
+}
+
+// The cache breakpoint lands on the last block of the final user message. It
+// must index the filtered slice, not the original.
+func TestBuildRequestCacheControlIndexesFilteredBlocks(t *testing.T) {
+	msgs := []MessageParam{
+		{Role: RoleUser, Content: []ContentBlock{
+			{Type: BlockThinking, Text: "", Signature: "c2ln"},
+			{Type: BlockText, Text: "last"},
+		}},
+	}
+	got := decodeRequest(t, msgs)
+	content, _ := got[0]["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("expected 1 block after stripping, got %d", len(content))
+	}
+	last, _ := content[0].(map[string]any)
+	if _, ok := last["cache_control"]; !ok {
+		t.Error("cache_control did not land on the surviving last block")
 	}
 }

@@ -625,13 +625,35 @@ func (b *bedrockClient) buildRequest(
 		}
 	}
 	for i, m := range messages {
+		// Bedrock can return a thinking block carrying a signature but no text.
+		// Such a block cannot be replayed: the API requires `thinking`,
+		// bdContent drops it under omitempty, and every later request in the
+		// thread then fails with "thinking.thinking: Field required" — which
+		// poisons the conversation permanently from the second turn on. The
+		// signature alone cannot be resent verbatim, so there is nothing here
+		// worth preserving; drop the block. Same failure mode as the empty
+		// tool_use input handled in toBedrockContent below.
+		blocks := make([]ContentBlock, 0, len(m.Content))
+		for _, cb := range m.Content {
+			if cb.Type == BlockThinking && cb.Text == "" {
+				continue
+			}
+			blocks = append(blocks, cb)
+		}
+		// Emitting the message anyway would send an empty content array, which
+		// the API rejects in turn. Skip it.
+		if len(blocks) == 0 {
+			continue
+		}
 		bm := bdMessage_{Role: string(m.Role)}
-		for j, cb := range m.Content {
+		for j, cb := range blocks {
 			bc, err := toBedrockContent(cb)
 			if err != nil {
 				return nil, err
 			}
-			if i == lastUserIdx && j == len(m.Content)-1 {
+			// Index against the filtered slice so the cache breakpoint still
+			// lands on the message's actual last block.
+			if i == lastUserIdx && j == len(blocks)-1 {
 				bc.CacheControl = &bdCacheControl{Type: "ephemeral"}
 			}
 			bm.Content = append(bm.Content, bc)
