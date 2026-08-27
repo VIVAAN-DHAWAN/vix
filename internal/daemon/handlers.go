@@ -142,6 +142,45 @@ func RegisterBuiltinHandlers(s *Server) {
 		return map[string]any{"status": "ok"}, nil
 	})
 
+	// thread.rename sets a manual title on a persisted, not-open thread record
+	// (open/<id>.json) and pins it (TitleManual) so the auto-titling pass never
+	// overwrites it. Refuses threads currently live in a connection: those are
+	// renamed over their own connection (thread.rename command) so the title
+	// mutation and persist stay on the thread's goroutine.
+	s.RegisterHandler("thread.rename", func(data map[string]any) (map[string]any, error) {
+		id, _ := data["id"].(string)
+		if id == "" {
+			return map[string]any{"status": "error", "message": "missing 'id'"}, nil
+		}
+		title := sanitizeTitle(func() string { s, _ := data["title"].(string); return s }())
+		if title == "" {
+			return map[string]any{"status": "error", "message": "missing 'title'"}, nil
+		}
+		s.threadMu.Lock()
+		_, live := s.threads[id]
+		s.threadMu.Unlock()
+		if live {
+			return map[string]any{"status": "error", "message": "thread is open in a connection"}, nil
+		}
+		cwd, _ := data["cwd"].(string)
+		configDir, _ := data["config_dir"].(string)
+		paths := config.NewVixPaths(configDir, s.homeVixDir, cwd)
+		rec, found, err := loadOpenThreadRecord(paths, id)
+		if err != nil {
+			return map[string]any{"status": "error", "message": err.Error()}, nil
+		}
+		if !found {
+			return map[string]any{"status": "error", "message": "thread not found"}, nil
+		}
+		rec.Title = title
+		rec.TitleManual = true
+		if err := saveThreadRecord(paths, rec); err != nil {
+			return map[string]any{"status": "error", "message": err.Error()}, nil
+		}
+		s.broadcastThreadsChanged()
+		return map[string]any{"status": "ok"}, nil
+	})
+
 	// message.create materialises a Vix-initiated message thread from a whole
 	// JSON spec (MessageThreadSpec) carried in the "thread" field. It backs
 	// `vix thread create`, letting external callers (notably command hooks)

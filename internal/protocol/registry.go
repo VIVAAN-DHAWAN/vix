@@ -72,6 +72,7 @@ var CommandTypes = map[string]any{
 	"thread.user_answer":      ThreadUserAnswerData{},
 	"thread.set_model":        ThreadSetModelData{},
 	"thread.trim":             ThreadTrimData{},
+	"thread.rename":           ThreadRenameData{},
 	"instance.register":       InstanceRegisterData{},
 
 	// Payload-less commands (Data == null on the wire).

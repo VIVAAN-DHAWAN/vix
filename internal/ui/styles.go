@@ -60,6 +60,10 @@ var (
 	userAttachmentStyle = lipgloss.NewStyle().
 				Foreground(colorDim)
 
+	// Sticky header separator (primary-color rule under the scrolled header)
+	stickyHeaderSepStyle = lipgloss.NewStyle().
+				Foreground(colorPrimary)
+
 	// Tool call
 	toolCallStyle = lipgloss.NewStyle().
 			Foreground(colorSecondary)
@@ -336,6 +340,7 @@ func ApplyTheme(tc config.ThemeConfig) {
 	// Rebuild all styles that reference brand colors
 	userPromptStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 	userPromptIcon = lipgloss.NewStyle().Bold(true).Foreground(colorPrimary)
+	stickyHeaderSepStyle = lipgloss.NewStyle().Foreground(colorPrimary)
 	toolCallStyle = lipgloss.NewStyle().Foreground(colorSecondary)
 	toolCallDot = lipgloss.NewStyle().Foreground(colorPrimary)
 	inputPromptStyle = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)

@@ -419,6 +419,28 @@ func (c *Client) DismissThread(cwd, configDir, id string) error {
 	return nil
 }
 
+// RenameThread sets a manual title on a persisted, not-currently-open thread
+// record by ID (open/<id>.json). Pins the title so auto-titling won't overwrite
+// it. Refused by the daemon when the thread is live in a connection (use
+// ThreadClient.SendRename for that).
+func (c *Client) RenameThread(cwd, configDir, id, title string) error {
+	resp, err := c.sendRequest(map[string]any{
+		"command":    "thread.rename",
+		"cwd":        cwd,
+		"config_dir": configDir,
+		"id":         id,
+		"title":      title,
+	})
+	if err != nil {
+		return err
+	}
+	if resp["status"] != "ok" {
+		msg, _ := resp["message"].(string)
+		return fmt.Errorf("thread.rename failed: %s", msg)
+	}
+	return nil
+}
+
 // ExecuteTool sends a tool execution request to the daemon.
 func (c *Client) ExecuteTool(name string, params map[string]any, cwd string) (*ToolResult, error) {
 	p := make(map[string]any, len(params)+1)
@@ -750,6 +772,16 @@ func (sc *ThreadClient) SendTrim(turnIdx int) error {
 	data, _ := json.Marshal(protocol.ThreadTrimData{TurnIdx: turnIdx})
 	return sc.sendCommand(protocol.ThreadCommand{
 		Type: "thread.trim",
+		Data: data,
+	})
+}
+
+// SendRename sets a manual title on this live thread and pins it so the
+// auto-titling pass never overwrites it.
+func (sc *ThreadClient) SendRename(title string) error {
+	data, _ := json.Marshal(protocol.ThreadRenameData{Title: title})
+	return sc.sendCommand(protocol.ThreadCommand{
+		Type: "thread.rename",
 		Data: data,
 	})
 }

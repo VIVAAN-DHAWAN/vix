@@ -62,9 +62,9 @@ func TestVixRowTitleMarkerWidth(t *testing.T) {
 func TestRenderJobsView(t *testing.T) {
 	s := NewStyles(true)
 	jobs := []protocol.JobSummary{
-		{ID: "alpha", Name: "Alpha", Enabled: true, Schedule: "@every 1m", NextRunAt: "2999-01-01T00:00:00Z"},
+		{ID: "alpha", Name: "Alpha", Enabled: true, Schedule: "@every 1m", NextRunAt: "2999-01-01T00:00:00Z", RecentRunCount: 10, RecentErrorCount: 2},
 		{ID: "beta", Name: "Beta", Enabled: false, Schedule: "@daily"},
-		{ID: "gamma", Name: "Gamma", Enabled: true, Running: true},
+		{ID: "gamma", Name: "Gamma", Enabled: true, Running: true, RecentRunCount: 4, RecentErrorCount: 0},
 	}
 	hooks := []protocol.HookSummary{
 		{ID: "guard", Name: "Guard", Enabled: true, Event: "PreToolUse"},
@@ -78,6 +78,9 @@ func TestRenderJobsView(t *testing.T) {
 		"Alpha", "Beta", "Gamma", "Guard",
 		"[✓]", "[ ]", // enabled + disabled checkboxes
 		"PreToolUse",
+		"Errors", // error-badge column header
+		"2/10",   // alpha: 2 errors out of the last 10 runs
+		"0/4",    // gamma: a clean history still shows the ratio
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderJobsView output missing %q\n---\n%s", want, out)
@@ -87,6 +90,23 @@ func TestRenderJobsView(t *testing.T) {
 	// The running job (gamma) drives the spinner glyph; hooks never do.
 	if !strings.Contains(out, "⠙") {
 		t.Errorf("running job should render the spinner glyph\n%s", out)
+	}
+}
+
+func TestJobErrorBadge(t *testing.T) {
+	cases := []struct {
+		runCount, errCount int
+		want               string
+	}{
+		{0, 0, "—"},   // never run: no ratio, just a dash
+		{4, 0, "0/4"}, // clean history
+		{10, 2, "2/10"},
+		{3, 3, "3/3"}, // all failed
+	}
+	for _, c := range cases {
+		if got := jobErrorBadge(c.runCount, c.errCount); got != c.want {
+			t.Errorf("jobErrorBadge(%d, %d) = %q, want %q", c.runCount, c.errCount, got, c.want)
+		}
 	}
 }
 

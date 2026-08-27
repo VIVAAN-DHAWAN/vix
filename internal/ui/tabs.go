@@ -83,30 +83,6 @@ var threadsSpinnerStyle = lipgloss.NewStyle().Foreground(colorPrimary)
 // header.
 var threadDirSubtitleStyle = lipgloss.NewStyle().Italic(true).Foreground(colorPrimary)
 
-// vixDisplayRow is one row of the Vix-initiated group passed to the renderer:
-// a live attached thread (live != nil) or a persisted, not-attached record
-// (live == nil). sum carries the record summary used to format the columns; for
-// a live row it is a copy of the thread's vixSummary.
-type vixDisplayRow struct {
-	live *ThreadState
-	sum  protocol.ThreadSummary
-}
-
-// userRowView is one row of the User-initiated group: a live thread (live !=
-// nil) or a persisted, not-attached record (live == nil, sum set).
-type userRowView struct {
-	live *ThreadState
-	sum  protocol.ThreadSummary
-}
-
-// userDirGroupView is one working directory's block within the User-initiated
-// group: the directory path (rendered as a subtitle) and its rows in display
-// order (by creation time, interleaving live threads and not-attached records).
-type userDirGroupView struct {
-	dir  string
-	rows []userRowView
-}
-
 // abbreviatePath shortens an absolute path for display, replacing the user's
 // home-directory prefix with "~". Empty paths render as "(unknown)".
 func abbreviatePath(p string) string {
@@ -124,16 +100,14 @@ func abbreviatePath(p string) string {
 	return p
 }
 
-// renderThreadsView renders the threads list overview. spinnerFrame is the
-// current loading-spinner glyph (empty when the spinner is inactive); it is
-// shown in a busy thread's leading-indicator slot in place of the unread dot.
-// userGroups are the User-initiated threads grouped by working directory
-// (current cwd first), each block headed by a path subtitle and mixing live
-// threads with persisted not-attached records. vixRows are the Vix-initiated
-// group: live attached threads and persisted not-attached records merged into a
-// single StartedAt-ordered list. The selection index space covers the user rows
-// (in block/row order) first, then the vix rows.
-func renderThreadsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, width, height int, s Styles, selectedRow int, spinnerFrame string) string {
+// renderThreadsView renders the threads list overview from the single ordered
+// display list built by Model.threadListRows (the same list the selection
+// helpers index). spinnerFrame is the current loading-spinner glyph (empty when
+// the spinner is inactive); it is shown in a busy thread's leading-indicator
+// slot in place of the unread dot. selectedRow is the index of the highlighted
+// row among the selectable rows (directory headers and thread rows) — chrome
+// rows (section headers, column headers, rules) are skipped when counting.
+func renderThreadsView(rows []threadListRow, width, height int, s Styles, selectedRow int, spinnerFrame string) string {
 	const colThread = 10
 	const colRunning = 10
 
@@ -174,8 +148,8 @@ func renderThreadsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, w
 		return id
 	}
 
-	rows := []string{}
-	rowIdx := 0
+	lines := []string{}
+	selIdx := 0 // index among selectable rows, compared to selectedRow
 
 	// appendRow styles one thread row from its precomputed columns and state,
 	// applying the selected/busy/unread leading indicators.
@@ -190,14 +164,30 @@ func renderThreadsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, w
 				lead = "● "
 				leadStyle = leadStyle.Foreground(colorSecondary)
 			}
-			rows = append(rows, leadStyle.Render(lead)+threadRowSelectedStyle.Render(plainCols))
+			lines = append(lines, leadStyle.Render(lead)+threadRowSelectedStyle.Render(plainCols))
 		case busy:
-			rows = append(rows, threadsSpinnerStyle.Render(spinnerFrame)+" "+plainCols)
+			lines = append(lines, threadsSpinnerStyle.Render(spinnerFrame)+" "+plainCols)
 		case unread:
-			rows = append(rows, unreadDotStyle.Render("●")+" "+plainCols)
+			lines = append(lines, unreadDotStyle.Render("●")+" "+plainCols)
 		default:
-			rows = append(rows, "  "+plainCols)
+			lines = append(lines, "  "+plainCols)
 		}
+	}
+
+	// dirHeaderLine renders a foldable directory path line: a ▾ (expanded) or ▸
+	// (collapsed, with a hidden-count hint) glyph before the abbreviated path.
+	// When selected it takes the same row highlight as a thread row.
+	dirHeaderLine := func(dir string, collapsed bool, count int, selected bool) string {
+		glyph := "▾"
+		label := abbreviatePath(dir)
+		if collapsed {
+			glyph = "▸"
+			label = fmt.Sprintf("%s  (%d)", label, count)
+		}
+		if selected {
+			return threadRowSelectedStyle.Render("  " + glyph + " " + label)
+		}
+		return "  " + threadDirSubtitleStyle.Render(glyph+" "+label)
 	}
 
 	// liveCols formats the three shared columns for a live user thread.
@@ -282,113 +272,97 @@ func renderThreadsView(userGroups []userDirGroupView, vixRows []vixDisplayRow, w
 		return fmt.Sprintf("%-*s  %s  %-*s", colThread, shortID(sum.ID), msg, colRunning, ranCol)
 	}
 
-	// --- User-initiated group: per-directory blocks, current cwd first. Each
-	// block is headed by its path subtitle (always shown). Live rows can be
-	// opened (enter) or closed (x); record rows opened (enter) or dismissed (x).
-	userRowCount := 0
-	for _, g := range userGroups {
-		userRowCount += len(g.rows)
+	// vixCols formats the three shared columns of a vix-initiated row from its
+	// record summary (id, Title, ran ago). A titled record shows the bare title
+	// (e.g. the per-item GitHub-plan title), with a ⚠ marker when the run failed;
+	// an untitled record (a raw alert) falls back to the "<job> · <status>
+	// <first message>" form.
+	vixCols := func(sum protocol.ThreadSummary) string {
+		var msgCol string
+		if sum.Title != "" {
+			msgCol = vixRowTitle(sum)
+		} else {
+			badge := ""
+			if sum.Trigger != nil && sum.Trigger.Ref != "" {
+				badge = sum.Trigger.Ref
+			}
+			status := sum.JobStatus
+			if status == "" {
+				status = "alert"
+			}
+			msgCol = badge + " · " + status
+			if sum.FirstMessage != "" {
+				msgCol += "  " + sum.FirstMessage
+			}
+		}
+		// Rune-aware truncate, then pad to the column's display width so the
+		// Running column stays aligned even when a wide glyph (⚠) is present.
+		msgCol = truncateLabel(msgCol, colMessage)
+		if pad := colMessage - lipgloss.Width(msgCol); pad > 0 {
+			msgCol += strings.Repeat(" ", pad)
+		}
+
+		ranCol := "—"
+		if t, err := time.Parse(time.RFC3339, sum.StartedAt); err == nil {
+			ranCol = formatRunningTime(renderSince(t)) + " ago"
+		}
+		return fmt.Sprintf("%-*s  %s  %-*s", colThread, shortID(sum.ID), msgCol, colRunning, ranCol)
 	}
-	if userRowCount > 0 {
-		rows = append(rows, groupHeader("User-initiated")...)
-		rows = append(rows, threadColumnHeaderStyle.Render(header), headerRule)
-		for _, g := range userGroups {
-			rows = append(rows, "  "+threadDirSubtitleStyle.Render(abbreviatePath(g.dir)))
-			for _, r := range g.rows {
-				var busy, needsInput, unread bool
-				var plainCols string
-				if r.live != nil {
-					sess := r.live
-					unread = sess.unreadCount > 0
-					busy = spinnerFrame != "" &&
-						(sess.agentState == StateStreaming ||
-							sess.agentState == StateToolExecuting ||
-							sess.agentState == StatePlanExecuting)
-					needsInput = sess.agentState == StateConfirmPending || sess.agentState == StateUserQuestion
-					plainCols = liveCols(sess)
-				} else {
-					unread = r.sum.Unread
-					plainCols = recordCols(r.sum)
-				}
-				badgeSlot := strings.Repeat(" ", badgeVisible)
-				if needsInput {
-					badgeSlot = "  " + waitingBadge
-				}
-				appendRow(plainCols+badgeSlot, rowIdx == selectedRow, busy, unread)
-				rowIdx++
-			}
+
+	// threadRowFlags derives the leading-indicator state for a thread row from
+	// its live thread (busy/needs-input/unread) or its record summary (unread).
+	threadRowFlags := func(r threadListRow) (busy, needsInput, unread bool) {
+		if r.live != nil {
+			sess := r.live
+			unread = sess.unreadCount > 0
+			busy = spinnerFrame != "" &&
+				(sess.agentState == StateStreaming ||
+					sess.agentState == StateToolExecuting ||
+					sess.agentState == StatePlanExecuting)
+			needsInput = sess.agentState == StateConfirmPending || sess.agentState == StateUserQuestion
+			return
 		}
+		return false, false, r.sum.Unread
 	}
 
-	// --- Vix-initiated group: live attached threads and persisted job
-	// runs/alerts, merged into one StartedAt-ordered list. Live rows can be
-	// opened (enter) or closed (x); persisted rows opened (enter) or dismissed (x).
-	if len(vixRows) > 0 {
-		if len(rows) > 0 {
-			rows = append(rows, "")
-		}
-		rows = append(rows, groupHeader("Vix-initiated")...)
-		rows = append(rows, threadColumnHeaderStyle.Render(header), headerRule)
-
-		// vixCols formats the three shared columns of a vix-initiated row from
-		// its record summary (id, Title, ran ago). A titled record shows the
-		// bare title (e.g. the per-item GitHub-plan title), with a ⚠ marker when
-		// the run failed; an untitled record (a raw alert) falls back to the
-		// "<job> · <status>  <first message>" form.
-		vixCols := func(sum protocol.ThreadSummary) string {
-			var msgCol string
-			if sum.Title != "" {
-				msgCol = vixRowTitle(sum)
-			} else {
-				badge := ""
-				if sum.Trigger != nil && sum.Trigger.Ref != "" {
-					badge = sum.Trigger.Ref
-				}
-				status := sum.JobStatus
-				if status == "" {
-					status = "alert"
-				}
-				msgCol = badge + " · " + status
-				if sum.FirstMessage != "" {
-					msgCol += "  " + sum.FirstMessage
-				}
+	for _, r := range rows {
+		switch r.kind {
+		case rowUserHeader:
+			lines = append(lines, groupHeader("User-initiated")...)
+			lines = append(lines, threadColumnHeaderStyle.Render(header), headerRule)
+		case rowVixHeader:
+			if len(lines) > 0 {
+				lines = append(lines, "")
 			}
-			// Rune-aware truncate, then pad to the column's display width so the
-			// Running column stays aligned even when a wide glyph (⚠) is present.
-			msgCol = truncateLabel(msgCol, colMessage)
-			if pad := colMessage - lipgloss.Width(msgCol); pad > 0 {
-				msgCol += strings.Repeat(" ", pad)
-			}
-
-			ranCol := "—"
-			if t, err := time.Parse(time.RFC3339, sum.StartedAt); err == nil {
-				ranCol = formatRunningTime(renderSince(t)) + " ago"
-			}
-			return fmt.Sprintf("%-*s  %s  %-*s", colThread, shortID(sum.ID), msgCol, colRunning, ranCol)
-		}
-
-		for _, row := range vixRows {
-			busy := false
-			needsInput := false
-			unread := row.sum.Unread
-			if row.live != nil {
-				busy = spinnerFrame != "" &&
-					(row.live.agentState == StateStreaming ||
-						row.live.agentState == StateToolExecuting ||
-						row.live.agentState == StatePlanExecuting)
-				needsInput = row.live.agentState == StateConfirmPending || row.live.agentState == StateUserQuestion
-				unread = row.live.unreadCount > 0
+			lines = append(lines, groupHeader("Vix-initiated")...)
+			lines = append(lines, threadColumnHeaderStyle.Render(header), headerRule)
+		case rowDirHeader:
+			lines = append(lines, dirHeaderLine(r.dir, r.collapsed, r.count, selIdx == selectedRow))
+			selIdx++
+		case rowUserThread:
+			busy, needsInput, unread := threadRowFlags(r)
+			plainCols := recordCols(r.sum)
+			if r.live != nil {
+				plainCols = liveCols(r.live)
 			}
 			badgeSlot := strings.Repeat(" ", badgeVisible)
 			if needsInput {
 				badgeSlot = "  " + waitingBadge
 			}
-			appendRow(vixCols(row.sum)+badgeSlot, rowIdx == selectedRow, busy, unread)
-			rowIdx++
+			appendRow(plainCols+badgeSlot, selIdx == selectedRow, busy, unread)
+			selIdx++
+		case rowVixThread:
+			busy, needsInput, unread := threadRowFlags(r)
+			badgeSlot := strings.Repeat(" ", badgeVisible)
+			if needsInput {
+				badgeSlot = "  " + waitingBadge
+			}
+			appendRow(vixCols(r.sum)+badgeSlot, selIdx == selectedRow, busy, unread)
+			selIdx++
 		}
 	}
 
-	content := strings.Join(rows, "\n")
+	content := strings.Join(lines, "\n")
 	return s.ViewportFocusedStyle.Width(width).Height(height).Render(content)
 }
 

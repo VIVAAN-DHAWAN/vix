@@ -56,6 +56,17 @@ func dismissVixThread(socketPath, cwd, configDir, authToken, id string) tea.Cmd 
 	}
 }
 
+// renameVixThread sets a manual title on a persisted, not-open thread record by
+// ID, then refreshes the list so the new title shows.
+func renameVixThread(socketPath, cwd, configDir, authToken, id, title string) tea.Cmd {
+	return func() tea.Msg {
+		client := daemon.NewClient(socketPath)
+		client.SetAuthToken(authToken)
+		client.RenameThread(cwd, configDir, id, title)
+		return fetchVixThreads(socketPath, cwd, configDir, authToken)()
+	}
+}
+
 // jobsListMsg carries the scheduled jobs and lifecycle hooks shown in the Jobs
 // & Triggers tab.
 type jobsListMsg struct {

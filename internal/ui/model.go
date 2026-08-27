@@ -60,8 +60,16 @@ type updateInstallDoneMsg struct {
 // reconnectSuccessMsg is sent when reconnection succeeds.
 // daemonThreadID is the ID of the thread we were reconnecting for (the old
 // one); client is the newly established connection with its own fresh ID.
+//
+// clientKey disambiguates the fork/duplicate path, where the new tab has no
+// daemonThreadID yet (it is empty until the fork connects). Matching an empty
+// daemonThreadID would pick the first draft in the list — not necessarily the
+// tab we forked — so a clientKey, when set, is matched first (mirroring the
+// draft-connect path). The genuine reconnect path leaves it empty and matches
+// by daemonThreadID.
 type reconnectSuccessMsg struct {
 	daemonThreadID string
+	clientKey      string
 	client         *daemon.ThreadClient
 }
 
@@ -315,7 +323,10 @@ func fetchRecentDirs(socketPath, cwd, configDir, authToken string) tea.Cmd {
 }
 
 // connectFork starts a new forked thread seeded from forkThreadID at forkTurnIdx.
-func connectFork(socketPath, cwd, configDir, model, authToken string, enableWrite, enableDir bool, forkThreadID string, forkTurnIdx int, targetDaemonThreadID string) tea.Cmd {
+// clientKey is the forking tab's stable handle: the fork tab has no
+// daemonThreadID yet, so the success handler matches the result back to it by
+// clientKey rather than the (empty) daemon id.
+func connectFork(socketPath, cwd, configDir, model, authToken string, enableWrite, enableDir bool, forkThreadID string, forkTurnIdx int, targetDaemonThreadID, clientKey string) tea.Cmd {
 	return func() tea.Msg {
 		client := daemon.NewClient(socketPath)
 		client.SetAuthToken(authToken)
@@ -329,7 +340,7 @@ func connectFork(socketPath, cwd, configDir, model, authToken string, enableWrit
 			time.Sleep(2 * time.Second)
 			return reconnectFailedMsg{daemonThreadID: targetDaemonThreadID}
 		}
-		return reconnectSuccessMsg{daemonThreadID: targetDaemonThreadID, client: thread}
+		return reconnectSuccessMsg{daemonThreadID: targetDaemonThreadID, clientKey: clientKey, client: thread}
 	}
 }
 
@@ -449,6 +460,7 @@ const (
 	StateQuitConfirm
 	StateTrimConfirm
 	StateThreadCloseConfirm
+	StateThreadRename
 	StateKeyDeleteConfirm
 )
 
@@ -505,8 +517,21 @@ type Model struct {
 	// persisted vix-initiated record (dismissed, not closed) with that ID.
 	vixDismissID string
 
+	// Rename dialog (StateThreadRename). renameInput holds the editable title
+	// (pre-filled with the current one). Exactly one target is set: renameIdx
+	// >= 0 for a live thread (m.threads[renameIdx]), or renameID for a
+	// persisted, not-open record renamed by ID over a one-shot RPC.
+	renameInput textinput.Model
+	renameIdx   int
+	renameID    string
+
 	// Threads tab UI
 	threadsSelected int
+	// collapsedDirs tracks which User-initiated directory blocks are folded in
+	// the Threads tab, keyed by the block's directory path. Session-only (not
+	// persisted). A folded directory hides its thread rows behind its path
+	// header; the header itself stays selectable so Enter can unfold it.
+	collapsedDirs map[string]bool
 	// vixThreads are the persisted vix-initiated records (job runs, alerts),
 	// rendered as their own group below the user-initiated threads.
 	// Refreshed on Init, on entering the tab, and on event.threads_changed.
@@ -809,6 +834,9 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == StateQuitConfirm || m.state == StateThreadCloseConfirm {
 			return m.handleDialogKey(msg)
 		}
+		if m.state == StateThreadRename {
+			return m.handleRenameKey(msg)
+		}
 		if m.state == StateKeyDeleteConfirm {
 			return m.handleKeyDeleteKey(msg)
 		}
@@ -925,11 +953,21 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "down":
-				if n := len(m.threadRowTargets()); m.threadsSelected < n-1 {
+				if n := len(m.selectableThreadRows()); m.threadsSelected < n-1 {
 					m.threadsSelected++
 				}
 				return m, nil
 			case "enter":
+				// A directory header toggles its fold state; the cursor stays put.
+				sel := m.selectableThreadRows()
+				if m.threadsSelected >= 0 && m.threadsSelected < len(sel) && sel[m.threadsSelected].kind == rowDirHeader {
+					dir := sel[m.threadsSelected].dir
+					if m.collapsedDirs == nil {
+						m.collapsedDirs = map[string]bool{}
+					}
+					m.collapsedDirs[dir] = !m.collapsedDirs[dir]
+					return m, nil
+				}
 				if sum, ok := m.vixSelectedSummary(); ok {
 					// Open a vix-initiated record: attach it like a restored
 					// thread; the replay rebuilds the conversation and the
@@ -985,6 +1023,9 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				lastSep := seps[len(seps)-1]
 				nm, c := m.doDuplicate(srcSess, lastSep)
 				return nm, c
+			case "r":
+				// Rename the selected conversation.
+				return m, m.beginRenameSelected()
 			case "x":
 				if sum, ok := m.vixSelectedSummary(); ok {
 					// Dismiss a vix-initiated record: same confirmation dialog
@@ -1634,7 +1675,16 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case reconnectSuccessMsg:
-		_, sess := m.findThreadByDaemonID(msg.daemonThreadID)
+		// A fork/duplicate tab has no daemonThreadID yet, so it correlates the
+		// result by its stable clientKey; matching the empty daemon id would pick
+		// the first draft in the list, not necessarily the tab we forked. The
+		// genuine reconnect path leaves clientKey empty and matches by daemon id.
+		var sess *ThreadState
+		if msg.clientKey != "" {
+			_, sess = m.findThreadByClientKey(msg.clientKey)
+		} else {
+			_, sess = m.findThreadByDaemonID(msg.daemonThreadID)
+		}
 		if sess == nil {
 			// Thread was closed while the reconnect goroutine was in flight.
 			// Close the new client to avoid leaking a daemon-side thread.
@@ -1851,7 +1901,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if n := len(m.threadRowTargets()); m.threadsSelected >= n && n > 0 {
+		if n := len(m.selectableThreadRows()); m.threadsSelected >= n && n > 0 {
 			m.threadsSelected = n - 1
 		}
 		return m, nil
@@ -2728,6 +2778,97 @@ func (m Model) confirmThreadClose() (tea.Model, tea.Cmd) {
 	return m.doCloseThread(m.threadCloseIdx)
 }
 
+// beginRenameSelected resolves the highlighted Threads-tab row and opens the
+// rename dialog for it: a live thread (renamed over its connection) or a
+// persisted, not-open record (renamed by ID). Returns the cursor-blink command,
+// or a warning when the row can't be renamed yet.
+func (m *Model) beginRenameSelected() tea.Cmd {
+	if sum, ok := m.vixSelectedSummary(); ok {
+		m.beginRename(-1, sum.ID, sum.Title)
+		return textinput.Blink
+	}
+	if idx, ok := m.threadsSelectedIdx(); ok {
+		if m.threads[idx].client == nil {
+			return m.emitStatusMsg("Thread is still connecting; cannot rename", StatusMsgWarning)
+		}
+		m.beginRename(idx, "", m.threads[idx].title)
+		return textinput.Blink
+	}
+	return nil
+}
+
+// beginRename opens the rename dialog for a thread. Exactly one target is set:
+// liveIdx >= 0 for a live thread in m.threads, or a non-empty id for a
+// persisted, not-open record. current pre-fills the text box.
+func (m *Model) beginRename(liveIdx int, id, current string) {
+	ti := textinput.New()
+	ti.SetValue(current)
+	ti.SetWidth(renameDialogInnerWidth)
+	ti.CursorEnd()
+	ti.Focus()
+	m.renameInput = ti
+	m.renameIdx = liveIdx
+	m.renameID = id
+	m.state = StateThreadRename
+}
+
+// handleRenameKey handles keys while the rename dialog is open: Esc cancels,
+// Enter submits, everything else edits the text box.
+func (m Model) handleRenameKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.state = StateWaitingForInput
+		m.renameIdx = -1
+		m.renameID = ""
+		return m, nil
+	case "enter":
+		return m.submitRename()
+	}
+	var cmd tea.Cmd
+	m.renameInput, cmd = m.renameInput.Update(msg)
+	return m, cmd
+}
+
+// submitRename commits the rename: an empty (or unchanged-to-empty) title is a
+// no-op that just closes the dialog. A live thread is renamed over its
+// connection; a persisted record by ID. The title is updated optimistically so
+// the list reflects it immediately (the daemon also broadcasts the change).
+func (m Model) submitRename() (tea.Model, tea.Cmd) {
+	title := strings.TrimSpace(m.renameInput.Value())
+	liveIdx, id := m.renameIdx, m.renameID
+	m.state = StateWaitingForInput
+	m.renameIdx = -1
+	m.renameID = ""
+	if title == "" {
+		return m, nil
+	}
+	if liveIdx >= 0 && liveIdx < len(m.threads) {
+		sess := m.threads[liveIdx]
+		if sess.client == nil {
+			return m, m.emitStatusMsg("Thread is still connecting; cannot rename", StatusMsgWarning)
+		}
+		sess.title = title // optimistic; daemon echoes event.title_updated
+		if sess.vixSummary != nil {
+			sess.vixSummary.Title = title
+		}
+		client := sess.client
+		return m, func() tea.Msg {
+			client.SendRename(title)
+			return nil
+		}
+	}
+	if id != "" {
+		// Optimistically reflect the new title in the persisted-record list.
+		for i := range m.userThreadRecords {
+			if m.userThreadRecords[i].ID == id {
+				m.userThreadRecords[i].Title = title
+			}
+		}
+		return m, renameVixThread(m.socketPath, m.cwd, m.cfg.ConfigDir, m.authToken, id, title)
+	}
+	return m, nil
+}
+
 // handleTrimKey handles keys for the per-thread trim confirm dialog.
 func (m Model) handleTrimKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	sess := m.currentThread()
@@ -3392,31 +3533,10 @@ func (m Model) View() tea.View {
 			spinnerFrame = string(animFrames[frozenStep(m.threadsSpinnerStep)%len(animFrames)])
 		}
 		// The User-initiated group renders as per-directory blocks (current cwd
-		// first); the Vix-initiated group renders as one StartedAt-ordered list.
-		// Both derive from the same canonical row order as the selection index
-		// space (threadRowTargets → userDirBlocks + vixRowTargets).
-		var userGroups []userDirGroupView
-		for _, b := range m.userDirBlocks() {
-			g := userDirGroupView{dir: b.dir}
-			for _, r := range b.rows {
-				if r.sum != nil {
-					g.rows = append(g.rows, userRowView{sum: *r.sum})
-				} else {
-					g.rows = append(g.rows, userRowView{live: m.threads[r.liveIdx]})
-				}
-			}
-			userGroups = append(userGroups, g)
-		}
-		var vixRows []vixDisplayRow
-		for _, r := range m.vixRowTargets() {
-			if r.sum != nil {
-				vixRows = append(vixRows, vixDisplayRow{sum: *r.sum})
-			} else {
-				live := m.threads[r.liveIdx]
-				vixRows = append(vixRows, vixDisplayRow{live: live, sum: *live.vixSummary})
-			}
-		}
-		sv := renderThreadsView(userGroups, vixRows, m.width, threadsHeight, m.styles, m.threadsSelected, spinnerFrame)
+		// first, each headed by a foldable path line); the Vix-initiated group
+		// renders as one StartedAt-ordered list. Both derive from the single
+		// display list that also backs the selection index space (threadListRows).
+		sv := renderThreadsView(m.threadListRows(), m.width, threadsHeight, m.styles, m.threadsSelected, spinnerFrame)
 		uv.NewStyledString(sv).Draw(canvas, image.Rect(0, y, m.width, y+threadsHeight))
 		y += threadsHeight
 
@@ -3475,6 +3595,22 @@ func (m Model) View() tea.View {
 		if sess != nil {
 			chatScrollOffset = sess.chatScrollOffset
 		}
+
+		// When scrolled up, a sticky header reserves the top rows of the chat
+		// content area (the turn's user prompt + a primary-color rule). The chat
+		// slice is computed against the reduced height and the header is
+		// prepended below. Scroll math (offset, max, gotoTurn) is left untouched:
+		// the rows the header covers are the top turn's prompt, which the header
+		// itself shows.
+		headerActive := sess != nil && chatScrollOffset > 0
+		effHeight := contentHeight
+		if headerActive {
+			effHeight = contentHeight - stickyHeaderRows
+			if effHeight < 1 {
+				effHeight = 1
+			}
+		}
+
 		endVisRow := totalVisualRows - chatScrollOffset
 		if endVisRow < contentHeight {
 			endVisRow = contentHeight
@@ -3491,7 +3627,7 @@ func (m Model) View() tea.View {
 		startLogical := endLogical
 		for startLogical > 0 {
 			rows := visualRowStart[startLogical] - visualRowStart[startLogical-1]
-			if accVisRows+rows > contentHeight {
+			if accVisRows+rows > effHeight {
 				break
 			}
 			accVisRows += rows
@@ -3509,6 +3645,12 @@ func (m Model) View() tea.View {
 			chatBorderStyle = m.styles.ViewportBlurredStyle
 		}
 		joined := strings.Join(chatLines, "\n")
+		if headerActive {
+			prompt := stickyUserPromptForTop(sess.cachedUserInfos(m.styles, innerWidth), startLogical)
+			if prompt != "" {
+				joined = renderStickyHeader(prompt, innerWidth) + "\n" + joined
+			}
+		}
 		var chatBox string
 		if sess != nil {
 			key := fmt.Sprintf("%d|%d|%t|", layout.ChatWidth, layout.ChatHeight, sess.focus == FocusChat) + joined
@@ -3674,6 +3816,14 @@ func (m Model) View() tea.View {
 			}
 		}
 		overlay := renderThreadCloseDialog(m.width, m.height, m.styles, m.threadCloseSelected, threadID)
+		w, h := lipgloss.Size(overlay)
+		center := centerRect(canvas.Bounds(), w, h)
+		uv.NewStyledString(overlay).Draw(canvas, center)
+	}
+
+	// Thread rename overlay
+	if m.state == StateThreadRename {
+		overlay := renderThreadRenameDialog(m.width, m.styles, m.renameInput.View())
 		w, h := lipgloss.Size(overlay)
 		center := centerRect(canvas.Bounds(), w, h)
 		uv.NewStyledString(overlay).Draw(canvas, center)
@@ -3913,9 +4063,21 @@ func (m *Model) applyReplay(sess *ThreadState, rep protocol.EventReplay) {
 // buildReplayChatMessages reconstructs rendered ChatMessages from a replayed
 // conversation. Tool results are matched to their preceding tool_use by ID so
 // the result line carries the right tool name.
+//
+// Turn separators (MsgSystem with TurnModel set) are UI-only markers that a live
+// run appends at each turn end; they are not part of the persisted LLM history
+// nor re-sent in event.replay. Without reconstructing them here, a thread
+// restored on relaunch would carry zero separators, so /fork, /trim, and
+// duplicate — which all key off turnSeparatorInfos — would be refused ("no
+// completed turns yet"). We re-insert one after every assistant message that
+// closes a turn (no tool_use block), mirroring the daemon's countEndTurns /
+// rebuildTurnSnapshots rule so the UI's per-turn indices stay aligned with the
+// daemon's fork snapshots. Per-turn elapsed/cost are not persisted, so they
+// render as zero on a restored transcript.
 func (m *Model) buildReplayChatMessages(rep protocol.EventReplay) []ChatMessage {
 	var out []ChatMessage
 	toolNames := map[string]string{}
+	turnNum := 0
 	for _, msg := range rep.Messages {
 		var ts time.Time
 		if msg.Timestamp != "" {
@@ -3951,8 +4113,26 @@ func (m *Model) buildReplayChatMessages(rep protocol.EventReplay) []ChatMessage 
 				out = append(out, renderErrorMessage(fmt.Errorf("%s", b.Text)))
 			}
 		}
+		// A text-only assistant message (no tool_use block) closes a turn. Append
+		// the same separator a live turn end produces so the restored transcript
+		// is forkable/trimmable/duplicable.
+		if msg.Role == "assistant" && !replayMessageHasToolUse(msg) {
+			turnNum++
+			out = append(out, renderTurnInfo(rep.Model, 0, 0, turnNum, m.mdRenderer.width+4, m.styles))
+		}
 	}
 	return out
+}
+
+// replayMessageHasToolUse reports whether a replayed message carries any
+// tool_use block — i.e. it continues a turn rather than ending it.
+func replayMessageHasToolUse(msg protocol.ReplayMessage) bool {
+	for _, b := range msg.Blocks {
+		if b.Kind == "tool_use" {
+			return true
+		}
+	}
+	return false
 }
 
 // replayToolSummary derives a short one-line summary from a tool's input for
@@ -4251,7 +4431,7 @@ func (m *Model) doFork(sep TurnSepInfo) (Model, tea.Cmd) {
 	return *m, tea.Batch(connectFork(
 		m.socketPath, newSess.workDir, m.cfg.ConfigDir, m.cfg.Model, m.authToken,
 		m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess,
-		forkThreadID, sep.TurnIdx, newSess.daemonThreadID,
+		forkThreadID, sep.TurnIdx, newSess.daemonThreadID, newSess.clientKey,
 	), armCursorBlink(newSess))
 }
 
@@ -4280,7 +4460,7 @@ func (m *Model) doDuplicate(srcSess *ThreadState, sep TurnSepInfo) (Model, tea.C
 	return *m, tea.Batch(connectFork(
 		m.socketPath, newSess.workDir, m.cfg.ConfigDir, m.cfg.Model, m.authToken,
 		m.enableAutomaticWritePermission, m.enableAutomaticDirectoryAccess,
-		forkThreadID, sep.TurnIdx, newSess.daemonThreadID,
+		forkThreadID, sep.TurnIdx, newSess.daemonThreadID, newSess.clientKey,
 	), armCursorBlink(newSess))
 }
 
@@ -4369,7 +4549,7 @@ func (m *Model) doCloseThread(threadIdx int) (Model, tea.Cmd) {
 	// the full row count (live threads + persisted user/vix records). Do NOT
 	// call syncThreadsSelected here — it would snap the highlight onto the
 	// active workspace thread's row (usually a user-initiated one).
-	if n := len(m.threadRowTargets()); n > 0 && m.threadsSelected >= n {
+	if n := len(m.selectableThreadRows()); n > 0 && m.threadsSelected >= n {
 		m.threadsSelected = n - 1
 	}
 
@@ -4602,16 +4782,118 @@ func (m *Model) vixRowTargets() []rowTarget {
 	return vix
 }
 
-// threadRowTargets returns one entry per Threads-tab row in display order: the
-// User-initiated group (live threads and persisted not-attached records grouped
-// by working directory, current cwd first) followed by the Vix-initiated group.
-// The slice index is the selection row index (m.threadsSelected).
+// threadRowTargets returns one entry per Threads-tab thread row in display
+// order: the User-initiated group (live threads and persisted not-attached
+// records grouped by working directory, current cwd first) followed by the
+// Vix-initiated group. It excludes directory headers and ignores fold state, so
+// it is the canonical thread ordering used by workspace stepping — NOT the
+// selection index space (see selectableThreadRows for that).
 func (m *Model) threadRowTargets() []rowTarget {
 	var rows []rowTarget
 	for _, b := range m.userDirBlocks() {
 		rows = append(rows, b.rows...)
 	}
 	return append(rows, m.vixRowTargets()...)
+}
+
+// threadRowKind classifies a row of the Threads tab. Section headers are chrome
+// (not selectable); directory headers and thread rows are selectable.
+type threadRowKind int
+
+const (
+	rowUserHeader threadRowKind = iota // "User-initiated" group header (chrome)
+	rowDirHeader                       // a foldable directory path line (selectable)
+	rowUserThread                      // a User-initiated thread row (selectable)
+	rowVixHeader                       // "Vix-initiated" group header (chrome)
+	rowVixThread                       // a Vix-initiated thread row (selectable)
+)
+
+// threadListRow is one row of the Threads tab in display order — the single
+// source of truth shared by selection (model.go) and rendering (tabs.go). Rows
+// carry data already resolved against m.threads so the renderer needs no access
+// to the model.
+type threadListRow struct {
+	kind      threadRowKind
+	dir       string       // rowDirHeader: directory path
+	collapsed bool         // rowDirHeader: fold state
+	count     int          // rowDirHeader: number of threads under it
+	live      *ThreadState // thread rows: the attached thread (nil for a persisted record)
+	liveIdx   int          // thread rows: m.threads index of a live row (-1 for a record)
+	// sum is the column source for a thread row: a persisted record's summary,
+	// or a live Vix-initiated row's origin vixSummary.
+	sum protocol.ThreadSummary
+}
+
+// selectable reports whether the navigation cursor can land on this row.
+func (r threadListRow) selectable() bool {
+	return r.kind == rowDirHeader || r.kind == rowUserThread || r.kind == rowVixThread
+}
+
+// threadListRows builds the full, ordered Threads-tab display list: the
+// User-initiated group (a foldable path header per directory, each followed by
+// its thread rows unless the directory is collapsed) then the Vix-initiated
+// group. Section headers are included as chrome rows. This is the single list
+// consumed by both the renderer and the selection helpers.
+func (m *Model) threadListRows() []threadListRow {
+	var rows []threadListRow
+
+	blocks := m.userDirBlocks()
+	userCount := 0
+	for _, b := range blocks {
+		userCount += len(b.rows)
+	}
+	if userCount > 0 {
+		rows = append(rows, threadListRow{kind: rowUserHeader})
+		for _, b := range blocks {
+			collapsed := m.collapsedDirs[b.dir]
+			rows = append(rows, threadListRow{kind: rowDirHeader, dir: b.dir, collapsed: collapsed, count: len(b.rows)})
+			if collapsed {
+				continue
+			}
+			for _, r := range b.rows {
+				row := threadListRow{kind: rowUserThread, liveIdx: -1}
+				if r.sum != nil {
+					row.sum = *r.sum
+				} else {
+					row.live = m.threads[r.liveIdx]
+					row.liveIdx = r.liveIdx
+				}
+				rows = append(rows, row)
+			}
+		}
+	}
+
+	vix := m.vixRowTargets()
+	if len(vix) > 0 {
+		rows = append(rows, threadListRow{kind: rowVixHeader})
+		for _, r := range vix {
+			row := threadListRow{kind: rowVixThread, liveIdx: -1}
+			if r.sum != nil {
+				row.sum = *r.sum
+			} else {
+				live := m.threads[r.liveIdx]
+				row.live = live
+				row.liveIdx = r.liveIdx
+				row.sum = *live.vixSummary
+			}
+			rows = append(rows, row)
+		}
+	}
+
+	return rows
+}
+
+// selectableThreadRows returns just the rows the navigation cursor can land on
+// (directory headers and thread rows), in display order. m.threadsSelected is
+// an index into this slice.
+func (m *Model) selectableThreadRows() []threadListRow {
+	var out []threadListRow
+	for _, r := range m.threadListRows() {
+		if r.selectable() {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // visibleThreadIndices returns the indices of all live threads in Threads-tab
@@ -4695,38 +4977,52 @@ func (m *Model) stepWorkspaceThread(dir int) ([]tea.Cmd, bool) {
 // syncThreadsSelected sets threadsSelected to the visible row that corresponds
 // to the currently active workspace thread (selectedThread).
 func (m *Model) syncThreadsSelected() {
-	for i, r := range m.threadRowTargets() {
-		if r.sum == nil && r.liveIdx == m.selectedThread {
+	rows := m.selectableThreadRows()
+	for i, r := range rows {
+		if (r.kind == rowUserThread || r.kind == rowVixThread) && r.live != nil && r.liveIdx == m.selectedThread {
 			m.threadsSelected = i
 			return
+		}
+	}
+	// The active thread is hidden inside a collapsed directory (its row was
+	// folded away): land the cursor on that directory's header instead.
+	if m.selectedThread >= 0 && m.selectedThread < len(m.threads) {
+		dir := pickCWD(m.threads[m.selectedThread].workDir, m.cwd)
+		for i, r := range rows {
+			if r.kind == rowDirHeader && r.dir == dir {
+				m.threadsSelected = i
+				return
+			}
 		}
 	}
 }
 
 // threadsSelectedIdx returns the m.threads index for the highlighted row, when
-// that row is a live thread. Persisted vix-initiated rows report false (use
-// vixSelectedSummary for those).
+// that row is a live thread. Directory headers and persisted records report
+// false (use vixSelectedSummary for records).
 func (m *Model) threadsSelectedIdx() (int, bool) {
-	rows := m.threadRowTargets()
+	rows := m.selectableThreadRows()
 	if m.threadsSelected < 0 || m.threadsSelected >= len(rows) {
 		return 0, false
 	}
 	r := rows[m.threadsSelected]
-	if r.sum != nil {
-		return 0, false
+	if (r.kind == rowUserThread || r.kind == rowVixThread) && r.live != nil {
+		return r.liveIdx, true
 	}
-	return r.liveIdx, true
+	return 0, false
 }
 
-// vixSelectedSummary returns the vix-initiated record for the highlighted row,
-// when that row is a persisted, not-attached record.
+// vixSelectedSummary returns the record summary for the highlighted row, when
+// that row is a persisted, not-attached thread record (user- or vix-initiated).
+// Both are reopened the same way (attachRestoreThread). Directory headers and
+// live thread rows report false.
 func (m *Model) vixSelectedSummary() (protocol.ThreadSummary, bool) {
-	rows := m.threadRowTargets()
+	rows := m.selectableThreadRows()
 	if m.threadsSelected < 0 || m.threadsSelected >= len(rows) {
 		return protocol.ThreadSummary{}, false
 	}
-	if r := rows[m.threadsSelected]; r.sum != nil {
-		return *r.sum, true
+	if r := rows[m.threadsSelected]; (r.kind == rowUserThread || r.kind == rowVixThread) && r.live == nil {
+		return r.sum, true
 	}
 	return protocol.ThreadSummary{}, false
 }

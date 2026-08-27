@@ -833,6 +833,7 @@ public struct JobSummary: Codable, Sendable, Equatable {
 }
 
 public struct MCPServerSummary: Codable, Sendable, Equatable {
+    public var auth: String?
     public var enabled: Bool
     public var error: String?
     public var name: String
@@ -840,7 +841,8 @@ public struct MCPServerSummary: Codable, Sendable, Equatable {
     public var toolCount: Int64
     public var type: String
 
-    public init(enabled: Bool, error: String? = nil, name: String, status: String, toolCount: Int64, type: String) {
+    public init(auth: String? = nil, enabled: Bool, error: String? = nil, name: String, status: String, toolCount: Int64, type: String) {
+        self.auth = auth
         self.enabled = enabled
         self.error = error
         self.name = name
@@ -850,6 +852,7 @@ public struct MCPServerSummary: Codable, Sendable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
+        case auth = "auth"
         case enabled = "enabled"
         case error = "error"
         case name = "name"
@@ -1123,6 +1126,18 @@ public struct ThreadPlanActionData: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case action = "action"
         case text = "text"
+    }
+}
+
+public struct ThreadRenameData: Codable, Sendable, Equatable {
+    public var title: String
+
+    public init(title: String) {
+        self.title = title
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case title = "title"
     }
 }
 

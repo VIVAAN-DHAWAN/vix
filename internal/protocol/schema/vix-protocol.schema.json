@@ -864,6 +864,9 @@
     },
     "MCPServerSummary": {
       "properties": {
+        "auth": {
+          "type": "string"
+        },
         "enabled": {
           "type": "boolean"
         },
@@ -1181,6 +1184,17 @@
       ],
       "type": "object"
     },
+    "ThreadRenameData": {
+      "properties": {
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    },
     "ThreadSetModelData": {
       "properties": {
         "model": {
@@ -1458,6 +1472,11 @@
     "thread.plan_action": {
       "payload": {
         "$ref": "#/$defs/ThreadPlanActionData"
+      }
+    },
+    "thread.rename": {
+      "payload": {
+        "$ref": "#/$defs/ThreadRenameData"
       }
     },
     "thread.set_model": {

@@ -245,10 +245,10 @@ func TestMaybeGenerateTitleSkips(t *testing.T) {
 	cases := []struct {
 		name string
 		prep func(s *Thread)
-	}{
-		{"below threshold", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold - 1 }},
+	}{		{"below threshold", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold - 1 }},
 		{"vix origin", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold; s.origin = "vix" }},
 		{"already titled", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold; s.title = "set" }},
+		{"manual title", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold; s.titleManual = true }},
 		{"in flight", func(s *Thread) { s.endTurnCount = titleEndTurnThreshold; s.titleGenInFlight = true }},
 	}
 	for _, c := range cases {
@@ -262,5 +262,65 @@ func TestMaybeGenerateTitleSkips(t *testing.T) {
 				t.Errorf("LLM called %d times, want 0", fake.callCount)
 			}
 		})
+	}
+}
+
+// TestApplyManualTitle: a manual rename sets the title, pins it (titleManual),
+// emits event.title_updated, and thereafter suppresses the auto-titling pass
+// even once the thread crosses the end-turn threshold.
+func TestApplyManualTitle(t *testing.T) {
+	fake := &fakeCompactionLLM{summary: "auto-generated title"}
+	s, events := newCompactionTestThread(t, fake)
+
+	s.applyManualTitle("  My renamed thread  ")
+
+	// event.title_updated carries the sanitized (trimmed) title.
+	select {
+	case ev := <-events:
+		if ev.Type != "event.title_updated" {
+			t.Fatalf("event type = %q, want event.title_updated", ev.Type)
+		}
+		if tu := ev.Data.(protocol.EventTitleUpdated); tu.Title != "My renamed thread" {
+			t.Fatalf("event title = %q, want %q", tu.Title, "My renamed thread")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event.title_updated")
+	}
+
+	s.mu.Lock()
+	gotTitle, gotManual := s.title, s.titleManual
+	s.mu.Unlock()
+	if gotTitle != "My renamed thread" {
+		t.Errorf("title = %q, want %q", gotTitle, "My renamed thread")
+	}
+	if !gotManual {
+		t.Error("titleManual should be set after a manual rename")
+	}
+
+	// Now crossing the threshold must NOT trigger auto-titling.
+	s.endTurnCount = titleEndTurnThreshold
+	s.maybeGenerateTitle()
+	time.Sleep(20 * time.Millisecond)
+	if fake.callCount != 0 {
+		t.Errorf("auto-title LLM called %d times after manual rename, want 0", fake.callCount)
+	}
+	s.mu.Lock()
+	after := s.title
+	s.mu.Unlock()
+	if after != "My renamed thread" {
+		t.Errorf("title overwritten to %q after manual rename", after)
+	}
+}
+
+// TestApplyManualTitleEmptyIgnored: an empty/whitespace title is a no-op — it
+// neither pins nor clears the existing title.
+func TestApplyManualTitleEmptyIgnored(t *testing.T) {
+	fake := &fakeCompactionLLM{summary: "x"}
+	s, _ := newCompactionTestThread(t, fake)
+	s.applyManualTitle("   ")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.title != "" || s.titleManual {
+		t.Errorf("empty rename mutated state: title=%q manual=%v", s.title, s.titleManual)
 	}
 }

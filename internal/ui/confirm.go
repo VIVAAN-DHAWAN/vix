@@ -187,6 +187,41 @@ func renderAlertDialog(width, height int, s Styles, text string) string {
 	return s.CommandPaletteStyle.Width(dialogWidth).Render(content)
 }
 
+// renameDialogWidth / renameDialogInnerWidth size the rename overlay and its
+// embedded text input (inner = width - border - padding).
+const renameDialogWidth = 56
+const renameDialogInnerWidth = renameDialogWidth - 4
+
+// renderThreadRenameDialog renders the rename overlay: a title, the editable
+// text box (inputView, from textinput.View), and a key hint.
+func renderThreadRenameDialog(width int, s Styles, inputView string) string {
+	dialogWidth := renameDialogWidth
+	if dialogWidth > width-4 {
+		dialogWidth = width - 4
+	}
+	innerWidth := dialogWidth - 4
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(colorPrimary).
+		Width(innerWidth).Align(lipgloss.Center).
+		Render("Rename conversation")
+
+	sep := s.CommandPaletteSepStyle.Width(innerWidth).Render(strings.Repeat("─", innerWidth))
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorSecondary).
+		Padding(0, 1).
+		Width(innerWidth - 2).
+		Render(inputView)
+
+	hint := lipgloss.NewStyle().Foreground(s.ColorDimGray).
+		Width(innerWidth).Align(lipgloss.Center).
+		Render("Enter to save · Esc to cancel")
+
+	content := title + "\n" + sep + "\n" + box + "\n" + hint
+	return s.CommandPaletteStyle.Width(dialogWidth).Render(content)
+}
+
 // renderThreadCloseDialog renders the thread-close confirmation as a centered overlay box.
 // selected: 0 = Yes, 1 = No.
 func renderThreadCloseDialog(width, height int, s Styles, selected int, threadID string) string {

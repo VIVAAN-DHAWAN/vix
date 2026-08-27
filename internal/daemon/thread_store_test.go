@@ -217,6 +217,77 @@ func TestThreadListReturnsAllDirs(t *testing.T) {
 	}
 }
 
+// TestThreadRenameHandler: the server-level thread.rename handler pins a manual
+// title on a persisted, not-open record on disk (Title + TitleManual), refuses
+// when the thread is live in a connection, and validates id/title.
+func TestThreadRenameHandler(t *testing.T) {
+	dir := t.TempDir()
+	paths := config.NewVixPaths(dir, "", "/work")
+
+	rec := sampleRecord()
+	rec.ID = "rename-me"
+	rec.CWD = "/work"
+	rec.Title = "old auto title"
+	if err := saveThreadRecord(paths, rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	srv := newInstanceTestServer(t)
+	RegisterBuiltinHandlers(srv)
+
+	// Rename the persisted record.
+	resp, err := srv.GetHandler("thread.rename")(map[string]any{
+		"cwd": "/work", "config_dir": dir, "id": "rename-me", "title": "  My chosen name  ",
+	})
+	if err != nil {
+		t.Fatalf("thread.rename: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Fatalf("status = %v (%v), want ok", resp["status"], resp["message"])
+	}
+	got, found, err := loadOpenThreadRecord(paths, "rename-me")
+	if err != nil || !found {
+		t.Fatalf("reload: found=%v err=%v", found, err)
+	}
+	if got.Title != "My chosen name" {
+		t.Errorf("Title = %q, want %q (sanitized/trimmed)", got.Title, "My chosen name")
+	}
+	if !got.TitleManual {
+		t.Error("TitleManual must be set on disk after rename")
+	}
+
+	// Empty title and missing id are rejected.
+	if r, _ := srv.GetHandler("thread.rename")(map[string]any{"cwd": "/work", "config_dir": dir, "id": "rename-me", "title": "   "}); r["status"] != "error" {
+		t.Error("empty title should be rejected")
+	}
+	if r, _ := srv.GetHandler("thread.rename")(map[string]any{"cwd": "/work", "config_dir": dir, "title": "x"}); r["status"] != "error" {
+		t.Error("missing id should be rejected")
+	}
+
+	// A live thread is refused (renamed over its own connection instead).
+	srv.threadMu.Lock()
+	srv.threads["rename-me"] = &Thread{}
+	srv.threadMu.Unlock()
+	if r, _ := srv.GetHandler("thread.rename")(map[string]any{"cwd": "/work", "config_dir": dir, "id": "rename-me", "title": "y"}); r["status"] != "error" {
+		t.Error("rename of a live thread should be refused")
+	}
+}
+
+// TestThreadRecordTitleManualRoundTrip: buildRecord persists titleManual and
+// seedFromRecord restores it, so a manual pin survives a daemon restart.
+func TestThreadRecordTitleManualRoundTrip(t *testing.T) {
+	src := &Thread{id: "t1", title: "pinned", titleManual: true}
+	rec := src.buildRecord()
+	if !rec.TitleManual {
+		t.Fatal("buildRecord did not persist TitleManual")
+	}
+	dst := &Thread{}
+	dst.seedFromRecord(&rec)
+	if dst.title != "pinned" || !dst.titleManual {
+		t.Errorf("seedFromRecord: title=%q manual=%v, want pinned/true", dst.title, dst.titleManual)
+	}
+}
+
 func TestListOpenExcludesClosed(t *testing.T) {
 	paths := testPaths(t)
 

@@ -72,7 +72,7 @@ func TestThreadsTabChrome(t *testing.T) {
 		"Threads [F1]", "Workspace [F2]", // tab bar
 		"User-initiated",             // group header
 		"Thread", "Title", "Running", // column headers
-		"New Thread", "Duplicate Thread", "Delete Thread", "Open In Workspace", // footer hints (Title Case as rendered)
+		"New Thread", "Duplicate Thread", "Delete Thread", "Open / Fold Dir", // footer hints (Title Case as rendered)
 	} {
 		if !h.UI.Contains(want) {
 			t.Fatalf("Threads tab missing %q; screen:\n%s", want, h.UI.Snapshot())
@@ -179,10 +179,10 @@ func TestThreadsNavigateAndOpen(t *testing.T) {
 	h.UI.Enter()
 	h.UI.WaitFor("BRAVO-REPLY")
 
-	// On the Threads tab, go to the top row (A) and open it.
+	// On the Threads tab, the cursor syncs onto the active thread (B). Move up one
+	// row onto A (the row directly above is A, not the directory header) and open it.
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
-	h.UI.Key("up")
 	h.UI.Key("up")
 	h.UI.Enter()
 	if !pollUntil(8*time.Second, func() bool { return h.UI.Contains("ALPHA-REPLY") }) {
@@ -398,7 +398,7 @@ func TestThreadsDuplicate(t *testing.T) {
 
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
-	h.UI.Key("up") // ensure the seeded thread is selected (top row).
+	// The cursor syncs onto the seeded (active) thread; no navigation needed.
 	h.UI.Type("d")
 
 	openDir := h.HomePath(".vix", "threads", "open")
@@ -446,7 +446,7 @@ func TestThreadsDuplicateOfDuplicate(t *testing.T) {
 	// on B and we stay on the Threads tab.
 	h.UI.Key("f1")
 	h.UI.WaitFor("User-initiated")
-	h.UI.Key("up")
+	// The cursor syncs onto the source (active) thread; no navigation needed.
 	h.UI.Type("d")
 	if !pollUntil(10*time.Second, func() bool { return len(readThreadRecords(openDir)) >= 2 }) {
 		t.Fatalf("first duplicate never persisted; got %d records in %s", len(readThreadRecords(openDir)), openDir)
@@ -504,6 +504,251 @@ func TestThreadsDuplicateOfDuplicate(t *testing.T) {
 		t.Fatalf("duplicate-of-a-duplicate sent an empty history: the follow-up request omitted the original turn:\n%s", last)
 	}
 	h.UI.Shot("follow-up-carries-history")
+}
+
+// TestThreadsDuplicateWithStrayDraft guards the "appears duplicated but empty"
+// bug: the fork/duplicate tab has no daemonThreadID yet, so the connection
+// result must be correlated back to it by its stable clientKey. When another
+// draft (an unsent Ctrl+T tab) already sits earlier in the list with an equally
+// empty daemonThreadID, matching by daemon id would adopt the fork client onto
+// that stray draft — leaving the duplicate showing the copied messages with no
+// live daemon history behind them, so a follow-up goes to the model empty.
+//
+// This asserts, across disk and wire: the duplicate carries the seeded history
+// even with the stray draft present, and its follow-up request includes the
+// original turn.
+func TestThreadsDuplicateWithStrayDraft(t *testing.T) {
+	h := harness.Start(t, threadsMeta("duplicating with a stray empty draft present still seeds the duplicate's history (clientKey correlation)"))
+
+	h.UI.WaitStable(500 * time.Millisecond)
+
+	// Seed one completed turn on the initial thread A so it commits (gains a
+	// daemonThreadID) and has a distinctive "seed turn" message to look for.
+	h.Mock.Enqueue(harness.Text("ok-to-fork"))
+	h.UI.Type("seed turn")
+	h.UI.Enter()
+	h.UI.WaitFor("ok-to-fork")
+
+	// Create a second tab B with Ctrl+T and leave it empty: an uncommitted draft
+	// whose daemonThreadID stays "". It sits before the duplicate in the thread
+	// list, so a daemon-id match would wrongly pick it up.
+	h.UI.Ctrl('t')
+	h.UI.WaitStable(800 * time.Millisecond)
+
+	openDir := h.HomePath(".vix", "threads", "open")
+
+	// Duplicate A. On the Threads tab A (committed) sorts above B (draft); select
+	// the top row and press d. Only A is persisted so far (B is an empty draft).
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	h.UI.Key("up") // select A (top row)
+	h.UI.Type("d")
+	if !pollUntil(10*time.Second, func() bool { return len(readThreadRecords(openDir)) >= 2 }) {
+		t.Fatalf("duplicate never persisted; got %d records in %s", len(readThreadRecords(openDir)), openDir)
+	}
+	h.UI.Shot("duplicate-with-stray-draft")
+
+	// Disk: the duplicate must carry the seeded history. Before the fix it was
+	// empty (the fork client was adopted by the stray draft instead).
+	recs := readThreadRecords(openDir)
+	for _, r := range recs {
+		if !strings.Contains(string(r.Messages), "seed turn") {
+			t.Fatalf("record id=%s (parent=%s) is missing the seeded history: %s", r.ID, r.ParentID, r.Messages)
+		}
+	}
+
+	// Wire: open the duplicate (the highlighted, newest thread) and send a
+	// follow-up. The outgoing request must include the original turn.
+	h.UI.Enter()
+	h.UI.WaitFor("ok-to-fork")
+	// Wait until the duplicate's own fork-connection is live before the follow-up
+	// so the message goes through the seeded client rather than an empty draft.
+	h.UI.WaitFor("Reconnected to daemon.")
+
+	h.Mock.Enqueue(harness.Text("stray-draft-reply"))
+	h.UI.Type("continue please")
+	h.UI.Enter()
+	h.UI.WaitFor("stray-draft-reply")
+
+	reqs := h.Mock.Requests()
+	last := string(reqs[len(reqs)-1].Body())
+	if !strings.Contains(last, "continue please") {
+		t.Fatalf("sanity: the last request is not the follow-up:\n%s", last)
+	}
+	if !strings.Contains(last, "seed turn") {
+		t.Fatalf("duplicate with a stray draft sent an empty history: the follow-up omitted the original turn:\n%s", last)
+	}
+	h.UI.Shot("stray-draft-follow-up-carries-history")
+}
+
+// TestThreadsDuplicateAfterRestart guards the "no completed turns yet" refusal
+// on a restored thread. Turn separators (which gate /fork, /trim and duplicate)
+// are UI-only markers appended live at turn end; they are not persisted nor
+// re-sent in event.replay. Before the fix, a thread restored on relaunch had a
+// transcript with zero separators, so pressing `d` on it was refused with
+// "Nothing to duplicate: no completed turns yet" even though it had a completed
+// turn. The replay path now reconstructs the separators, so duplicate works.
+func TestThreadsDuplicateAfterRestart(t *testing.T) {
+	h := harness.Start(t, threadsMeta("duplicating a thread restored after a daemon restart is not refused as having no completed turns"))
+
+	h.UI.WaitStable(500 * time.Millisecond)
+
+	// One completed turn so the daemon persists a forkable conversation.
+	h.Mock.Enqueue(harness.Text("ok-to-fork"))
+	h.UI.Type("seed turn")
+	h.UI.Enter()
+	h.UI.WaitFor("ok-to-fork")
+	h.UI.WaitStable(300 * time.Millisecond)
+
+	openDir := h.HomePath(".vix", "threads", "open")
+	if len(readThreadRecords(openDir)) != 1 {
+		t.Fatalf("expected exactly one record before restart, got %d", len(readThreadRecords(openDir)))
+	}
+
+	// Relaunch: restart the whole stack on the same HOME + socket. The TUI
+	// auto-attaches the open thread and replays it (rebuilding the transcript
+	// from event.replay — the path that lost the separators).
+	h.Daemon.Restart()
+	h.UI.WaitStable(700 * time.Millisecond)
+	h.UI.WaitFor("ok-to-fork") // conversation replayed
+
+	// Duplicate the restored thread from the Threads tab.
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	// The cursor syncs onto the restored (active) thread; no navigation needed.
+	h.UI.Type("d")
+
+	// Before the fix `d` was refused (no separators) and no new record appeared.
+	// After the fix the duplicate persists with the seeded history.
+	var recs []threadRec
+	if !pollUntil(10*time.Second, func() bool {
+		recs = readThreadRecords(openDir)
+		return len(recs) == 2
+	}) {
+		t.Fatalf("duplicate after restart never persisted (still refused as having no completed turns); got %d records in %s\nscreen:\n%s",
+			len(recs), openDir, h.UI.Snapshot())
+	}
+	if h.UI.Contains("Nothing to duplicate") {
+		t.Fatalf("duplicate was refused after restart; screen:\n%s", h.UI.Snapshot())
+	}
+	for _, r := range recs {
+		if !strings.Contains(string(r.Messages), "seed turn") {
+			t.Fatalf("record id=%s missing the seeded history after restart-duplicate: %s", r.ID, r.Messages)
+		}
+	}
+	h.UI.Shot("duplicate-after-restart")
+}
+
+// TestThreadsRename verifies the `r` rename flow: it opens a dialog, the typed
+// title is persisted (Title + TitleManual on disk) and shown in the list, and
+// re-opening the dialog pre-fills the current title.
+func TestThreadsRename(t *testing.T) {
+	h := harness.Start(t, threadsMeta("`r` opens a rename dialog; the new title is persisted and pre-fills on re-open"))
+
+	h.UI.WaitStable(500 * time.Millisecond)
+
+	// One turn commits the thread (gives it a live connection to rename over).
+	h.Mock.Enqueue(harness.Text("committed"))
+	h.UI.Type("hello there")
+	h.UI.Enter()
+	h.UI.WaitFor("committed")
+
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	// The cursor syncs onto the committed (active) thread; no navigation needed.
+	h.UI.Type("r")
+	h.UI.WaitFor("Rename conversation")
+	h.UI.Shot("rename-dialog")
+
+	h.UI.Type("My Renamed Chat")
+	h.UI.Enter()
+
+	// Disk: the record carries the manual title and the pin flag.
+	openDir := h.HomePath(".vix", "threads", "open")
+	if !pollUntil(8*time.Second, func() bool {
+		for _, r := range readThreadRecords(openDir) {
+			if r.Title == "My Renamed Chat" && r.TitleManual {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("renamed title not persisted with TitleManual; records=%+v", readThreadRecords(openDir))
+	}
+
+	// Screen: the list shows the new title.
+	h.UI.WaitFor("My Renamed Chat")
+
+	// Re-opening the dialog pre-fills the current (renamed) title. The cursor is
+	// still on the renamed thread.
+	h.UI.Type("r")
+	h.UI.WaitFor("Rename conversation")
+	if !h.UI.Contains("My Renamed Chat") {
+		t.Fatalf("rename dialog should pre-fill the current title; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Key("esc")
+	h.UI.Shot("rename-prefill")
+}
+
+// TestThreadsRenameSuppressesAutoTitle verifies that once a conversation is
+// manually renamed, the auto-titling pass never runs — even after crossing the
+// 3-completed-turns threshold. It asserts on the wire (no summarization request
+// is ever sent) and on disk (the manual title survives).
+func TestThreadsRenameSuppressesAutoTitle(t *testing.T) {
+	h := harness.Start(t, threadsMeta("a manual rename pins the title: auto-titling never runs after 3 turns"))
+
+	h.UI.WaitStable(500 * time.Millisecond)
+
+	// Turn 1 commits the thread.
+	h.Mock.Enqueue(harness.Text("reply one"))
+	h.UI.Type("first message")
+	h.UI.Enter()
+	h.UI.WaitFor("reply one")
+
+	// Rename it from the Threads tab.
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	// The cursor syncs onto the committed (active) thread; no navigation needed.
+	h.UI.Type("r")
+	h.UI.WaitFor("Rename conversation")
+	h.UI.Type("Pinned Title")
+	h.UI.Enter()
+	h.UI.WaitFor("Pinned Title")
+
+	// Open it back in the workspace and drive two more turns, crossing the
+	// titleEndTurnThreshold (3). A non-pinned thread would auto-title here. The
+	// cursor is still on the renamed thread, so Enter opens it.
+	h.UI.Enter()
+	h.UI.WaitFor("reply one") // transcript restored in the workspace
+
+	h.Mock.Enqueue(harness.Text("reply two"))
+	h.UI.Type("second message")
+	h.UI.Enter()
+	h.UI.WaitFor("reply two")
+
+	h.Mock.Enqueue(harness.Text("reply three"))
+	h.UI.Type("third message")
+	h.UI.Enter()
+	h.UI.WaitFor("reply three")
+	h.UI.WaitStable(500 * time.Millisecond) // let any (unwanted) async title pass run
+
+	// Wire: no summarization request was ever sent.
+	for _, req := range h.Mock.Requests() {
+		if strings.Contains(string(req.Body()), "Summarize the following conversation") {
+			t.Fatalf("auto-titling ran after a manual rename — a summarization request was sent:\n%s", req.Body())
+		}
+	}
+
+	// Disk: the manual title survived and stays pinned.
+	openDir := h.HomePath(".vix", "threads", "open")
+	recs := readThreadRecords(openDir)
+	if len(recs) != 1 {
+		t.Fatalf("want exactly one record, got %d", len(recs))
+	}
+	if recs[0].Title != "Pinned Title" || !recs[0].TitleManual {
+		t.Fatalf("record title=%q manual=%v, want Pinned Title/true", recs[0].Title, recs[0].TitleManual)
+	}
+	h.UI.Shot("rename-suppresses-autotitle")
 }
 
 // unreadThreadRecord is a persisted open thread marked unread, seeded into
@@ -623,9 +868,11 @@ func TestSessionsDirMigrates(t *testing.T) {
 
 // threadRec is the slice of a persisted thread record this suite inspects.
 type threadRec struct {
-	ID       string          `json:"id"`
-	ParentID string          `json:"parent_id"`
-	Messages json.RawMessage `json:"messages"`
+	ID          string          `json:"id"`
+	ParentID    string          `json:"parent_id"`
+	Title       string          `json:"title"`
+	TitleManual bool            `json:"title_manual"`
+	Messages    json.RawMessage `json:"messages"`
 }
 
 // readThreadRecords parses every *.json thread record in dir.
@@ -986,16 +1233,73 @@ func TestThreadsGroupedByDirectory(t *testing.T) {
 		t.Fatalf("current cwd block should render above the other directory; screen:\n%s", snap)
 	}
 
-	// Opening the cross-directory thread attaches it in its own directory: move
-	// to the top, then down onto the other-directory row and open it. Its
-	// conversation must replay in the workspace.
-	h.UI.Key("up")
+	// Opening the cross-directory thread attaches it in its own directory. The
+	// cursor syncs onto the current-dir thread; move down past the other
+	// directory's header onto its thread row and open it. Its conversation must
+	// replay in the workspace.
+	h.UI.Key("down")
 	h.UI.Key("down")
 	h.UI.Enter()
 	if !pollUntil(10*time.Second, func() bool { return h.UI.Contains("other dir reply") }) {
 		t.Fatalf("opening the cross-directory thread did not replay its conversation; screen:\n%s", h.UI.Snapshot())
 	}
 	h.UI.Shot("cross-dir-thread-opened")
+}
+
+// TestThreadsFoldDirectory verifies the foldable directory headers on the
+// Threads tab: pressing Enter on a directory's path header hides that
+// directory's thread rows (the header stays), and pressing Enter again unfolds
+// them. Fold state is session-only. It reuses the two-directory seed from
+// TestThreadsGroupedByDirectory so folding one block leaves the other visible.
+func TestThreadsFoldDirectory(t *testing.T) {
+	h := harness.Start(t, threadsMeta("Enter on a directory path header folds/unfolds that directory's threads"),
+		harness.WithWorkdirFile("otherproj/keep.txt", "seed"),
+		harness.WithHomeFile(".vix/threads/open/cccccccc-cccc-cccc-cccc-cccccccccccc.json", groupUserCurrentRecord),
+		harness.WithHomeFile(".vix/threads/open/dddddddd-dddd-dddd-dddd-dddddddddddd.json", groupUserOtherRecord),
+	)
+
+	h.UI.WaitStable(500 * time.Millisecond)
+	h.UI.Key("f1")
+	h.UI.WaitFor("User-initiated")
+	if !pollUntil(10*time.Second, func() bool {
+		s := h.UI.Snapshot()
+		return strings.Contains(s, "CURRENT-DIR-THREAD") && strings.Contains(s, "OTHER-DIR-THREAD")
+	}) {
+		t.Fatalf("both directories' threads not listed; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("fold-before")
+
+	// Selectable rows: 0=cwd header, 1=CURRENT, 2=otherproj header, 3=OTHER.
+	// Clamp to the very top with repeated up (a header is a valid stop but Enter
+	// only folds — up never triggers it), then step down twice onto the otherproj
+	// header deterministically.
+	h.UI.Key("up")
+	h.UI.Key("up")
+	h.UI.Key("up")
+	h.UI.Key("down")
+	h.UI.Key("down")
+	h.UI.Enter() // fold the otherproj block
+
+	// The other directory's thread row is hidden; its header (otherproj) and the
+	// other directory's thread stay visible.
+	if !pollUntil(8*time.Second, func() bool {
+		s := h.UI.Snapshot()
+		return !strings.Contains(s, "OTHER-DIR-THREAD") &&
+			strings.Contains(s, "otherproj") &&
+			strings.Contains(s, "CURRENT-DIR-THREAD")
+	}) {
+		t.Fatalf("folding the otherproj block did not hide its thread row; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("fold-collapsed")
+
+	// Enter again on the same header unfolds it: the thread row reappears.
+	h.UI.Enter()
+	if !pollUntil(8*time.Second, func() bool {
+		return strings.Contains(h.UI.Snapshot(), "OTHER-DIR-THREAD")
+	}) {
+		t.Fatalf("unfolding the otherproj block did not restore its thread row; screen:\n%s", h.UI.Snapshot())
+	}
+	h.UI.Shot("fold-expanded")
 }
 
 // orderCurrentRecord is the launch-cwd thread (auto-restored as a live thread).
@@ -1070,8 +1374,11 @@ func TestThreadsOrderedByCreationTime(t *testing.T) {
 	}
 	h.UI.Shot("order-before-attach")
 
-	// Open the NEWER otherproj thread so it attaches (becomes live). Rows:
-	// 0=CURRENT (cwd), 1=OTHER-OLD, 2=OTHER-NEW. Move down twice and open it.
+	// Open the NEWER otherproj thread so it attaches (becomes live). Selectable
+	// rows: 0=cwd header, 1=CURRENT (cwd), 2=otherproj header, 3=OTHER-OLD,
+	// 4=OTHER-NEW. The cursor syncs onto CURRENT; move down three times onto the
+	// newer row and open it.
+	h.UI.Key("down")
 	h.UI.Key("down")
 	h.UI.Key("down")
 	h.UI.Enter()

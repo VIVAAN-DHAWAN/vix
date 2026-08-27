@@ -49,15 +49,15 @@ func countEndTurns(msgs []llm.MessageParam) int {
 }
 
 // maybeGenerateTitle kicks off the async auto-titling pass when the thread
-// qualifies: user-started, still untitled, at least titleEndTurnThreshold
-// completed turns, a usable LLM client, and no pass already running. Called by
-// the turn loop after persist; never blocks the turn.
+// qualifies: user-started, still untitled, not manually renamed, at least
+// titleEndTurnThreshold completed turns, a usable LLM client, and no pass
+// already running. Called by the turn loop after persist; never blocks the turn.
 func (s *Thread) maybeGenerateTitle() {
 	if s.origin == "vix" || s.llm == nil || s.endTurnCount < titleEndTurnThreshold {
 		return
 	}
 	s.mu.Lock()
-	if s.title != "" || s.titleGenInFlight {
+	if s.title != "" || s.titleManual || s.titleGenInFlight {
 		s.mu.Unlock()
 		return
 	}
@@ -66,6 +66,28 @@ func (s *Thread) maybeGenerateTitle() {
 	s.mu.Unlock()
 
 	go s.generateTitle(transcript)
+}
+
+// applyManualTitle sets a user-chosen title and pins it (titleManual) so the
+// auto-titling pass never overwrites it. Runs on the thread's own goroutine
+// (thread.rename command), so persist stays single-threaded. An empty or
+// all-whitespace title is ignored. Publishes the change to the thread's client
+// and the threads list, mirroring generateTitle.
+func (s *Thread) applyManualTitle(title string) {
+	title = sanitizeTitle(title)
+	if title == "" {
+		return
+	}
+	s.mu.Lock()
+	s.title = title
+	s.titleManual = true
+	s.mu.Unlock()
+
+	s.persist()
+	s.emit("event.title_updated", protocol.EventTitleUpdated{Title: title})
+	if s.server != nil {
+		s.server.broadcastThreadsChanged()
+	}
 }
 
 // generateTitle runs the one-shot, tool-free summarization call and publishes

@@ -1638,6 +1638,136 @@ func turnSeparatorInfos(messages []ChatMessage, s Styles, width int) []TurnSepIn
 	return result
 }
 
+// UserMsgInfo describes the position of a user message (turn start) in the
+// string produced by buildRenderedChat.
+type UserMsgInfo struct {
+	LineIdx int    // 0-based line index in the allLines slice
+	MsgIdx  int    // index in the original (pre-group) chatMessages slice
+	Text    string // flattened one-line prompt text (for the sticky header)
+}
+
+// userMessageInfos returns the line position and flattened text of each user
+// message (turn start) in the string produced by buildRenderedChat. It mirrors
+// turnSeparatorInfos: user messages are never grouped, so their line offsets
+// are stable and can be used to attribute the top-of-viewport line to a turn.
+func userMessageInfos(messages []ChatMessage, s Styles, width int) []UserMsgInfo {
+	grouped := groupFileOperations(messages)
+
+	// Map original message indices for user messages.
+	var origIdxs []int
+	for i, msg := range messages {
+		if msg.Type == MsgUser {
+			origIdxs = append(origIdxs, i)
+		}
+	}
+
+	lineIdx := 0
+	cursor := 0
+	var result []UserMsgInfo
+
+	for i, msg := range grouped {
+		if msg.Rendered == "" {
+			continue
+		}
+
+		var written string
+		if msg.IsGrouped && msg.GroupIndex > 0 {
+			written = renderGroupedItem(msg, s, width)
+			isLastInGroup := i+1 >= len(grouped) ||
+				!grouped[i+1].IsGrouped ||
+				grouped[i+1].GroupIndex == 0
+			if isLastInGroup {
+				written += "\n"
+			}
+		} else {
+			written = msg.Rendered
+		}
+
+		if msg.Type == MsgUser {
+			if cursor < len(origIdxs) {
+				result = append(result, UserMsgInfo{
+					LineIdx: lineIdx,
+					MsgIdx:  origIdxs[cursor],
+					Text:    flattenOneLine(msg.Text),
+				})
+				cursor++
+			}
+		}
+
+		lineIdx += strings.Count(written, "\n")
+	}
+
+	return result
+}
+
+// flattenOneLine collapses a possibly multi-line string into a single line:
+// runs of whitespace (including newlines) become a single space, trimmed.
+func flattenOneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// truncateOneLine truncates s to at most maxWidth display columns, appending an
+// ellipsis when it had to cut. It never wraps.
+func truncateOneLine(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	target := maxWidth - 1 // reserve one column for the ellipsis
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := 1
+		if r >= 0x1100 {
+			rw = 2
+		}
+		if w+rw > target {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + "…"
+}
+
+// stickyUserPromptForTop returns the flattened prompt text of the turn that owns
+// the top visible chat line (the most recent user message at or above topLine).
+// It returns "" when no user message sits at or above topLine.
+func stickyUserPromptForTop(infos []UserMsgInfo, topLine int) string {
+	prompt := ""
+	for _, info := range infos {
+		if info.LineIdx <= topLine {
+			prompt = info.Text
+		} else {
+			break
+		}
+	}
+	return prompt
+}
+
+// stickyHeaderRows is the number of chat content rows the sticky header
+// occupies while scrolled: one for the prompt text and one for the rule.
+const stickyHeaderRows = 2
+
+// renderStickyHeader builds the two-line sticky header shown at the top of the
+// chat viewport while scrolled: the turn's user prompt on one line (truncated to
+// a single line) and a full-width primary-color rule beneath it. innerWidth is
+// the chat content width. The returned string has no trailing newline.
+func renderStickyHeader(prompt string, innerWidth int) string {
+	bar := userPromptIcon.Render("▎")
+	// bar(1) + 2 spaces = 3 columns of prefix.
+	textWidth := innerWidth - 3
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	text := truncateOneLine(prompt, textWidth)
+	line := bar + "  " + userPromptStyle.Render(text)
+	sep := stickyHeaderSepStyle.Render(strings.Repeat("─", innerWidth))
+	return line + "\n" + sep
+}
+
 // countTurnSeparators returns the number of turn separators (MsgSystem with
 // TurnModel set) currently in messages. Used to assign the next 1-based turn
 // number when a turn ends.

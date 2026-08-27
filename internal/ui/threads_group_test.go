@@ -202,11 +202,14 @@ func TestRenderThreadsViewGroupsByDir(t *testing.T) {
 		t.Skip("no home dir")
 	}
 	workDir := filepath.Join(home, "work")
-	groups := []userDirGroupView{
-		{dir: workDir, rows: []userRowView{{sum: protocol.ThreadSummary{ID: "s1abc", Title: "Alpha title", LastRequestAt: "2026-01-01T00:00:00Z"}}}},
-		{dir: "/opt/proj", rows: []userRowView{{sum: protocol.ThreadSummary{ID: "s2xyz", Title: "Beta title", LastRequestAt: "2026-01-01T00:00:00Z"}}}},
+	rows := []threadListRow{
+		{kind: rowUserHeader},
+		{kind: rowDirHeader, dir: workDir, count: 1},
+		{kind: rowUserThread, liveIdx: -1, sum: protocol.ThreadSummary{ID: "s1abc", Title: "Alpha title", LastRequestAt: "2026-01-01T00:00:00Z"}},
+		{kind: rowDirHeader, dir: "/opt/proj", count: 1},
+		{kind: rowUserThread, liveIdx: -1, sum: protocol.ThreadSummary{ID: "s2xyz", Title: "Beta title", LastRequestAt: "2026-01-01T00:00:00Z"}},
 	}
-	out := renderThreadsView(groups, nil, 120, 40, NewStyles(true), 0, "")
+	out := renderThreadsView(rows, 120, 40, NewStyles(true), 0, "")
 
 	for _, want := range []string{
 		"User-initiated",
@@ -218,5 +221,97 @@ func TestRenderThreadsViewGroupsByDir(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderThreadsView output missing %q\n---\n%s", want, out)
 		}
+	}
+}
+
+// TestRenderThreadsViewFoldedDirHidesRows: a collapsed directory header renders
+// (with the ▸ glyph and a hidden count) but its thread rows are omitted.
+func TestRenderThreadsViewFoldedDirHidesRows(t *testing.T) {
+	rows := []threadListRow{
+		{kind: rowUserHeader},
+		{kind: rowDirHeader, dir: "/opt/proj", collapsed: true, count: 2},
+	}
+	out := renderThreadsView(rows, 120, 40, NewStyles(true), 0, "")
+
+	if !strings.Contains(out, "▸") {
+		t.Errorf("collapsed dir header should show the ▸ glyph\n---\n%s", out)
+	}
+	if !strings.Contains(out, "(2)") {
+		t.Errorf("collapsed dir header should show the hidden count (2)\n---\n%s", out)
+	}
+	if !strings.Contains(out, "/opt/proj") {
+		t.Errorf("collapsed dir header should still show the path\n---\n%s", out)
+	}
+}
+
+// TestThreadListRowsFolding: folding a directory drops its thread rows from the
+// selection space (the header stays) and shifts the Vix rows up accordingly.
+func TestThreadListRowsFolding(t *testing.T) {
+	vixRec := protocol.ThreadSummary{ID: "vixRun", CWD: "/job", Origin: "vix", StartedAt: "2026-01-05T00:00:00Z"}
+	m := &Model{
+		cwd:     "/work",
+		threads: []*ThreadState{},
+		userThreadRecords: []protocol.ThreadSummary{
+			userRec("rWork", "/work", "2026-01-01T00:00:00Z"),
+			userRec("rAlpha", "/alpha", "2026-01-02T00:00:00Z"),
+		},
+		vixThreads: []protocol.ThreadSummary{vixRec},
+	}
+
+	// Expanded: one dir header + one thread row per directory, then the vix row.
+	sel := m.selectableThreadRows()
+	if len(sel) != 5 {
+		t.Fatalf("expanded selectable rows = %d, want 5 (2 dir headers + 2 threads + 1 vix)", len(sel))
+	}
+	if sel[0].kind != rowDirHeader || sel[0].dir != "/work" {
+		t.Fatalf("sel[0] = %+v, want /work dir header", sel[0])
+	}
+	if sel[1].kind != rowUserThread || sel[1].sum.ID != "rWork" {
+		t.Fatalf("sel[1] = %+v, want rWork thread", sel[1])
+	}
+
+	// Fold /work: its thread row disappears, header remains, vix row shifts up.
+	m.collapsedDirs = map[string]bool{"/work": true}
+	sel = m.selectableThreadRows()
+	if len(sel) != 4 {
+		t.Fatalf("folded selectable rows = %d, want 4", len(sel))
+	}
+	for _, r := range sel {
+		if r.kind == rowUserThread && r.sum.ID == "rWork" {
+			t.Fatal("folded /work should hide the rWork thread row")
+		}
+	}
+	if sel[0].kind != rowDirHeader || sel[0].dir != "/work" || !sel[0].collapsed {
+		t.Fatalf("sel[0] = %+v, want collapsed /work dir header", sel[0])
+	}
+	last := sel[len(sel)-1]
+	if last.kind != rowVixThread || last.sum.ID != "vixRun" {
+		t.Fatalf("last selectable row = %+v, want the vixRun vix thread", last)
+	}
+}
+
+// TestThreadsSelectionOnDirHeader: with the cursor on a directory header,
+// threadsSelectedIdx and vixSelectedSummary both report false (Enter folds
+// instead of opening a thread).
+func TestThreadsSelectionOnDirHeader(t *testing.T) {
+	m := &Model{
+		cwd:     "/work",
+		threads: []*ThreadState{},
+		userThreadRecords: []protocol.ThreadSummary{
+			userRec("rWork", "/work", "2026-01-01T00:00:00Z"),
+		},
+	}
+	// sel[0] is the /work dir header.
+	m.threadsSelected = 0
+	if _, ok := m.threadsSelectedIdx(); ok {
+		t.Error("threadsSelectedIdx should be false on a directory header")
+	}
+	if _, ok := m.vixSelectedSummary(); ok {
+		t.Error("vixSelectedSummary should be false on a directory header")
+	}
+	// sel[1] is the rWork record row: vixSelectedSummary resolves it.
+	m.threadsSelected = 1
+	if sum, ok := m.vixSelectedSummary(); !ok || sum.ID != "rWork" {
+		t.Errorf("vixSelectedSummary on record row = (%+v, %v), want rWork,true", sum, ok)
 	}
 }

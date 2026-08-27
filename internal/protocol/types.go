@@ -206,6 +206,13 @@ type ThreadTrimData struct {
 	TurnIdx int `json:"turn_idx"` // keep history up to and including this turn (0-based)
 }
 
+// ThreadRenameData carries a manual title change. Sent on a live thread's
+// connection (thread.rename command); pins the title so auto-titling never
+// overwrites it.
+type ThreadRenameData struct {
+	Title string `json:"title"`
+}
+
 // --- Daemon → Client event payloads ---
 
 // EventThreadStarted acknowledges thread creation.

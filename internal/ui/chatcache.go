@@ -20,6 +20,9 @@ type chatCache struct {
 	built    bool
 	lines    []string
 	rowStart []int
+	// userInfos are the line positions + flattened text of each user message
+	// (turn start) in the rendered transcript, used by the sticky header.
+	userInfos []UserMsgInfo
 }
 
 // invalidate forces a rebuild on the next cachedChatLines call.
@@ -42,7 +45,16 @@ func (sess *ThreadState) cachedChatLines(s Styles, innerWidth int) ([]string, []
 	c.width = innerWidth
 	c.lines = lines
 	c.rowStart = visualRowPrefix(lines, innerWidth)
+	c.userInfos = userMessageInfos(sess.chatMessages, s, innerWidth)
 	return c.lines, c.rowStart
+}
+
+// cachedUserInfos returns the cached user-message line positions for the
+// transcript, rebuilding the cache if necessary. Callers must not mutate the
+// returned slice.
+func (sess *ThreadState) cachedUserInfos(s Styles, innerWidth int) []UserMsgInfo {
+	sess.cachedChatLines(s, innerWidth) // ensure cache is built for this width/gen
+	return sess.chatCache.userInfos
 }
 
 // visualRowPrefix returns prefix sums of visualRows over lines:

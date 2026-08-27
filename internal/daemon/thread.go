@@ -208,6 +208,10 @@ type Thread struct {
 	endTurnCount int
 	// titleGenInFlight prevents overlapping title generation calls.
 	titleGenInFlight bool
+	// titleManual pins the title: set when the user renames the thread, it
+	// permanently suppresses the auto-titling pass so a manual name is never
+	// overwritten. Persisted and restored on attach. Guarded by s.mu.
+	titleManual bool
 }
 
 // NewThread creates a new agent thread.
@@ -670,6 +674,10 @@ func (s *Thread) Run() {
 					s.unread = false
 					s.persist()
 				}
+			case "thread.rename":
+				var data protocol.ThreadRenameData
+				json.Unmarshal(cmd.Data, &data)
+				s.applyManualTitle(data.Title)
 			case "thread.close":
 				s.closedByUser = true
 				return

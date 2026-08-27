@@ -50,9 +50,10 @@ func renderStatusBar(
 		defs = []shortcut{
 			{"t", "new thread"},
 			{"d", "duplicate thread"},
+			{"r", "rename thread"},
 			{"x", "delete thread"},
 			{"↑↓", "navigate threads"},
-			{"enter", "open in workspace"},
+			{"enter", "open / fold dir"},
 		}
 	case TabKindModels:
 		defs = []shortcut{
