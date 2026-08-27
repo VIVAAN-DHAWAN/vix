@@ -362,8 +362,16 @@ func (b *bedrockClient) runStream(
 		select {
 		case fr := <-frameCh:
 			if fr.err == io.EOF || fr.err == io.ErrUnexpectedEOF {
-				// Abrupt EOF before the clean empty-event-type terminator —
-				// treat as a retryable connection loss, not a successful response.
+				// Bedrock ends invoke-with-response-stream on the message_stop
+				// chunk and closes the body — it never sends the empty-event-type
+				// terminator handled below. Treating that EOF as truncation
+				// discarded every completed response and retried until the
+				// attempt limit, surfacing as "Connection lost" with the correct
+				// answer already on screen. EOF is only a real truncation when
+				// the model never signalled message_stop.
+				if acc.sawStop {
+					return acc.toMessage(), nil
+				}
 				log.Printf("[llm req=%s] eventstream truncated after %d frames: %v", reqID, eventCount, fr.err)
 				return nil, fmt.Errorf("bedrock: stream truncated: %w", fr.err)
 			}
@@ -427,6 +435,12 @@ type bedrockAccumulator struct {
 	curThinking  strings.Builder
 	curSignature string
 	curInput     strings.Builder
+
+	// sawStop records that the model signalled message_stop. Bedrock closes the
+	// eventstream right after that frame without the empty-event-type terminator
+	// the reader below otherwise waits for, so EOF is only an error when the
+	// stop event never arrived.
+	sawStop bool
 }
 
 func (a *bedrockAccumulator) apply(ev bdStreamEvent, onDelta func(string), onThinkingDelta func(string)) {
@@ -503,6 +517,7 @@ func (a *bedrockAccumulator) apply(ev bdStreamEvent, onDelta func(string), onThi
 		}
 	case "message_stop":
 		// amazon-bedrock-invocationMetrics here; token counts already captured above.
+		a.sawStop = true
 	}
 
 }
@@ -610,13 +625,35 @@ func (b *bedrockClient) buildRequest(
 		}
 	}
 	for i, m := range messages {
+		// Bedrock can return a thinking block carrying a signature but no text.
+		// Such a block cannot be replayed: the API requires `thinking`,
+		// bdContent drops it under omitempty, and every later request in the
+		// thread then fails with "thinking.thinking: Field required" — which
+		// poisons the conversation permanently from the second turn on. The
+		// signature alone cannot be resent verbatim, so there is nothing here
+		// worth preserving; drop the block. Same failure mode as the empty
+		// tool_use input handled in toBedrockContent below.
+		blocks := make([]ContentBlock, 0, len(m.Content))
+		for _, cb := range m.Content {
+			if cb.Type == BlockThinking && cb.Text == "" {
+				continue
+			}
+			blocks = append(blocks, cb)
+		}
+		// Emitting the message anyway would send an empty content array, which
+		// the API rejects in turn. Skip it.
+		if len(blocks) == 0 {
+			continue
+		}
 		bm := bdMessage_{Role: string(m.Role)}
-		for j, cb := range m.Content {
+		for j, cb := range blocks {
 			bc, err := toBedrockContent(cb)
 			if err != nil {
 				return nil, err
 			}
-			if i == lastUserIdx && j == len(m.Content)-1 {
+			// Index against the filtered slice so the cache breakpoint still
+			// lands on the message's actual last block.
+			if i == lastUserIdx && j == len(blocks)-1 {
 				bc.CacheControl = &bdCacheControl{Type: "ephemeral"}
 			}
 			bm.Content = append(bm.Content, bc)
