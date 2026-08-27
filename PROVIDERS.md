@@ -7,7 +7,7 @@ binary. Everything is driven by a plain JSON file you drop into `~/.vix/`.
 
 ---
 
-## How it works
+## How It Works
 
 Vix has an embedded `providers.json` baked into the binary. At startup it looks for overlay files
 in this order and merges them on top:
@@ -30,7 +30,7 @@ vix daemon stop && vix daemon start
 
 ---
 
-## Quick start — add a custom OpenAI-compatible provider
+## Quick Start — Add a Custom OpenAI-Compatible Provider
 
 Create `~/.vix/providers.json`:
 
@@ -69,7 +69,7 @@ the model list is fetched live from the server — see [Model discovery](#model-
 
 ---
 
-## Full field reference
+## Full Field Reference
 
 ### Top-level document
 
