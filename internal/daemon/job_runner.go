@@ -202,11 +202,6 @@ consume:
 	thread.persist()
 	sweepJobRunRecords(thread.paths, spec.ID)
 
-	// Failures nobody saw get a synthetic explainer thread on top of the run
-	// record, so the next TUI launch surfaces them.
-	if res.Status != jobs.StatusOK && !s.hasAttachedInstances() {
-		s.writeJobAlertThread(spec, res)
-	}
 	return res
 }
 
@@ -318,13 +313,6 @@ func (s *Thread) pushCommand(ctx context.Context, cmd protocol.ThreadCommand) bo
 	}
 }
 
-// hasAttachedInstances reports whether any vix process is currently attached.
-func (s *Server) hasAttachedInstances() bool {
-	s.instanceMu.Lock()
-	defer s.instanceMu.Unlock()
-	return s.instanceCount > 0
-}
-
 // broadcastThreadsChanged tells every attached instance (over the control
 // channel, once per window) and the web UI subscribers that the persisted
 // threads list changed outside their own connection.
@@ -340,33 +328,6 @@ func (s *Server) broadcastThreadsChanged() {
 func (s *Server) broadcastJobsChanged() {
 	s.BroadcastToInstances(protocol.ThreadEvent{Type: "event.jobs_changed", Data: protocol.EventJobsChanged{}})
 	s.notifySubscribers()
-}
-
-// writeJobAlertThread persists a synthetic one-message thread explaining a
-// failed job run. Zero tokens: the text is canned. It lands in open/ so the
-// next TUI launch lists it under Vix-initiated threads.
-func (s *Server) writeJobAlertThread(spec jobs.Spec, res jobs.RunResult) {
-	name := spec.Name
-	if name == "" {
-		name = spec.ID
-	}
-	text := fmt.Sprintf(
-		"Your job %q failed at %s (%s).",
-		name, time.Now().Format("15:04"), res.Status)
-	if res.Err != "" {
-		text += "\n\nError: " + res.Err
-	}
-	if res.ThreadID != "" {
-		text += fmt.Sprintf("\n\nThe full run is in thread %s.", res.ThreadID)
-	}
-	if _, err := s.createMessageThread(MessageThreadSpec{
-		Message: text,
-		CWD:     spec.CWD,
-		Title:   jobRunTitle(spec, time.Now()),
-		Trigger: &protocol.TriggerInfo{Type: spec.Trigger.Type, Ref: spec.ID},
-	}); err != nil {
-		LogError("job alert thread: %v", err)
-	}
 }
 
 // isHeartbeatOK reports whether text is a bare "nothing needs attention"

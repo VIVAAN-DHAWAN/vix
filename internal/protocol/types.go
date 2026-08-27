@@ -563,6 +563,11 @@ type JobSummary struct {
 	LastStatus  string `json:"last_status,omitempty"` // ok | error | skipped | timeout
 	Running     bool   `json:"running,omitempty"`     // a run is currently in flight
 	CreatedBy   string `json:"created_by,omitempty"`
+	// RecentRunCount is how many runs are in the job's capped recent history
+	// (0..10). RecentErrorCount is how many of those failed (error or timeout).
+	// Together they drive the "N/10" health badge in the Jobs & Triggers tab.
+	RecentRunCount   int `json:"recent_run_count,omitempty"`
+	RecentErrorCount int `json:"recent_error_count,omitempty"`
 }
 
 // HookSummary is the lightweight projection of a lifecycle hook returned by the

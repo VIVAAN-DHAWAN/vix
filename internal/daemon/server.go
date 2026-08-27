@@ -1217,6 +1217,12 @@ func (s *Server) JobSummaries() []protocol.JobSummary {
 			Running:     j.Running,
 			CreatedBy:   j.CreatedBy,
 		}
+		sum.RecentRunCount = len(j.RecentRuns)
+		for _, r := range j.RecentRuns {
+			if r.Status == jobs.StatusError || r.Status == jobs.StatusTimeout {
+				sum.RecentErrorCount++
+			}
+		}
 		if !j.NextRunAt.IsZero() {
 			sum.NextRunAt = j.NextRunAt.Format(time.RFC3339)
 		}

@@ -795,11 +795,13 @@ public struct JobSummary: Codable, Sendable, Equatable {
     public var lastStatus: String?
     public var name: String?
     public var nextRunAt: String?
+    public var recentErrorCount: Int64?
+    public var recentRunCount: Int64?
     public var running: Bool?
     public var schedule: String?
     public var triggerType: String?
 
-    public init(createdBy: String? = nil, enabled: Bool, id: String, lastRunAt: String? = nil, lastStatus: String? = nil, name: String? = nil, nextRunAt: String? = nil, running: Bool? = nil, schedule: String? = nil, triggerType: String? = nil) {
+    public init(createdBy: String? = nil, enabled: Bool, id: String, lastRunAt: String? = nil, lastStatus: String? = nil, name: String? = nil, nextRunAt: String? = nil, recentErrorCount: Int64? = nil, recentRunCount: Int64? = nil, running: Bool? = nil, schedule: String? = nil, triggerType: String? = nil) {
         self.createdBy = createdBy
         self.enabled = enabled
         self.id = id
@@ -807,6 +809,8 @@ public struct JobSummary: Codable, Sendable, Equatable {
         self.lastStatus = lastStatus
         self.name = name
         self.nextRunAt = nextRunAt
+        self.recentErrorCount = recentErrorCount
+        self.recentRunCount = recentRunCount
         self.running = running
         self.schedule = schedule
         self.triggerType = triggerType
@@ -820,6 +824,8 @@ public struct JobSummary: Codable, Sendable, Equatable {
         case lastStatus = "last_status"
         case name = "name"
         case nextRunAt = "next_run_at"
+        case recentErrorCount = "recent_error_count"
+        case recentRunCount = "recent_run_count"
         case running = "running"
         case schedule = "schedule"
         case triggerType = "trigger_type"

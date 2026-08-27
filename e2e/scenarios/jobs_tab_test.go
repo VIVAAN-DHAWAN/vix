@@ -111,3 +111,51 @@ func TestJobsTabFKeyRemap(t *testing.T) {
 	h.UI.WaitFor("Auto-compaction")
 	h.UI.Shot("settings-f6")
 }
+
+// badgeJobSpec is a far-future one-shot job: enabled and listed, but it never
+// fires during the test, so the seeded run history (state.json) stays intact.
+const badgeJobSpec = `{
+  "id": "e2e-badgejob",
+  "name": "E2E Badge Job",
+  "enabled": true,
+  "trigger": {"type": "at", "time": "2999-01-01T00:00:00Z"},
+  "prompt": "Say hello.",
+  "cwd": "{{WORKDIR}}",
+  "created_by": "user"
+}`
+
+// badgeJobState seeds a recent-run history of 3 runs, 2 of which failed (one
+// error + one timeout), so the Jobs tab must render the "2/3" error badge.
+const badgeJobState = `{
+  "recent_runs": [
+    {"at": "2024-01-01T00:00:00Z", "status": "ok"},
+    {"at": "2024-01-02T00:00:00Z", "status": "error"},
+    {"at": "2024-01-03T00:00:00Z", "status": "timeout"}
+  ]
+}`
+
+// TestJobsTabErrorBadge verifies the Jobs & Triggers tab surfaces a job's recent
+// run health as an "<errors>/<runs>" badge in the Errors column, counting error
+// and timeout runs (not ok) across the capped history.
+func TestJobsTabErrorBadge(t *testing.T) {
+	h := harness.Start(t, jobsTabMeta("F5 shows the per-job recent-run error badge (N/M) in the Errors column"),
+		harness.WithEnv("VIX_DISABLE_JOBS", "0"),
+		harness.WithHomeFile(".vix/jobs/e2e-badgejob/job.json", badgeJobSpec),
+		harness.WithHomeFile(".vix/jobs/e2e-badgejob/state.json", badgeJobState),
+	)
+
+	h.UI.WaitStable(500 * time.Millisecond)
+	h.UI.Key("f5")
+	h.UI.WaitFor("E2E Badge Job")
+	h.UI.WaitStable(300 * time.Millisecond)
+
+	for _, want := range []string{
+		"Errors", // the new column header
+		"2/3",    // 2 failed (error + timeout) out of the last 3 runs
+	} {
+		if !h.UI.Contains(want) {
+			t.Fatalf("Jobs & Triggers tab missing %q; screen:\n%s", want, h.UI.Snapshot())
+		}
+	}
+	h.UI.Shot("jobs-tab-error-badge")
+}

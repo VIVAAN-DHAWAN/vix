@@ -39,8 +39,8 @@ type MessageThreadSpec struct {
 // createMessageThread materialises a Vix-initiated message thread from spec
 // and persists it to open/, returning the new thread id. Origin is always
 // "vix" (so it groups under Vix-initiated and never re-triggers hooks). This is
-// the single implementation behind writeJobAlertThread, the message.create
-// RPC, and `vix thread create`.
+// the single implementation behind the message.create RPC and
+// `vix thread create`.
 func (s *Server) createMessageThread(spec MessageThreadSpec) (string, error) {
 	message := spec.Message
 	if spec.MessageFile != "" {

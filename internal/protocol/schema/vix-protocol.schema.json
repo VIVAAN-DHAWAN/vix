@@ -840,6 +840,12 @@
         "next_run_at": {
           "type": "string"
         },
+        "recent_error_count": {
+          "type": "integer"
+        },
+        "recent_run_count": {
+          "type": "integer"
+        },
         "running": {
           "type": "boolean"
         },

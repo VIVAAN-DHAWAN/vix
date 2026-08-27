@@ -485,6 +485,16 @@ func lastStatusLabel(when, status string) string {
 	return when
 }
 
+// jobErrorBadge renders a job's recent-run health as "<errors>/<runs>" (e.g.
+// "2/10"), or "—" when the job has no recorded runs yet. Kept plain (no ANSI) so
+// it flows through jobsCell's width math unchanged.
+func jobErrorBadge(runCount, errCount int) string {
+	if runCount == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d/%d", errCount, runCount)
+}
+
 // renderJobsView renders the Jobs & Triggers tab: a short header (description,
 // docs link, prompt example) followed by two grouped tables — scheduled Jobs
 // (with a live "running" spinner and next/last run) and lifecycle Triggers
@@ -512,19 +522,20 @@ func renderJobsView(jobs []protocol.JobSummary, hooks []protocol.HookSummary, wi
 		"",
 	)
 
-	// Column widths: [box] Name  Schedule/Event  When  Last. Name flexes.
+	// Column widths: [box] Name  Schedule/Event  When  Last  Errors. Name flexes.
 	const colBox = 3
 	const colMid = 22
 	const colWhen = 12
 	const colLast = 16
-	colName := innerWidth - colBox - colMid - colWhen - colLast - 10
+	const colErr = 7
+	colName := innerWidth - colBox - colMid - colWhen - colLast - colErr - 12
 	if colName < 12 {
 		colName = 12
 	}
 
-	header := fmt.Sprintf("    %-*s  %-*s  %-*s  %-*s",
-		colName, "Name", colMid, "Schedule / Event", colWhen, "Next", colLast, "Last")
-	headerRule := "  " + threadHeaderRuleStyle.Render(strings.Repeat("─", min(colBox+colName+colMid+colWhen+colLast+8, innerWidth)))
+	header := fmt.Sprintf("    %-*s  %-*s  %-*s  %-*s  %-*s",
+		colName, "Name", colMid, "Schedule / Event", colWhen, "Next", colLast, "Last", colErr, "Errors")
+	headerRule := "  " + threadHeaderRuleStyle.Render(strings.Repeat("─", min(colBox+colName+colMid+colWhen+colLast+colErr+10, innerWidth)))
 
 	groupHeader := func(title string) {
 		if len(rows) > 0 {
@@ -576,7 +587,8 @@ func renderJobsView(jobs []protocol.JobSummary, hooks []protocol.HookSummary, wi
 			jobsCell(j.Name, colName) + "  " +
 			jobsCell(j.Schedule, colMid) + "  " +
 			jobsCell(when, colWhen) + "  " +
-			jobsCell(last, colLast)
+			jobsCell(last, colLast) + "  " +
+			jobsCell(jobErrorBadge(j.RecentRunCount, j.RecentErrorCount), colErr)
 		appendRow(plain, running)
 	}
 
@@ -595,7 +607,8 @@ func renderJobsView(jobs []protocol.JobSummary, hooks []protocol.HookSummary, wi
 			jobsCell(h.Name, colName) + "  " +
 			jobsCell(event, colMid) + "  " +
 			jobsCell("—", colWhen) + "  " +
-			jobsCell(last, colLast)
+			jobsCell(last, colLast) + "  " +
+			jobsCell("—", colErr)
 		appendRow(plain, false) // hooks never show a running spinner
 	}
 

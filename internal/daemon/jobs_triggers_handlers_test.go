@@ -59,6 +59,67 @@ func TestJobListHandler(t *testing.T) {
 	}
 }
 
+// TestJobSummariesRecentErrorCount verifies the job.list projection counts
+// errors + timeouts (not ok/skipped) across the capped recent-run history,
+// driving the "N/10" health badge in the Jobs & Triggers tab.
+func TestJobSummariesRecentErrorCount(t *testing.T) {
+	s := newRunTriggerTestServer(t)
+	dir := filepath.Join(s.homeVixDir, "jobs")
+	store := jobs.NewStore(dir)
+
+	spec := jobs.Spec{
+		ID:      "alpha",
+		Name:    "Alpha",
+		Enabled: true,
+		Trigger: jobs.Trigger{Type: "cron", Expr: "@every 1m"},
+		Prompt:  "hi",
+		CWD:     t.TempDir(),
+	}
+	runner := func(context.Context, jobs.Spec, string) jobs.RunResult {
+		return jobs.RunResult{Status: jobs.StatusOK}
+	}
+	sched := jobs.NewScheduler(store, runner, nil, nil, 1)
+	if err := sched.CreateJob(spec); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	// 6 runs: 2 error + 1 timeout (all count) + 2 ok + 1 skipped (none count).
+	// Overwrite the freshly-created state file with a seeded run history.
+	if err := store.SaveStateFor("alpha", &jobs.State{RecentRuns: []jobs.RunRecord{
+		{Status: jobs.StatusOK},
+		{Status: jobs.StatusError},
+		{Status: jobs.StatusSkipped},
+		{Status: jobs.StatusTimeout},
+		{Status: jobs.StatusError},
+		{Status: jobs.StatusOK},
+	}}); err != nil {
+		t.Fatalf("SaveStateFor: %v", err)
+	}
+	// A fresh scheduler loads the seeded state (RecentRuns) at construction;
+	// SetEnabled reconciles the on-disk spec into the timer loop synchronously
+	// without wiping the seeded history.
+	sched2 := jobs.NewScheduler(store, runner, nil, nil, 1)
+	if err := sched2.SetEnabled("alpha", true); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	s.jobScheduler = sched2
+
+	var got protocol.JobSummary
+	for _, sum := range s.JobSummaries() {
+		if sum.ID == "alpha" {
+			got = sum
+		}
+	}
+	if got.ID != "alpha" {
+		t.Fatalf("alpha not in JobSummaries")
+	}
+	if got.RecentRunCount != 6 {
+		t.Errorf("RecentRunCount = %d, want 6", got.RecentRunCount)
+	}
+	if got.RecentErrorCount != 3 {
+		t.Errorf("RecentErrorCount = %d, want 3 (2 error + 1 timeout)", got.RecentErrorCount)
+	}
+}
+
 func TestJobSetEnabledHandler(t *testing.T) {
 	s := newRunTriggerTestServer(t)
 	seedJobScheduler(t, s)
