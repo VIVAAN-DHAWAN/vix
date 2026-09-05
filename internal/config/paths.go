@@ -1,11 +1,6 @@
 package config
 
-import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "path/filepath"
 
 // VixPaths resolves all .vix-relative filesystem paths for a thread.
 //
@@ -124,72 +119,9 @@ func (p VixPaths) Agents() []string {
 	return p.subdirs("agents")
 }
 
-type skillsDirConfig struct {
-	SkillsDir  string   `json:"skills_dir"`
-	SkillsDirs []string `json:"skills_dirs"`
-}
-
-func expandHomeDir(p string) string {
-	if p == "~" || strings.HasPrefix(p, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil && home != "" {
-			if p == "~" {
-				return home
-			}
-			return filepath.Join(home, p[2:])
-		}
-	}
-	return p
-}
-
-func appendUnique(list []string, item string) []string {
-	for _, s := range list {
-		if s == item {
-			return list
-		}
-	}
-	return append(list, item)
-}
-
 // Skills returns the skills/ directories to scan, in load order.
-// In addition to default .vix/skills directories, any custom paths configured via
-// skills_dir or skills_dirs in settings.json are included.
 func (p VixPaths) Skills() []string {
-	var out []string
-	layers := p.Layers()
-	for _, d := range layers {
-		if d == "" {
-			continue
-		}
-		// 1. Default .vix/skills directory
-		out = appendUnique(out, filepath.Join(d, "skills"))
-
-		// 2. Custom skills_dir / skills_dirs in settings.json
-		settingsPath := filepath.Join(d, "settings.json")
-		if data, err := os.ReadFile(settingsPath); err == nil {
-			var cfg skillsDirConfig
-			if err := json.Unmarshal(data, &cfg); err == nil {
-				var custom []string
-				if cfg.SkillsDir != "" {
-					custom = append(custom, cfg.SkillsDir)
-				}
-				custom = append(custom, cfg.SkillsDirs...)
-
-				for _, raw := range custom {
-					trimmed := strings.TrimSpace(raw)
-					if trimmed == "" {
-						continue
-					}
-					expanded := expandHomeDir(trimmed)
-					if !filepath.IsAbs(expanded) {
-						expanded = filepath.Join(filepath.Dir(settingsPath), expanded)
-					}
-					out = appendUnique(out, filepath.Clean(expanded))
-				}
-			}
-		}
-	}
-	return out
+	return p.subdirs("skills")
 }
 
 // Plugins returns the plugins/ directories to scan, in load order.

@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -178,58 +177,3 @@ func TestVixPaths_NormalModeWithoutHome(t *testing.T) {
 		t.Errorf("HeartbeatMD should be empty without home, got %q", got)
 	}
 }
-
-func TestVixPaths_SkillsConfigurable(t *testing.T) {
-	tempDir := t.TempDir()
-	homeDir := filepath.Join(tempDir, "home", ".vix")
-	projectDir := filepath.Join(tempDir, "project")
-	projectVix := filepath.Join(projectDir, ".vix")
-
-	if err := os.MkdirAll(homeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(projectVix, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	customGlobalSkillDir := filepath.Join(tempDir, "global-custom-skills")
-	customProjectSkillDir1 := filepath.Join(projectDir, "my-skills")
-	customProjectSkillDir2 := filepath.Join(tempDir, "extra-skills")
-
-	// Home settings.json with skills_dir
-	homeSettings := `{"skills_dir": "` + customGlobalSkillDir + `"}`
-	if err := os.WriteFile(filepath.Join(homeDir, "settings.json"), []byte(homeSettings), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Project settings.json with relative skills_dir and absolute skills_dirs
-	projectSettings := `{
-		"skills_dir": "../my-skills",
-		"skills_dirs": ["` + customProjectSkillDir2 + `"]
-	}`
-	if err := os.WriteFile(filepath.Join(projectVix, "settings.json"), []byte(projectSettings), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	p := NewVixPaths("", homeDir, projectDir)
-	skillDirs := p.Skills()
-
-	want := []string{
-		filepath.Join(homeDir, "skills"),
-		customGlobalSkillDir,
-		filepath.Join(projectVix, "skills"),
-		customProjectSkillDir1,
-		customProjectSkillDir2,
-	}
-
-	if len(skillDirs) != len(want) {
-		t.Fatalf("Skills length = %d, want %d. Got: %v", len(skillDirs), len(want), skillDirs)
-	}
-
-	for i, w := range want {
-		if skillDirs[i] != w {
-			t.Errorf("Skills[%d] = %q, want %q", i, skillDirs[i], w)
-		}
-	}
-}
-
