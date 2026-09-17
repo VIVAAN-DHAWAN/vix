@@ -724,25 +724,46 @@ func (s *Thread) initBrain() {
 	// settings.json, and has no dependency on the brain/LSP, so
 	// emitting event.skills_available here lets the slash menu autocomplete
 	// custom skills immediately instead of waiting for LSP initialization.
-	// Pass layers highest-precedence-first (reverse of the "later wins" order
-	// used for merged config): project before home, custom before default.
-	var skillDirs []string
-	for _, d := range s.paths.Layers() {
-		if d == "" {
-			continue
+	// Single LoadProjectConfig call (merged, version-gated) feeds both skill
+	// dirs and the thread config below — no per-layer re-reads.
+	// Precedence highest-first: project custom -> project default ->
+	// user custom -> user default.
+	projectConfig := LoadProjectConfig(s.paths.Settings()...)
+	s.projectConfig = projectConfig
+	layers := s.paths.Layers()
+	var projectDirs, userDirs []string
+	if len(layers) == 1 {
+		for _, d := range projectConfig.SkillsDirsProject {
+			projectDirs = appendUniqueStr(projectDirs, d)
 		}
-		skillDirs = appendUniqueStr(skillDirs, filepath.Join(d, "skills"))
-
-		layerCfg := LoadProjectConfig(filepath.Join(d, "settings.json"))
-		for _, customDir := range layerCfg.SkillsDirs {
-			skillDirs = appendUniqueStr(skillDirs, customDir)
+		// Fallback for single-file callers where split may be empty but
+		// merged is populated (defensive; normally equal).
+		for _, d := range projectConfig.SkillsDirs {
+			projectDirs = appendUniqueStr(projectDirs, d)
+		}
+		if layers[0] != "" {
+			projectDirs = appendUniqueStr(projectDirs, filepath.Join(layers[0], "skills"))
+		}
+	} else if len(layers) > 1 {
+		projectLayer := layers[len(layers)-1]
+		userLayers := layers[:len(layers)-1]
+		for _, d := range projectConfig.SkillsDirsProject {
+			projectDirs = appendUniqueStr(projectDirs, d)
+		}
+		if projectLayer != "" {
+			projectDirs = appendUniqueStr(projectDirs, filepath.Join(projectLayer, "skills"))
+		}
+		for _, d := range projectConfig.SkillsDirsUser {
+			userDirs = appendUniqueStr(userDirs, d)
+		}
+		for i := len(userLayers) - 1; i >= 0; i-- {
+			if userLayers[i] == "" {
+				continue
+			}
+			userDirs = appendUniqueStr(userDirs, filepath.Join(userLayers[i], "skills"))
 		}
 	}
-	reversed := make([]string, len(skillDirs))
-	for i, d := range skillDirs {
-		reversed[len(skillDirs)-1-i] = d
-	}
-	s.skills = agent.LoadSkills(reversed...)
+	s.skills = agent.LoadSkillsLayered(projectDirs, userDirs)
 	if s.skills.Count() > 0 {
 		log.Printf("[thread] loaded %d skill(s)", s.skills.Count())
 	}
@@ -786,8 +807,7 @@ func (s *Thread) initBrain() {
 		log.Printf("[thread] loaded %d custom agent(s) from .vix/agents/", len(s.customAgents))
 	}
 
-	projectConfig := LoadProjectConfig(s.paths.Settings()...)
-	s.projectConfig = projectConfig
+	// projectConfig already loaded once above for skill dirs — reuse it here.
 	s.chatAgent = projectConfig.Agent
 	s.setWorkflows(LoadWorkflowsFile(s.paths.WorkflowsFile()))
 

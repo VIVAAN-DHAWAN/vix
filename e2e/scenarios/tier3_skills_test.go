@@ -114,7 +114,7 @@ func TestSkillProjectOverridesUser(t *testing.T) {
 
 // TestSkillCustomDirs proves that custom skill directories configured via
 // skills_dir and skills_dirs in settings.json load skills properly and
-// make them available to the model. skills.custom_dirs
+// make them available to the model.
 func TestSkillCustomDirs(t *testing.T) {
 	h := harness.Start(t, harness.Meta{
 		Category: "skills", Subcategory: "skills.custom_dirs",
